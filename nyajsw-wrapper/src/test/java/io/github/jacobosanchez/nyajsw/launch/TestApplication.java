@@ -12,6 +12,7 @@ import java.util.Objects;
  *   <li>{@code report <code>}: prints its arguments, working directory, the variables
  *       {@code NYAJSW_TEST} and {@code NYAJSW_REMOVED}, whether standard input is at its end, and a
  *       line on standard error, then exits with {@code code};</li>
+ *   <li>{@code cafe}: prints {@code caf\u00e9} on standard output and exits;</li>
  *   <li>{@code park}: prints {@code parked} and waits until it is killed;</li>
  *   <li>{@code linger <ms> <code>}: prints {@code lingering}, waits {@code ms} and exits with
  *       {@code code}, like an application that finishes its own shutdown;</li>
@@ -42,6 +43,7 @@ public final class TestApplication {
                 Thread.sleep(Long.parseLong(args[1]));
                 System.exit(Integer.parseInt(args[2]));
             }
+            case "cafe" -> System.out.println("caf\u00e9");
             case "park" -> {
                 System.out.println("parked");
                 park();

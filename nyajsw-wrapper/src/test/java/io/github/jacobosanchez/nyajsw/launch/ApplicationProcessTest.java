@@ -136,6 +136,16 @@ public class ApplicationProcessTest {
     }
 
     @Test(timeOut = 120_000)
+    public void outputIsDecodedWithTheEncodingTheApplicationWrites() throws Exception {
+        // Only the Java 8-17 property is written; this Java 21 child reads stdout.encoding, which must agree.
+        ApplicationProcess process = start(config("wrapper.java.additional.1=-Dsun.stdout.encoding=ISO-8859-1",
+                "wrapper.app.parameter.1=cafe"), 1);
+
+        assertEquals(process.waitFor(GENEROUS), Optional.of(0));
+        assertTrue(logLines().contains("jvm 1    | caf\u00e9"), logLines().toString());
+    }
+
+    @Test(timeOut = 120_000)
     public void waitingForARunningProcessTimesOut() throws Exception {
         ApplicationProcess process = start(config("wrapper.app.parameter.1=park"), 1);
 

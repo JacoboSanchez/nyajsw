@@ -52,7 +52,7 @@ public class JavaCommandBuilderTest {
         return new JavaCommandBuilder(JAVA_HOME, windows).build(config.java(), List.of(classpath), config.secrets());
     }
 
-    /** The arguments without {@link JavaCommandBuilder#OUTPUT_ENCODING}, which its own test covers. */
+    /** The arguments without the default {@link JavaCommandBuilder#OUTPUT_ENCODING}, which its own test covers. */
     private static List<String> args(JavaCommand command) {
         List<String> arguments = new java.util.ArrayList<>(command.arguments());
         int at = arguments.indexOf(JavaCommandBuilder.OUTPUT_ENCODING.get(0));
@@ -62,23 +62,38 @@ public class JavaCommandBuilderTest {
     }
 
     @Test
-    public void outputEncodingComesBeforeTheJvmOptionsAndAWrittenOneWins() throws IOException {
+    public void outputEncodingFollowsTheJvmOptionsUnderBothNames() throws IOException {
         JavaCommand plain = build(load("wrapper.java.app.mainclass=Main", "wrapper.java.maxmemory=64",
                 "wrapper.java.additional.1=-Dx=1"), true);
+        // Only the Java 8-17 name is written; a Java 18+ child reads the other one, which must agree.
         JavaCommand chosen = build(load("wrapper.java.app.mainclass=Main",
                 "wrapper.java.additional.1=-Dsun.stdout.encoding=ISO-8859-1",
                 "wrapper.java.additional.2=-Dstderr.encoding=windows-1252"), true);
         JavaCommand unknown = build(load("wrapper.java.app.mainclass=Main",
                 "wrapper.java.additional.1=-Dstdout.encoding=no-such-charset"), true);
 
-        assertEquals(plain.arguments().subList(1, 7), List.of("-Xmx64m", "-Dstdout.encoding=UTF-8",
-                "-Dsun.stdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8", "-Dx=1"));
+        assertEquals(plain.arguments().subList(1, 7), List.of("-Xmx64m", "-Dx=1", "-Dstdout.encoding=UTF-8",
+                "-Dsun.stdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8"));
         assertEquals(plain.stdoutCharset(), java.nio.charset.StandardCharsets.UTF_8);
         assertEquals(plain.stderrCharset(), java.nio.charset.StandardCharsets.UTF_8);
         assertEquals(chosen.stdoutCharset(), java.nio.charset.StandardCharsets.ISO_8859_1);
         assertEquals(chosen.stderrCharset().name(), "windows-1252");
+        List<String> tail = chosen.arguments().subList(3, 7);
+        assertEquals(tail, List.of("-Dstdout.encoding=ISO-8859-1", "-Dsun.stdout.encoding=ISO-8859-1",
+                "-Dstderr.encoding=windows-1252", "-Dsun.stderr.encoding=windows-1252"));
         assertEquals(unknown.stdoutCharset(), java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(unknown.arguments().contains("-Dstdout.encoding=UTF-8"), unknown.arguments().toString());
         assertTrue(unknown.warnings().get(0).contains("no-such-charset"), unknown.warnings().toString());
+    }
+
+    @Test
+    public void anUnknownEncodingWarningMasksSecrets() throws IOException {
+        JavaCommand command = build(load("wrapper.ntservice.password=secret123", "wrapper.java.app.mainclass=Main",
+                "wrapper.java.additional.1=-Dstdout.encoding=${wrapper.ntservice.password}"), true);
+
+        assertEquals(command.warnings().size(), 1, command.warnings().toString());
+        assertFalse(command.warnings().get(0).contains("secret123"), command.warnings().get(0));
+        assertTrue(command.warnings().get(0).contains("'****'"), command.warnings().get(0));
     }
 
     @Test
