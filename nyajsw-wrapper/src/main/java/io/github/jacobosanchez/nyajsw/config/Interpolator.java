@@ -42,6 +42,9 @@ import java.util.stream.Collectors;
  *       is a Groovy expression, which YAJSW evaluates and nyajsw does not support. That is an error,
  *       because using the text as it is would silently change behaviour. The same holds for code
  *       around a nested reference, such as <code>${util.f("${x}")}</code>.</li>
+ *   <li>A reference to YAJSW's keystore, <code>${keystore name}</code> (any case, also around a
+ *       nested reference), that resolves to nothing is an error for the same reason: the text would
+ *       otherwise be used as a password.</li>
  *   <li>Environment variable names are compared case-insensitively when the environment is (as on
  *       Windows); an exact match wins.</li>
  *   <li>There is no escape syntax: a literal <code>${x}</code> is only kept when {@code x} resolves
@@ -59,6 +62,7 @@ public final class Interpolator {
     private static final String SYS_PREFIX = "sys:";
     private static final String ENV_PREFIX = "env:";
     private static final Pattern CODE_LIKE = Pattern.compile("[()\"';{}\\[\\]]|^\\s*(if|new|def)\\s");
+    private static final Pattern KEYSTORE = Pattern.compile("(?i)^\\s*keystore\\s");
 
     private final Map<String, String> systemProperties;
     private final Map<String, String> environment;
@@ -132,7 +136,7 @@ public final class Interpolator {
      * @return the entries in the same order with resolved values, and the warnings raised; each
      *         problem is reported once, at the entry whose value contains it
      * @throws IllegalArgumentException if a key occurs twice
-     * @throws ConfigException          on a reference cycle or a Groovy expression
+     * @throws ConfigException          on a reference cycle, a Groovy expression or a keystore reference
      */
     public Result interpolate(List<ConfigEntry> entries) {
         Map<String, ConfigEntry> byKey = new LinkedHashMap<>();
@@ -160,7 +164,7 @@ public final class Interpolator {
      * @param location where the text was written, for messages
      * @param config   the configuration entries visible at that point, by key
      * @return the resolved text, the references left unresolved, and warnings about the text itself
-     * @throws ConfigException on a reference cycle or a Groovy expression
+     * @throws ConfigException on a reference cycle, a Groovy expression or a keystore reference
      */
     public Resolution resolve(String text, ConfigLocation location, Function<String, Optional<ConfigEntry>> config) {
         Objects.requireNonNull(text, "text");
@@ -318,10 +322,7 @@ public final class Interpolator {
                 String name = text.substring(start + START.length(), end);
                 int nested = name.indexOf(START);
                 if (nested >= 0) {
-                    String outer = name.substring(0, nested);
-                    if (CODE_LIKE.matcher(outer).find()) {
-                        throw groovy(location, ownerKey, text.substring(start, end + 1));
-                    }
+                    rejectUnsupported(name.substring(0, nested), text.substring(start, end + 1), location, ownerKey);
                     sink.add(new ConfigWarning(location, "nested variable references are not supported"
                             + describe(ownerKey) + "; the outer '${' is kept as written"));
                     int literalEnd = start + START.length() + nested;
@@ -333,9 +334,10 @@ public final class Interpolator {
                 if (value.isPresent()) {
                     out.append(value.get().value());
                     unresolved.addAll(value.get().unresolved());
-                } else if (!isPrefixed(name) && CODE_LIKE.matcher(name).find()) {
-                    throw groovy(location, ownerKey, text.substring(start, end + 1));
                 } else {
+                    if (!isPrefixed(name)) {
+                        rejectUnsupported(name, text.substring(start, end + 1), location, ownerKey);
+                    }
                     direct.add(name);
                     unresolved.add(name);
                     out.append(text, start, end + 1);
@@ -345,10 +347,32 @@ public final class Interpolator {
             return new Expanded(out.toString(), unresolved);
         }
 
-        private ConfigException groovy(ConfigLocation location, String ownerKey, String expression) {
-            return new ConfigException(location, "Groovy expressions in ${...} are not supported"
+        /**
+         * Rejects text that YAJSW would evaluate and nyajsw cannot: a keystore reference, checked first
+         * so that a quoted name still gets the keystore message, or Groovy code.
+         *
+         * @param name       what stands between <code>${</code> and <code>}</code>, or before a nested
+         *                   reference
+         * @param expression the whole reference, for the message
+         */
+        private void rejectUnsupported(String name, String expression, ConfigLocation location, String ownerKey) {
+            if (KEYSTORE.matcher(name).find()) {
+                throw unsupported(location, ownerKey, expression, "YAJSW keystore references (${keystore ...}) are",
+                        "set the value in the configuration, or read it from the wrapper's environment or"
+                                + " system properties (${env:NAME}, ${sys:name})");
+            }
+            if (CODE_LIKE.matcher(name).find()) {
+                throw unsupported(location, ownerKey, expression, "Groovy expressions in ${...} are",
+                        "replace the expression with a literal value");
+            }
+        }
+
+        /** The expression is left out for secret keys: it names where the secret comes from. */
+        private ConfigException unsupported(ConfigLocation location, String ownerKey, String expression,
+                String what, String remedy) {
+            return new ConfigException(location, what + " not supported"
                     + (ownerKey != null && secret(ownerKey) ? "" : ": " + expression)
-                    + describe(ownerKey) + "; replace the expression with a literal value");
+                    + describe(ownerKey) + "; " + remedy);
         }
 
         private Optional<Expanded> lookup(String name) {
