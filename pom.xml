@@ -158,8 +158,9 @@
                              slf4j.internal.verbosity hides the resulting "no providers" notice.
                              The Mockito jar path is set by dependency:properties in the initialize
                              phase, so run tests through a lifecycle phase (mvn test / verify), not by
-                             invoking surefire:test directly. -->
-                        <argLine>@{argLine} -Xshare:off -javaagent:${org.mockito:mockito-core:jar} -Dslf4j.internal.verbosity=ERROR</argLine>
+                             invoking surefire:test directly. The agent argument is quoted so a local
+                             repository path containing spaces stays one JVM argument. -->
+                        <argLine>@{argLine} -Xshare:off "-javaagent:${org.mockito:mockito-core:jar}" -Dslf4j.internal.verbosity=ERROR</argLine>
                     </configuration>
                 </plugin>
                 <plugin>
