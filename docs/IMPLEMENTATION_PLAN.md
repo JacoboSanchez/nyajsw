@@ -275,7 +275,8 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   So `C:\app\` must be written `C:\app\\` or `C:/app/`; a continuation line that looks like a new
   `wrapper.*` entry gets a warning. Doubled backslashes in path-typed keys are normalised by the
   typed layer (P1.6). Entries keep file and line (`ConfigLocation`) for messages; problems that do
-  not stop loading are `ConfigWarning`s.
+  not stop loading are `ConfigWarning`s. Several statements above (backslash handling, treatment of
+  `include`, encoding default) are unconfirmed against YAJSW itself; see the D7 note and P1.9.
 * **Interpolation** (`Interpolator`): `${name}` resolved against, in order, keys in the
   configuration itself (YAJSW lets any key act as a variable, e.g. `JAVA_HOME=…` then
   `${JAVA_HOME}`), wrapper JVM system properties, environment variables (case-insensitive on
@@ -452,6 +453,8 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       rewrites); seed statuses from §7.
 - [ ] P1.8 Fixtures: a YAJSW-style default template written from scratch, plus the owner's
       anonymised real configurations as soon as they are provided (§10 Q1; not a blocker).
+- [ ] P1.9 D7 follow-ups once real fixtures exist: honour `wrapper.conf.encoding`; settle backslash
+      escaping, `include` handling and case of environment names against a real file; update §4.5.
 Done when: every fixture present in the repository loads; every §7 key has a registry entry and a
 test.
 
@@ -514,6 +517,8 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.java.additional.N`,
       `-Djna.tmpdir`, quoting (D12).
 - [ ] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes.
+- [ ] P5.4a (blocked on §10 Q8, D17) Migration entry point: `WrapperServiceBooter` alias class, mode
+      detection when `--service` is absent, and the Java 21 binPath rewrite in a migration command.
 - [ ] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` names a real
       account (skipped for the built-in `LocalSystem`/`LocalService`/`NetworkService`); hand-written
       LSA binding; clear error when it cannot be granted.
@@ -708,7 +713,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 | R8 | Log rotation on Windows (locked files, rename failures) | Single writer, rename with retry/fallback, tests on Windows CI. |
 | R9 | Hosted Windows CI runner not elevated or flaky SCM | Verify in P0.3; integration tests retry transient `MARKED_FOR_DELETE`; unit coverage does not depend on them. |
 | R10 | Licensing contamination | Clean-room rule in AGENTS.md; only public key names reused; reviewers check for copied text. |
-| R11 | Unverified YAJSW defaults/key names (marked "(verify)") | Confirm against the YAJSW reference (not reachable from the sandbox used to write this plan) and the owner's real files/`doc` folder before implementing each key; record the outcome in the registry. |
+| R11 | Unverified YAJSW defaults/key names (marked "(verify)") | Confirm against the YAJSW reference (read only in summarised form so far) and the owner's real files/`doc` folder before implementing each key; record the outcome in the registry. |
 | R12 | Windows argument quoting (`ProcessBuilder` re-quoting, embedded quotes) | Explicit policy and tests in P2.2; golden tests on argument arrays. |
 
 ## 9. Decisions log (ADR-lite)
@@ -721,7 +726,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 | D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
 | D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (P0.4: JNA and `jna-platform` 5.19.1, managed in the parent POM; added to `nyajsw-wrapper` in P5.2) |
 | D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Proposed (confirm in P4) |
-| D7 | Custom line parser (§4.5); literal backslashes except odd-trailing-`\` continuation, skipping blank/comment lines inside it; UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW's setting unverified, see Q1), so non-ASCII text in UTF-8 files may now read differently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1) |
+| D7 | Custom line parser (§4.5); literal backslashes except odd-trailing-`\` continuation, skipping blank/comment lines inside it; UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW's setting unverified, see Q1), so non-ASCII text in UTF-8 files may now read differently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: honour `wrapper.conf.encoding`, allow `${...}` in include paths, and verify the backslash and lower-cased-environment behaviour against a real file |
 | D8 | Single key registry drives parsing, validation, warnings and generated docs | One source of truth; no drift between code and docs | Accepted |
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
@@ -731,6 +736,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
 | D15 | Probe SPI, probe registry and stop-strategy registry are introduced in P3 with `process`/`terminate`; later probes and strategies are additions | Avoid rewriting the supervisor when P7 lands | Accepted |
 | D16 | Default liveness probe is `agent` when the agent is enabled (`wrapper.ping.*` semantics), none otherwise | YAJSW pings by default; keep behaviour parity without forcing the agent | Proposed |
+| D17 | Migration path (design only, blocked on §10 Q8): ship a thin alias class named like YAJSW's service booter (`org.rzo.yajsw.boot.WrapperServiceBooter`, a deliberate exception to D11 because existing service registrations store that name) that detects service mode when `--service` is absent and delegates to the normal entry point; a migration command rewrites an existing service's binary path to a Java 21 `javaw.exe` and our classpath (D12), since a bare jar swap cannot work when the old registration names an older JVM; `-D` options on the wrapper command line (e.g. `-Dwrapper.tmp.path`, a `jna_tmpdir` property, `-Dpath`) feed the system-property layer of §4.6; we also set the real `jna.tmpdir` from `wrapper.tmp.path` (R3). Short CLI options already exist in §3 | Observed in Denodo Platform's public KB (not tested by us): its services are registered as `java.exe … WrapperServiceBooter <conf>`, installed with `-i <conf>`, and re-pointed with `sc config` plus `-D` flags for non-admin accounts. Whether the underscore-spelled `jna_tmpdir` is read by YAJSW or JNA is unknown | Proposed (P5.4a; confirm with §10 Q1 and Q8) |
 
 ## 10. Open questions for the project owner
 
@@ -740,7 +746,12 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
    the application runs on. This settles D7 and the "(verify)" entries. In particular: does any
    file rely on `:` or whitespace as the key/value separator, on comma-separated lists in values
    (Commons Configuration's list delimiter, unless YAJSW disables it), or on `${...}` in include
-   paths? What encoding are the files saved in?
+   paths? What encoding are the files saved in? The target deployment is Denodo Platform, whose
+   public KB shows `conf/vdp/service.conf`, `conf/scheduler/service.conf` and
+   `conf/scheduler-webadmintool/scheduler-webadmin-service.conf` (generated from
+   `setup/vdp/templates/conf/service.conf.template`); anonymised copies of your own installed
+   `service.conf` files are the fixtures we need most. Do not add vendor templates unless their
+   licence allows redistribution in an Apache-2.0 repository.
 2. **Package/groupId** `io.github.jacobosanchez.nyajsw` acceptable? (D11)
 3. **Agent injection by default** acceptable for your application? It adds one `-javaagent` option
    to the child JVM. (D10)
@@ -749,13 +760,20 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
    LocalService)? Affects P5.5/P6.3 hardening and the test matrix.
 6. **Windows Event Log** reporting wanted (backlog item)?
 7. **CI and releases on GitHub Actions** wanted (P0.3, P8.4)? They are recommended, not requested.
+8. **Takeover of existing services.** Should nyajsw be able to run under services that YAJSW already
+   registered (same `WrapperServiceBooter` class name and `-i`/`-r` options), so that swapping the
+   jar is enough, or is a reinstall with our own installer acceptable? Which service names, Denodo
+   version and run-as accounts are in use? (D17)
 
 ## 11. References
 
 * YAJSW configuration reference: https://yajsw.sourceforge.io/YAJSW%20Configuration%20Parameters.html
-  (this host was not reachable from the sandbox in which this plan was written; key names in §7 come
-  from YAJSW's published default template as reproduced in third-party examples, hence the "(verify)"
-  marks).
+  (key names in §7 come from YAJSW's published default template as reproduced in third-party
+  examples, hence the "(verify)" marks). The page was read in summarised form on 2026-11-06 and
+  informed the D7 note; a full read of the key reference is pending.
+* Denodo Knowledge Base — starting the Denodo Windows services without Administrator privileges
+  (service names, `WrapperServiceBooter` command lines, a `jna_tmpdir` system property; basis of D17):
+  https://community.denodo.com/kb/en/view/document/How%20to%20start%20the%20Denodo%20Windows%20Services%20without%20Administrator%20privileges
 * Microsoft Learn — Service functions: https://learn.microsoft.com/windows/win32/services/service-functions
 * JNA: https://github.com/java-native-access/jna (`com.sun.jna.platform.win32.Advapi32`, `Winsvc`, `Kernel32`)
 * TestNG: https://testng.org/
