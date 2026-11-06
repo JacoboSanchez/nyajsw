@@ -52,6 +52,35 @@ public class JavaCommandBuilderTest {
         return new JavaCommandBuilder(JAVA_HOME, windows).build(config.java(), List.of(classpath), config.secrets());
     }
 
+    /** The arguments without {@link JavaCommandBuilder#OUTPUT_ENCODING}, which its own test covers. */
+    private static List<String> args(JavaCommand command) {
+        List<String> arguments = new java.util.ArrayList<>(command.arguments());
+        int at = arguments.indexOf(JavaCommandBuilder.OUTPUT_ENCODING.get(0));
+        assertEquals(arguments.subList(at, at + 4), JavaCommandBuilder.OUTPUT_ENCODING);
+        arguments.subList(at, at + 4).clear();
+        return arguments;
+    }
+
+    @Test
+    public void outputEncodingComesBeforeTheJvmOptionsAndAWrittenOneWins() throws IOException {
+        JavaCommand plain = build(load("wrapper.java.app.mainclass=Main", "wrapper.java.maxmemory=64",
+                "wrapper.java.additional.1=-Dx=1"), true);
+        JavaCommand chosen = build(load("wrapper.java.app.mainclass=Main",
+                "wrapper.java.additional.1=-Dsun.stdout.encoding=ISO-8859-1",
+                "wrapper.java.additional.2=-Dstderr.encoding=windows-1252"), true);
+        JavaCommand unknown = build(load("wrapper.java.app.mainclass=Main",
+                "wrapper.java.additional.1=-Dstdout.encoding=no-such-charset"), true);
+
+        assertEquals(plain.arguments().subList(1, 7), List.of("-Xmx64m", "-Dstdout.encoding=UTF-8",
+                "-Dsun.stdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8", "-Dx=1"));
+        assertEquals(plain.stdoutCharset(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(plain.stderrCharset(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(chosen.stdoutCharset(), java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertEquals(chosen.stderrCharset().name(), "windows-1252");
+        assertEquals(unknown.stdoutCharset(), java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(unknown.warnings().get(0).contains("no-such-charset"), unknown.warnings().toString());
+    }
+
     @Test
     public void fullCommandLineInItsDocumentedOrder() throws IOException {
         WrapperConfig config = load(
@@ -67,7 +96,7 @@ public class JavaCommandBuilderTest {
 
         JavaCommand command = build(config, true, "lib/a.jar", "conf");
 
-        assertEquals(command.arguments(), List.of(
+        assertEquals(args(command), List.of(
                 JAVA_HOME.resolve("bin").resolve("java.exe").toString(),
                 "-Xms128m", "-Xmx512m",
                 // C:/lib is absolute on Windows and relative to the working directory elsewhere.
@@ -84,7 +113,7 @@ public class JavaCommandBuilderTest {
         JavaCommand command = build(load("wrapper.java.app.mainclass=Main", "wrapper.java.command.javaw=true"),
                 false, "a.jar", "b.jar");
 
-        assertEquals(command.arguments(), List.of(JAVA_HOME.resolve("bin").resolve("java").toString(),
+        assertEquals(args(command), List.of(JAVA_HOME.resolve("bin").resolve("java").toString(),
                 "-classpath", "a.jar:b.jar", "Main"));
         assertEquals(command.warnings(), List.of("wrapper.java.command.javaw only applies on Windows; java is used"));
     }
@@ -101,7 +130,7 @@ public class JavaCommandBuilderTest {
         JavaCommand command = build(load("wrapper.java.app.mainclass=Main", "wrapper.java.command=java",
                 "wrapper.java.command.javaw=true"), true);
 
-        assertEquals(command.arguments(), List.of("java", "Main"));
+        assertEquals(args(command), List.of("java", "Main"));
         assertEquals(command.warnings(), List.of(
                 "wrapper.java.command.javaw is ignored because wrapper.java.command is set"));
     }
@@ -111,7 +140,7 @@ public class JavaCommandBuilderTest {
         JavaCommand command = build(load("wrapper.java.app.jar=app.jar", "wrapper.java.app.mainclass=Main",
                 "wrapper.app.parameter.1=x"), true, "lib/a.jar");
 
-        assertEquals(command.arguments().subList(1, command.arguments().size()),
+        assertEquals(args(command).subList(1, args(command).size()),
                 List.of("-jar", dir.resolve("app.jar").toString(), "x"));
         assertEquals(command.warnings().size(), 2, command.warnings().toString());
         assertTrue(command.warnings().get(0).startsWith("wrapper.java.app.mainclass is ignored"));
@@ -124,7 +153,7 @@ public class JavaCommandBuilderTest {
         JavaCommand command = build(load("wrapper.app.parameter.1=com.example.Main", "wrapper.app.parameter.2=arg"),
                 true, "a.jar");
 
-        assertEquals(command.arguments().subList(1, command.arguments().size()),
+        assertEquals(args(command).subList(1, args(command).size()),
                 List.of("-classpath", "a.jar", "com.example.Main", "arg"));
     }
 
@@ -152,7 +181,7 @@ public class JavaCommandBuilderTest {
                 "wrapper.app.parameter.1=\"\""), true);
 
         // An empty program argument is legitimate and kept.
-        assertEquals(command.arguments().subList(1, command.arguments().size()), List.of("Main", ""));
+        assertEquals(args(command).subList(1, args(command).size()), List.of("Main", ""));
         assertEquals(command.warnings(), List.of("an empty wrapper.java.additional.<n> is skipped"));
     }
 
@@ -181,7 +210,7 @@ public class JavaCommandBuilderTest {
         JavaCommand command = build(load("wrapper.java.app.mainclass=Main", "wrapper.java.additional.1=" + written),
                 true);
 
-        assertEquals(command.arguments().get(1), passed);
+        assertEquals(args(command).get(1), passed);
     }
 
     @DataProvider
@@ -208,7 +237,7 @@ public class JavaCommandBuilderTest {
 
         JavaCommand command = build(config, true);
 
-        assertTrue(command.arguments().contains("-Ddb.password=S3cr3t-pw"), "the real argument keeps the value");
+        assertTrue(args(command).contains("-Ddb.password=S3cr3t-pw"), "the real argument keeps the value");
         assertFalse(command.loggable().contains("S3cr3t-pw"), command.loggable());
         assertTrue(command.loggable().contains("-Ddb.password=****"), command.loggable());
         assertTrue(command.loggable().endsWith(" Main \"--title=my app\""), command.loggable());
@@ -227,7 +256,7 @@ public class JavaCommandBuilderTest {
 
         JavaCommand command = build(config, true);
 
-        assertEquals(command.arguments().get(1), "-Dpw=pa ss");
+        assertEquals(args(command).get(1), "-Dpw=pa ss");
         assertFalse(command.loggable().contains("pa ss"), command.loggable());
     }
 
@@ -238,8 +267,8 @@ public class JavaCommandBuilderTest {
         WrapperConfig config = WrapperConfig.from(new ConfigLoader(Map.of(), environment, false, ConfigKeys.registry())
                 .load(home.resolve("conf/wrapper.conf")));
 
-        List<String> arguments = new JavaCommandBuilder(JAVA_HOME, true).build(config.java(),
-                List.of("lib/a.jar", "conf"), config.secrets()).arguments();
+        List<String> arguments = args(new JavaCommandBuilder(JAVA_HOME, true).build(config.java(),
+                List.of("lib/a.jar", "conf"), config.secrets()));
 
         assertEquals(arguments.subList(1, 6), List.of("-Xms128m", "-Xmx512m", "-Xss512k", "-Dfile.encoding=UTF-8",
                 "-Dinventory.mode=production"), arguments.toString());

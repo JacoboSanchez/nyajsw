@@ -519,8 +519,10 @@ output, configuration and a clock; probes are stateless or own their state expli
 * Format tokens follow the Tanuki/YAJSW letter convention (`L` level, `P` prefix, `D` thread,
   `T` time, `Z` millisecond time, `M` message) with `wrapper` / `jvm N` prefixes so operators
   can tell wrapper lines from captured application output.
-* Application stdout/stderr are captured by `OutputPump` (charset: the child's console code page by
-  default, overridable) and logged at `INFO`; the same stream feeds the `log` probe and (backlog)
+* Application stdout/stderr are captured by `OutputPump` and logged at `INFO`; the command line
+  makes the application write them in UTF-8 (`-Dstdout.encoding`/`-Dsun.stdout.encoding` and the
+  `stderr` pair, read by Java 18+ and 8–17 respectively), and a value written in the JVM options
+  wins and is used to decode (P2.4); the same stream feeds the `log` probe and (backlog)
   `wrapper.filter.trigger.N`. The command line is logged through the masking form of
   `JavaCommandBuilder`, so secrets never reach the log.
 * `wrapper.debug=true` raises the wrapper log level to `DEBUG`. In service mode nothing is written to
@@ -766,10 +768,24 @@ Goal: build and run the application command line exactly as the configuration sa
       both with a warning; the first occurrence of a file wins (by text: short names and links
       are not resolved); messages show entries masked. On macOS, whose file system ignores case,
       names still match case-sensitively.
-- [ ] P2.4 `ApplicationProcess` + `OutputPump`: check that the Java executable exists before
+- [x] P2.4 `ApplicationProcess` + `OutputPump`: check that the Java executable exists before
       starting (YAJSW does), `ProcessBuilder` with `wrapper.app.env.*`,
       `wrapper.working.dir`, `wrapper.tmp.path`, piped output with explicit charset, pid, exit code,
       destroy / process-tree termination helper.
+      **Done:** the executable is checked when it has a directory (a bare name is left to the
+      `PATH`; `.exe` may be omitted on Windows), and so is the working directory; a value of
+      `wrapper.app.env.<variable>` replaces the inherited variable (every spelling of the name on
+      Windows, where Java's map is case-sensitive but Windows is not) and an empty one removes it,
+      like `set NAME=` in a command prompt; standard input is closed so the application sees its
+      end; stdout and stderr are logged at `INFO` as `jvm N`, decoded with the charset the command
+      line sets (UTF-8 unless the JVM options choose another, see §4.8), in pieces of at most 16 Ki
+      characters so output without line breaks cannot fill memory, and drained for at most 2 s
+      after the exit, since a grandchild may hold the pipes (that is logged at `STATUS`); the exit
+      is logged once however often it is awaited; `terminateTree()` kills the process, then its
+      descendants, looking below each again (the job object of P6.4 closes the remaining gap), and
+      logs any it could not kill; launch errors are masked and carry no unmasked cause.
+      `wrapper.tmp.path` is the wrapper's own directory (`jna.tmpdir`, D12) and is not passed to the
+      application.
 - [ ] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C waits up to
       `wrapper.shutdown.timeout` for the child, then terminates it (full semantics in P3.6).
 - [ ] P2.6 (optional) `wrapper.image` for non-Java executables through the same `ApplicationProcess`.
@@ -917,8 +933,6 @@ entry names the commit/plan item it came from; remove entries when addressed.
   with the probe types (AGENTS.md §4.4), and move `wrapper.ping.*` there from `LifecycleConfig`
   (D16). P7 must also keep the agent's derived defaults off when `wrapper.image` runs a non-Java
   executable.
-- P1.6b: what an empty `wrapper.app.env.X=` means (set to empty, or remove an inherited variable) is
-  open; decide in P2.4.
 - P1.6a: `SecretMasker` hides secrets by matching their text, so a short or common secret also masks
   unrelated text and the mask's position can hint at it (password `Java` shows as `C:\****\bin`).
   Tracking during interpolation which values were built from secret keys (or from names a secret

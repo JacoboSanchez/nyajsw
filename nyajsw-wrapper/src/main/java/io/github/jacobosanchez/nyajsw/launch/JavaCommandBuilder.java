@@ -14,6 +14,8 @@ import io.github.jacobosanchez.nyajsw.config.JavaConfig;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.platform.HostOs;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +32,10 @@ import java.util.Optional;
  *       {@code -Djava.library.path} from {@code wrapper.java.library.path.<n>}, before the JVM options:
  *       the JVM takes the last value, so an option written there wins, as YAJSW documents for
  *       {@code -Xmx};</li>
+ *   <li>{@link #OUTPUT_ENCODING}: the application writes its standard output and error in UTF-8, the
+ *       properties that Java 8 to 17 ({@code sun.std*.encoding}) and 18 and later
+ *       ({@code std*.encoding}) read, so the wrapper can decode them whatever the platform's code
+ *       page; a value written in the JVM options comes later and wins, and is then used to decode;</li>
  *   <li>{@code wrapper.java.additional.<n>}, empty ones (after unquoting) skipped with a warning;</li>
  *   <li>{@code -classpath} and the main class, or {@code -jar} and {@code wrapper.java.app.jar};
  *       without either, the first {@code wrapper.app.parameter.<n>} is the main class, as YAJSW
@@ -47,6 +53,10 @@ import java.util.Optional;
  * <p>The classpath arrives already expanded ({@code ClasspathExpander}, P2.3).
  */
 public final class JavaCommandBuilder {
+
+    /** The options that make the application write its output in UTF-8 (see the class comment). */
+    public static final List<String> OUTPUT_ENCODING = List.of("-Dstdout.encoding=UTF-8",
+            "-Dsun.stdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8");
 
     private final Path javaHome;
     private final boolean windows;
@@ -85,15 +95,20 @@ public final class JavaCommandBuilder {
             arguments.add("-Djava.library.path=" + String.join(separator(),
                     java.libraryPath().stream().map(Path::toString).toList()));
         }
+        arguments.addAll(OUTPUT_ENCODING);
+        List<String> options = new ArrayList<>();
         for (String option : java.jvmOptions()) {
             String unquoted = unquote(option, JAVA_ADDITIONAL.name(), secrets);
             if (unquoted.isEmpty()) {
                 // java.exe would take an empty argument for the main class.
                 warnings.add("an empty " + JAVA_ADDITIONAL.name() + " is skipped");
             } else {
-                arguments.add(unquoted);
+                options.add(unquoted);
             }
         }
+        arguments.addAll(options);
+        Charset stdout = outputCharset(options, "stdout", warnings);
+        Charset stderr = outputCharset(options, "stderr", warnings);
         List<String> parameters = new ArrayList<>();
         for (String parameter : java.parameters()) {
             parameters.add(unquote(parameter, APP_PARAMETER.name(), secrets));
@@ -118,7 +133,34 @@ public final class JavaCommandBuilder {
             arguments.add(mainClass);
         }
         arguments.addAll(parameters);
-        return new JavaCommand(arguments, warnings, secrets);
+        return new JavaCommand(arguments, warnings, secrets, stdout, stderr);
+    }
+
+    /**
+     * The charset the application writes {@code stream} in: UTF-8 from {@link #OUTPUT_ENCODING},
+     * unless a JVM option sets {@code -D<stream>.encoding} or {@code -Dsun.<stream>.encoding} again,
+     * the last one winning. Which of the two a JVM reads depends on its version, so the last one is
+     * the best guess when both are written with different values.
+     */
+    private static Charset outputCharset(List<String> options, String stream, List<String> warnings) {
+        String chosen = null;
+        for (String option : options) {
+            for (String property : List.of("-D" + stream + ".encoding=", "-Dsun." + stream + ".encoding=")) {
+                if (option.startsWith(property)) {
+                    chosen = option.substring(property.length());
+                }
+            }
+        }
+        if (chosen == null) {
+            return StandardCharsets.UTF_8;
+        }
+        try {
+            return Charset.forName(chosen);
+        } catch (IllegalArgumentException e) {
+            warnings.add("the application's " + stream + " encoding '" + chosen + "' is not a charset this JVM knows;"
+                    + " its output is read as UTF-8");
+            return StandardCharsets.UTF_8;
+        }
     }
 
     private String executable(JavaConfig java, List<String> warnings) {
