@@ -87,12 +87,11 @@ public class FixtureConfigurationsTest {
         assertEquals(java.classpath(), List.of("lib\\*.jar", "conf", "..\\plugins\\*"));
         assertEquals(java.jvmOptions(), List.of("-Xss512k", "-Dfile.encoding=UTF-8", "-Dinventory.mode=production",
                 "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=log",
-                "-Dinventory.data=\"C:\\\\Program Files\\\\Inventory\\\\data\""));
+                "-Dinventory.data=\"C:\\Program Files\\Inventory\\data\""));
         assertEquals(java.initMemoryMb(), Optional.of(128));
         assertEquals(java.maxMemoryMb(), Optional.of(512));
-        // Text values keep backslashes as written (D7); only path keys and the account undo doubled
-        // ones. YAJSW's Commons Configuration probably reads "\\\\" as one backslash here: settled in P1.9.
-        assertEquals(java.parameters(), List.of("--config", "conf\\\\inventory.properties"));
+        // An escaped backslash is one backslash in every value, as in YAJSW (P1.9, settled with a real file).
+        assertEquals(java.parameters(), List.of("--config", "conf\\inventory.properties"));
         assertEquals(java.environment(), Map.of("INVENTORY_MODE", "production"));
 
         ServiceConfig service = config.service();
@@ -109,7 +108,7 @@ public class FixtureConfigurationsTest {
         assertEquals(lifecycle.control(), ControlMode.TIGHT);
         assertEquals(lifecycle.exitAction(0), ExitAction.SHUTDOWN);
         assertEquals(lifecycle.exitAction(1), ExitAction.RESTART);
-        assertEquals(lifecycle.restartDelay(), Optional.of(Duration.ofSeconds(5)));
+        assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
         assertEquals(lifecycle.maxFailedInvocations(), 3);
         assertEquals(lifecycle.startupTimeout(), Duration.ofSeconds(60));
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(45));
@@ -139,7 +138,9 @@ public class FixtureConfigurationsTest {
             assertTrue(expected, "unexpected warning: " + message);
         }
         // Positive controls, so the filter above cannot go vacuous when wording changes.
-        assertTrue(messages.contains("wrapper.java.additional.<n> (6 keys)" + notYet), messages.toString());
+        assertTrue(messages.contains("wrapper.control" + notYet), messages.toString());
+        assertTrue(messages.stream().noneMatch(message -> message.startsWith("wrapper.java.additional")),
+                "supported since P2.5: " + messages);
         assertTrue(messages.contains("optional include skipped, file not found: "
                 + fixturesDirectory().resolve("yajsw-style/conf/local-overrides.conf")), messages.toString());
         assertTrue(messages.contains("wrapper.tray is not supported by nyajsw; it has no effect"), messages.toString());

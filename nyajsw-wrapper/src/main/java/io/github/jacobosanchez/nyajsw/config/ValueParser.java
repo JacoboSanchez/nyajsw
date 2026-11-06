@@ -153,13 +153,13 @@ public final class ValueParser {
     }
 
     /**
-     * Undoes doubled backslashes, which YAJSW files use because a backslash escapes in Commons
-     * Configuration ({@code C:\\app\\lib} means {@code C:\app\lib}, plan §4.5), and which a
-     * directory needs at the end of a line ({@code C:\app\\}). Every pair becomes one backslash,
-     * except a leading pair followed by another character: that is a UNC or {@code \\?\} prefix written
-     * literally ({@code \\server\share\\} gives {@code \\server\share\}). Four leading backslashes are
-     * the escaped form of that prefix ({@code \\\\server\\share} gives {@code \\server\share}).
-     * Relative paths are resolved later, against the configuration file's directory (D13).
+     * Tolerates doubled backslashes in a path. Values read from a file have their escapes undone
+     * already ({@code FileConfigSource}, plan §4.5), so this matters for values from system properties
+     * and the environment, written as in a file ({@code -Dwrapper.working.dir=C:\\app}), and for
+     * doubled separators that remain. Every pair becomes one backslash, except a leading pair followed
+     * by another character: that is a UNC or {@code \\?\} prefix ({@code \\server\share\\} gives
+     * {@code \\server\share\}). Relative paths are resolved later, against the configuration file's
+     * directory (D13).
      */
     public static String normalisePath(String value) {
         boolean literalPrefix = value.length() > 2 && value.startsWith("\\\\") && value.charAt(2) != '\\';
@@ -167,6 +167,13 @@ public final class ValueParser {
             return "\\\\" + value.substring(2).replace("\\\\", "\\");
         }
         return value.replace("\\\\", "\\");
+    }
+
+    /** {@code text} without one pair of double quotes around all of it, if it has them. */
+    public static String unquote(String text) {
+        return text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")
+                ? text.substring(1, text.length() - 1)
+                : text;
     }
 
     /** @return the items, trimmed, without empty ones; unmodifiable */

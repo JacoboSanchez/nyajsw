@@ -28,16 +28,19 @@ public class KeyPatternTest {
     }
 
     @Test
-    public void indexPlaceholderMatchesDigitsOnly() {
+    public void indexPlaceholderMatchesNumbersAndNames() {
         KeyPattern pattern = KeyPattern.of("wrapper.java.additional.<n>");
 
         assertFalse(pattern.isExact());
         assertTrue(pattern.matches("wrapper.java.additional.1"));
         assertTrue(pattern.matches("wrapper.java.additional.007"));
         assertTrue(pattern.matches("wrapper.java.additional.250"));
+        // YAJSW's reference: an index may be a string, and its examples use dotted ones.
+        assertTrue(pattern.matches("wrapper.java.additional.jvm-opts"));
+        assertTrue(pattern.matches("wrapper.java.additional.2.1"));
         assertFalse(pattern.matches("wrapper.java.additional."));
-        assertFalse(pattern.matches("wrapper.java.additional.x"));
-        assertFalse(pattern.matches("wrapper.java.additional.1.stripquotes"));
+        assertFalse(pattern.matches("wrapper.java.additional.a b"));
+        assertFalse(pattern.matches("wrapper.java.additional.a..b"));
         assertFalse(pattern.matches("wrapper.java.additional"));
         assertEquals(pattern.example(), "wrapper.java.additional.1");
     }
@@ -53,7 +56,7 @@ public class KeyPatternTest {
         assertFalse(pattern.matches("wrapper.on_exit.-"));
         assertFalse(pattern.matches("wrapper.on_exit.1.5"));
         assertEquals(pattern.example(), "wrapper.on_exit.1");
-        assertEquals(pattern.numericPlaceholders(), 1);
+        assertEquals(pattern.orderedPlaceholders(), 1);
     }
 
     @Test
@@ -67,11 +70,11 @@ public class KeyPatternTest {
         assertFalse(pattern.matches("wrapper.app.env.x."));
         assertFalse(pattern.matches("wrapper.app.envPATH"));
         assertEquals(pattern.example(), "wrapper.app.env.variable");
-        assertEquals(pattern.numericPlaceholders(), 0);
+        assertEquals(pattern.orderedPlaceholders(), 0);
     }
 
     @Test
-    public void mostSpecificFirstRanksLiteralsThenNumericPlaceholders() {
+    public void mostSpecificFirstRanksLiteralsThenOrderedPlaceholders() {
         KeyPattern longer = KeyPattern.of("wrapper.filter.script.<n>.args");
         KeyPattern index = KeyPattern.of("wrapper.x.<n>");
         KeyPattern free = KeyPattern.of("wrapper.x.<name>");
@@ -91,7 +94,9 @@ public class KeyPatternTest {
         assertEquals(KeyPattern.of("wrapper.x.<n>").commonExample(KeyPattern.of("wrapper.x.<name>")),
                 Optional.of("wrapper.x.1"));
         assertTrue(KeyPattern.of("wrapper.a.<n>").commonExample(KeyPattern.of("wrapper.b.<n>")).isEmpty());
-        assertTrue(KeyPattern.of("wrapper.a.<n>").commonExample(KeyPattern.of("wrapper.a.b")).isEmpty());
+        // An index may be a name, so it overlaps an exact key of the same shape (the exact key wins).
+        assertEquals(KeyPattern.of("wrapper.a.<n>").commonExample(KeyPattern.of("wrapper.a.b")),
+                Optional.of("wrapper.a.b"));
         assertTrue(KeyPattern.of("wrapper.a.<n>").commonExample(KeyPattern.of("wrapper.a.<n>.b")).isEmpty());
     }
 
@@ -104,6 +109,15 @@ public class KeyPatternTest {
         assertFalse(pattern.matches("wrapper.filter.script.3.argsx"));
         assertEquals(pattern.example(), "wrapper.filter.script.1.args");
         assertEquals(pattern.literalLength(), "wrapper.filter.script..args".length());
+    }
+
+    @Test
+    public void literalSegmentsMayContainHyphens() {
+        KeyPattern pattern = KeyPattern.of("wrapper.filter.trigger-regex.<n>");
+
+        assertTrue(pattern.matches("wrapper.filter.trigger-regex.2"));
+        assertFalse(pattern.matches("wrapper.filter.trigger.2"));
+        assertEquals(pattern.example(), "wrapper.filter.trigger-regex.1");
     }
 
     @Test
@@ -125,7 +139,7 @@ public class KeyPatternTest {
                 {"wrapper.<n>x"},
                 {"wrapper.<N>"},
                 {"wrapper.<>"},
-                {"wrapper.a-b"},
+                {"wrapper.a+b"},
                 {"wrapper.a b"},
                 {"wrapper.*"},
         };
@@ -153,7 +167,8 @@ public class KeyPatternTest {
         assertEquals(KeyPattern.of("wrapper.java.command").captures("wrapper.java.command"),
                 Optional.of(List.of()));
         assertEquals(KeyPattern.of("wrapper.java.command").captures("wrapper.java.commandx"), Optional.empty());
-        assertEquals(KeyPattern.of("wrapper.x.<n>").captures("wrapper.x.y"), Optional.empty());
+        assertEquals(KeyPattern.of("wrapper.x.<n>").captures("wrapper.x.lib"), Optional.of(List.of("lib")));
+        assertEquals(KeyPattern.of("wrapper.x.<n>").captures("wrapper.x.a b"), Optional.empty());
     }
 
     @Test
@@ -162,8 +177,12 @@ public class KeyPatternTest {
 
         assertEquals(pattern.labels(), List.of("name", "n", "code"));
         assertFalse(pattern.isNumeric(0));
-        assertTrue(pattern.isNumeric(1));
+        assertFalse(pattern.isNumeric(1));
         assertTrue(pattern.isNumeric(2));
+        assertFalse(pattern.isIndex(0));
+        assertTrue(pattern.isIndex(1));
+        assertFalse(pattern.isIndex(2));
+        assertEquals(pattern.orderedPlaceholders(), 2);
         assertTrue(KeyPattern.of("wrapper.x").labels().isEmpty());
     }
 

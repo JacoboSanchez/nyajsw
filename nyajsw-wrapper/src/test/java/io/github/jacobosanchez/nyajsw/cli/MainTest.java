@@ -1,0 +1,215 @@
+package io.github.jacobosanchez.nyajsw.cli;
+
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertTrue;
+
+import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
+import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
+import io.github.jacobosanchez.nyajsw.config.LogLevel;
+import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
+import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
+import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
+import io.github.jacobosanchez.nyajsw.launch.TestApplication;
+import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+
+/** Console mode end to end, with {@link TestApplication} as the application. */
+public class MainTest {
+
+    private Path dir;
+    private ByteArrayOutputStream bytes;
+    private PrintStream out;
+
+    @BeforeMethod
+    public void setUp() throws IOException {
+        dir = Files.createTempDirectory("nyajsw-cli");
+        bytes = new ByteArrayOutputStream();
+        out = new PrintStream(bytes, true, StandardCharsets.UTF_8);
+    }
+
+    @AfterMethod(alwaysRun = true)
+    public void tearDown() throws IOException {
+        try (var paths = Files.walk(dir)) {
+            for (Path path : paths.sorted((a, b) -> b.compareTo(a)).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private String output() {
+        return bytes.toString(StandardCharsets.UTF_8);
+    }
+
+    private Path conf(String... extra) throws Exception {
+        String classes = Path.of(TestApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .toString().replace('\\', '/');
+        List<String> lines = new ArrayList<>(List.of(
+                "wrapper.java.command=" + Path.of(System.getProperty("java.home"), "bin", "java").toString()
+                        .replace('\\', '/'),
+                "wrapper.java.app.mainclass=" + TestApplication.class.getName(),
+                "wrapper.java.classpath.1=" + classes));
+        lines.addAll(List.of(extra));
+        return Files.writeString(dir.resolve("wrapper.conf"), String.join("\n", lines) + "\n", StandardCharsets.UTF_8);
+    }
+
+    @Test(timeOut = 120_000)
+    public void consoleModeRunsTheApplicationAndReturnsItsExitCode() throws Exception {
+        Path conf = conf("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=7", "wrapper.tray=true");
+
+        int code = Main.run(new String[] {"-c", conf.toString()}, out);
+
+        assertEquals(code, 7, output());
+        assertTrue(output().contains("jvm 1    | to stderr"), output());
+        assertTrue(output().contains("wrapper  | jvm 1 exited with code 7"), output());
+        assertTrue(output().contains("wrapper  | warning: "), output()); // the unsupported wrapper.tray
+    }
+
+    @Test
+    public void configurationErrorsAreReportedWithTheirExitCode() throws Exception {
+        Path conf = conf("wrapper.java.maxmemory=lots");
+
+        int code = Main.run(new String[] {"--console", conf.toString()}, out);
+
+        assertEquals(code, ExitCode.CONFIGURATION_ERROR.code());
+        assertTrue(output().contains("wrapper.java.maxmemory"), output());
+    }
+
+    @Test
+    public void launchErrorsAreFatalWithoutAStackTrace() throws Exception {
+        Path conf = conf("wrapper.java.command=" + dir.resolve("missing/java").toString().replace('\\', '/'));
+
+        int code = Main.run(new String[] {"-c", conf.toString()}, out);
+
+        assertEquals(code, ExitCode.UNEXPECTED_ERROR.code());
+        assertTrue(output().contains("wrapper  | the Java executable"), output());
+        assertFalse(output().contains("\tat "), output());
+    }
+
+    @Test
+    public void helpVersionUsageAndCommandsOfLaterPhases() {
+        ByteArrayOutputStream versionBytes = new ByteArrayOutputStream();
+        assertEquals(Main.run(new String[] {"--version"}, new PrintStream(versionBytes, true, StandardCharsets.UTF_8)),
+                ExitCode.SUCCESS.code());
+        assertEquals(versionBytes.toString(StandardCharsets.UTF_8).trim(), "nyajsw (development build)");
+        assertEquals(Main.run(new String[] {"--help"}, out), ExitCode.SUCCESS.code());
+        assertEquals(Main.run(new String[] {}, out), ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(Main.run(new String[] {"-c"}, out), ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(Main.run(new String[] {"-x", "a"}, out), ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(Main.run(new String[] {"-i", "wrapper.conf"}, out), ExitCode.UNEXPECTED_ERROR.code());
+
+        assertTrue(output().contains("usage: nyajsw -c <wrapper.conf>"), output());
+        assertTrue(output().contains("-i is not implemented yet"), output());
+    }
+
+    @Test
+    public void debugRaisesTheConsoleLevel() throws Exception {
+        WrapperConfig plain = load(conf());
+        WrapperConfig quiet = load(conf("wrapper.console.loglevel=ERROR"));
+        WrapperConfig debug = load(conf("wrapper.console.loglevel=ERROR", "wrapper.debug=true"));
+
+        assertEquals(Main.consoleLevel(plain.log()), LogLevel.INFO);
+        assertEquals(Main.consoleLevel(quiet.log()), LogLevel.ERROR);
+        assertEquals(Main.consoleLevel(debug.log()), LogLevel.DEBUG);
+    }
+
+    @Test(timeOut = 120_000)
+    public void stopWaitsForTheShutdownTimeoutThenTerminatesTheApplication() throws Exception {
+        WrapperConfig config = load(conf("wrapper.app.parameter.1=park", "wrapper.shutdown.timeout=1"));
+        ConsoleMode mode;
+        CompletableFuture<Integer> run;
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
+            mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());
+            run = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return mode.run();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            try {
+                awaitOutput("jvm 1    | parked");
+
+                mode.stop();
+
+                int code = run.get(1, TimeUnit.MINUTES);
+                assertTrue(code != 0, "a killed process does not exit with 0: " + code);
+            } finally {
+                mode.stop(); // no parked JVM is left behind when an assertion fails
+            }
+        }
+        assertTrue(output().contains("did not end within 1 s; terminating it"), output());
+        // run() waited for stop(), so its last line was written before the log was closed.
+        assertTrue(output().contains("jvm 1 terminated with"), output());
+    }
+
+    @Test(timeOut = 120_000)
+    public void stopLetsAnApplicationThatEndsByItselfReturnItsCode() throws Exception {
+        WrapperConfig config = load(conf("wrapper.app.parameter.1=linger", "wrapper.app.parameter.2=500",
+                "wrapper.app.parameter.3=3", "wrapper.shutdown.timeout=30"));
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
+            ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
+                    ClasspathExpander.forThisHost());
+            CompletableFuture<Integer> run = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return mode.run();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            try {
+                awaitOutput("jvm 1    | lingering");
+
+                mode.stop();
+
+                assertEquals(run.get(1, TimeUnit.MINUTES), 3);
+            } finally {
+                mode.stop();
+            }
+        }
+        assertTrue(output().contains("stopping: waiting up to 30 s for jvm 1 to end"), output());
+        assertFalse(output().contains("terminating it"), output());
+    }
+
+    @Test
+    public void stopBeforeTheStartStartsNothing() throws Exception {
+        WrapperConfig config = load(conf("wrapper.app.parameter.1=park"));
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
+            ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
+                    ClasspathExpander.forThisHost());
+            mode.stop();
+
+            assertEquals(mode.run(), 0);
+        }
+        assertFalse(output().contains("launching"), output());
+    }
+
+    private static WrapperConfig load(Path conf) {
+        return WrapperConfig.from(new ConfigLoader(Map.of(), Map.of(), false, ConfigKeys.registry()).load(conf));
+    }
+
+    private void awaitOutput(String expected) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(1);
+        while (!output().contains(expected)) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("never saw '" + expected + "': " + output());
+            }
+            Thread.sleep(10); // bounded polling of real process output
+        }
+    }
+}

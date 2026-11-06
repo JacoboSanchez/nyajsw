@@ -33,14 +33,19 @@ import java.util.stream.Collectors;
  *       trimmed. Lines without {@code =} or with an empty key are skipped with a warning.</li>
  *   <li>Blank lines and lines whose first non-blank character is {@code #} or {@code !} are
  *       comments.</li>
- *   <li>Backslashes are literal, except that a line ending in an odd number of backslashes continues
- *       on the next line: the last backslash is dropped and the next line is appended without its
- *       leading whitespace. Blank and comment lines inside a continued value are skipped, as YAJSW
- *       does, so one line of a multi-line value can be commented out. Because of this rule
- *       {@code C:\app\} must be written {@code C:\app\\} or {@code C:/app/}; a continuation line that
- *       looks like a new {@code wrapper.*} entry gets a warning. Doubled backslashes are left as they
- *       are here and normalised by the typed configuration layer. A value still continued at the end
- *       of the file is kept, with a warning.</li>
+ *   <li>A line ending in an odd number of backslashes continues on the next line: the last backslash
+ *       is dropped and the next line is appended without its leading whitespace. Blank and comment
+ *       lines inside a continued value are skipped, as YAJSW does, so one line of a multi-line value
+ *       can be commented out. Because of this rule {@code C:\app\} must be written {@code C:\app\\} or
+ *       {@code C:/app/}; a continuation line that looks like a new {@code wrapper.*} entry gets a
+ *       warning. A value still continued at the end of the file is kept, with a warning.</li>
+ *   <li>In values (and {@code include =} paths) a backslash before another backslash, a comma, a
+ *       quote, a space or one of {@code # = : !} stands for that character, as in YAJSW, whose Commons
+ *       Configuration parser treats the backslash as an escape character and the comma as a list
+ *       delimiter ({@link #unescape}). Every other backslash is literal: like YAJSW, nyajsw keeps
+ *       {@code \a}, but unlike it, it also keeps {@code \t}, {@code \n}, {@code \r}, {@code \f},
+ *       {@code \b} and {@code \}{@code uXXXX}, which YAJSW reads as control characters and Unicode
+ *       escapes, so that Windows paths such as {@code C:\temp} keep their meaning.</li>
  *   <li>{@code #include <path>}, {@code #include.required <path>} and {@code include = <path>} (key
  *       compared case-insensitively) insert another file at that point. A relative path is resolved
  *       against the directory of the including file; when nothing exists there but the path exists
@@ -82,6 +87,33 @@ public final class FileConfigSource implements ConfigSource {
     private static final Charset FALLBACK_CHARSET = Charset.forName("windows-1252");
     /** A continuation line that starts like this was probably meant to be an entry of its own. */
     private static final Pattern LOOKS_LIKE_WRAPPER_ENTRY = Pattern.compile("^wrapper\\.[^\\s=]*\\s*=.*");
+
+    /** The characters a backslash escapes in YAJSW's Commons Configuration files, besides control codes. */
+    private static final String ESCAPED = "\\,\"' #=:!";
+
+    /**
+     * The value with YAJSW's character escapes undone: a backslash before one of {@link #ESCAPED}
+     * stands for that character, so {@code \\} is one backslash and {@code \,} a comma (real configuration files
+     * write {@code -Djava.locale.providers=COMPAT\,SPI} because the comma would otherwise split the
+     * value into a list). Every other backslash is kept as written, including those YAJSW reads as
+     * control-character or Unicode escapes. A comma without a backslash is also kept: nyajsw does not
+     * split values into lists (D7).
+     */
+    static String unescape(String value) {
+        if (value.indexOf('\\') < 0) {
+            return value;
+        }
+        StringBuilder out = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '\\' && i + 1 < value.length() && ESCAPED.indexOf(value.charAt(i + 1)) >= 0) {
+                out.append(value.charAt(++i));
+            } else {
+                out.append(c);
+            }
+        }
+        return out.toString();
+    }
 
     private final Path file;
     private final Interpolator interpolator;
@@ -331,10 +363,10 @@ public final class FileConfigSource implements ConfigSource {
                 return;
             }
             if (key.toLowerCase(Locale.ROOT).equals(INCLUDE_KEY)) {
-                include(path, value, location, true);
+                include(path, unescape(value), location, true);
                 return;
             }
-            entries.add(new ConfigEntry(key, value, location));
+            entries.add(new ConfigEntry(key, unescape(value), location));
         }
 
         /**
@@ -575,10 +607,7 @@ public final class FileConfigSource implements ConfigSource {
     }
 
     private static String unquote(String text) {
-        if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
-            return trim(text.substring(1, text.length() - 1));
-        }
-        return text;
+        return trim(ValueParser.unquote(text));
     }
 
     private static boolean startsWith(byte[] bytes, int... prefix) {

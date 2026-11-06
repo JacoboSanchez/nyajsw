@@ -267,6 +267,68 @@ public class InterpolatorTest {
     }
 
     @Test
+    public void keystoreReferenceIsAnError() {
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> interpolate("wrapper.app.parameter.1", "${keystore dbuser}"));
+
+        assertTrue(e.getMessage().contains("keystore references"), e.getMessage());
+        assertTrue(e.getMessage().contains("${keystore dbuser}"), e.getMessage());
+        assertTrue(e.getMessage().contains("wrapper.app.parameter.1"), e.getMessage());
+    }
+
+    @Test
+    public void secretKeystoreReferenceIsAnErrorWithoutDetails() {
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> interpolate("wrapper.ntservice.password", "${keystore svcpass}"));
+
+        assertTrue(e.getMessage().contains("keystore references"), e.getMessage());
+        assertTrue(e.getMessage().contains("wrapper.ntservice.password"), e.getMessage());
+        assertFalse(e.getMessage().contains("svcpass"), e.getMessage());
+    }
+
+    @DataProvider
+    public Object[][] keystoreSpellings() {
+        return new Object[][] {
+                {"${ keystore x}"},
+                {"${keystore\tx}"},
+                {"${KEYSTORE x}"},
+                {"${keystore 'x'}"},
+                {"${keystore ${x}}"},
+                {"${keystore ${undefined}}"},
+        };
+    }
+
+    @Test(dataProvider = "keystoreSpellings")
+    public void keystoreReferenceIsAnErrorHoweverWritten(String value) {
+        ConfigException e = expectThrows(ConfigException.class, () -> interpolate("x", "svc", "a", value));
+
+        assertTrue(e.getMessage().contains("keystore references"), e.getMessage());
+    }
+
+    @Test
+    public void secretKeystoreReferenceAroundANestedReferenceIsAnErrorWithoutDetails() {
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> interpolate("x", "svc", "wrapper.ntservice.password", "${keystore ${x}}"));
+
+        assertTrue(e.getMessage().contains("keystore references"), e.getMessage());
+        assertFalse(e.getMessage().contains("${x}"), e.getMessage());
+    }
+
+    @Test
+    public void definedKeyNamedLikeAKeystoreReferenceIsResolved() {
+        Interpolator.Result result = interpolate("keystore x", "value", "a", "${keystore x}");
+
+        assertEquals(values(result).get(1), "value");
+    }
+
+    @Test
+    public void namesThatOnlyStartLikeKeystoreAreUnresolvedNotErrors() {
+        Interpolator.Result result = interpolate("a", "${keystore}", "b", "${keystores x}", "c", "${env:keystore x}");
+
+        assertEquals(values(result), List.of("${keystore}", "${keystores x}", "${env:keystore x}"));
+    }
+
+    @Test
     public void namesThatOnlyStartLikeKeywordsAreNotGroovy() {
         Interpolator.Result result = interpolate("newline", "n", "ifx", "i", "definition", "d",
                 "a", "${newline}${ifx}${definition}");
