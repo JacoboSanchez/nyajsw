@@ -534,10 +534,21 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
 - [x] P1.7 `docs/COMPATIBILITY.md` generator (`CompatibilityDocument`) + staleness test
       (`CompatibilityDocTest`; `-Dnyajsw.docs.update=true` rewrites); the hand-written §7 tables are
       retired.
-- [ ] P1.8 Fixtures: a YAJSW-style default template written from scratch, plus the owner's
-      anonymised real configurations as soon as they are provided (§10 Q1; not a blocker).
+- [x] P1.8 Fixtures: a YAJSW-style default template written from scratch, plus the owner's
+      anonymised real configurations as soon as they are provided (§10 Q1; not a blocker; **real
+      configurations still pending**). The template is
+      `src/test/resources/conf/fixtures/yajsw-style/conf/wrapper.conf` (CRLF, doubled backslashes,
+      an include, a continued value, forward-referenced variables, commented-out keys, trailing
+      blanks, quotes and spaces in a JVM option, an account and a password, planned, ignored,
+      unsupported and empty fatal keys). Each fixture directory mirrors an installation and has a
+      `fixture.properties` manifest naming its main file (e.g. `conf/app/service.conf`) and its
+      environment and system properties; `FixtureConfigurationsTest` loads every directory and fails
+      on one without a manifest, so adding a real configuration means adding a directory with a
+      manifest.
 - [ ] P1.9 D7 follow-ups once real fixtures exist: honour `wrapper.conf.encoding`; settle backslash
-      escaping, `include` handling and case of environment names against a real file; check how
+      escaping (including text values such as `wrapper.app.parameter.2=conf\\x.properties`, which
+      nyajsw keeps doubled while Commons Configuration probably reads one backslash), `include`
+      handling and case of environment names against a real file; check how
       YAJSW treats an index written twice (`.7` and `.07`; nyajsw keeps both with a warning, P1.4)
       and a key set twice (nyajsw: last value wins with a warning, P1.5; YAJSW's Commons
       Configuration probably keeps a list whose first value scalar getters return, i.e. first wins);
@@ -546,7 +557,10 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       the doubled-backslash rule for paths, and whether numbers may be written in hex (`0x10`,
       rejected today), and whether YAJSW skips empty list members such as `wrapper.app.parameter.2=`
       (P1.6b skips them), whether account names really need doubled backslashes (P1.6b undoes them),
-      and the path bases of D13; update §4.5.
+      and the path bases of D13; check files converted from Tanuki, where
+      `wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperSimpleApp` takes the real main class
+      from `wrapper.app.parameter.1` (nyajsw ignores `wrapper.java.mainclass`, which would then run
+      the wrong class); update §4.5.
 Done when: every fixture present in the repository loads; every key of the former §7 matrix
 (`ConfigKeysTest.seededKeys`) has a registry entry and a test.
 
