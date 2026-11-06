@@ -912,7 +912,24 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       is given up on. Shares are logged with milliseconds when they have them. An unready
       invocation (P3.3) is ended by the last step directly; the safety nets (unexpected error,
       lost exit) kill the tree without the chain, which may be what failed.
-- [ ] P3.5 `PidFiles` (`wrapper.pidfile`, `wrapper.java.pidfile`).
+- [x] P3.5 `PidFiles` (`wrapper.pidfile`, `wrapper.java.pidfile`).
+      **Done:** `wrapperStarted`/`wrapperEnded` write and remove `wrapper.pidfile`;
+      `tracking(launcher)` wraps the `ApplicationLauncher` so that `wrapper.java.pidfile` holds the
+      pid of each invocation from its start until it has ended, without the supervisor knowing:
+      the wrapped invocation reports its exit through `onExit()` only after the file is removed, so
+      neither a restart nor the end of the wrapper can race with the removal, and a failing
+      `onExit()` still fails inside the supervisor, whose safety net then terminates the
+      application. A lost exit leaves the file, since the process may still run. Content: the pid
+      and a line separator, US-ASCII, written to `<file>.tmp` beside it (a leftover from a crash is
+      reused) and moved over it, so a reader never sees half a number; missing directories are
+      created; a stale file is overwritten. A file is removed only while it still holds the pid
+      this wrapper wrote, so another instance's file is never deleted. A file that cannot be
+      written or removed is an error in the log (path masked, exception kind and the operating
+      system's reason), never a failure: the application matters more. On Windows a reader without
+      delete sharing makes that happen; it is not retried. Paths are wrapper-side, so relative ones
+      resolve against the configuration directory (D13). The keys stay *planned* until P3.6 wires
+      the pid files into console mode, which must remove `wrapper.pidfile` after the supervisor's
+      outcome.
 - [ ] P3.6 Console mode runs through the supervisor (restart loop, Ctrl+C semantics, exit code).
 Done when: all transitions, timeouts and counters are covered by deterministic tests.
 
