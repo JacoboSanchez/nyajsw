@@ -596,7 +596,8 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       from `wrapper.app.parameter.1` (nyajsw ignores `wrapper.java.mainclass`, which would then run
       the wrong class; YAJSW's migration guide says that without `wrapper.java.app.mainclass` it
       takes the first application argument as the main class, so P2.2 should do the same); YAJSW
-      14.01 parses with commons-configuration2 2.15.1, and its migration guide tells users to
+      14.01 parses with commons-configuration2 2.15.1 (13.18 is the reference, §10 Q9; its version
+      is still to be read from its `lib/` folder), and its migration guide tells users to
       double every backslash (or use `/`) and to escape commas as `\,`, which suggests
       backslash-escaping and comma lists in every value, not only in paths (to be confirmed with
       YAJSW-shaped fixtures: commons-configuration2 splits lists only when YAJSW enables it);
@@ -928,6 +929,16 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
    YAJSW as unmaintained and LGPL. Does the motivation still stand (for example Java 21 as the
    wrapper runtime, no Groovy, probes), and which YAJSW version do your services run? Defaults and
    parsing may differ between 12.x and 14.x.
+   *Answer (2026-11-06):* the services run **yajsw-stable-13.18** (2025-10-05). Its readme warns
+   that 13.16 and 13.17 are broken and announces that 14.0 needs JDK 11 or later, because the Groovy
+   bundled with 13.x does not run on JDK 22 or later and Groovy 5 needs JDK 11. So 13.18 is in
+   practice limited to JDK 21 or older, at least wherever its Groovy is loaded (not confirmed for
+   setups without scripts). The 14.00 readme (2026-04-29) adds JDK 24+ support, confirms the JDK 11
+   minimum and upgrades the core libraries, so the 14.01 library versions above (and in P1.9) need
+   not hold for 13.18; the jar names in the 13.18 `lib/` folder settle that. 13.18 is therefore
+   the reference for compatibility checks. The online reference is unversioned (its changes page
+   stops at 12.06, §11), so where it and 13.18 may differ, the 13.18 `doc/` folder and real files
+   decide (Q1). Still open: whether the motivation stands, and the application's Java version (Q1).
 
 ## 11. References
 
