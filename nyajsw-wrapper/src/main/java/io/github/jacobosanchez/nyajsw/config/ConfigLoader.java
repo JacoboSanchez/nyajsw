@@ -90,7 +90,7 @@ public final class ConfigLoader {
 
         Interpolator.Result result = interpolator.interpolate(List.copyOf(merged.values()));
         warnings.addAll(result.warnings());
-        return new LoadedConfig(absolute, result.entries(), layers, warnings);
+        return new LoadedConfig(absolute, result.entries(), layers, warnings, result.externalSecrets());
     }
 
     /**

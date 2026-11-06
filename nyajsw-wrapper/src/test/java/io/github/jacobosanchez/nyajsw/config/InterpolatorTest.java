@@ -354,6 +354,18 @@ public class InterpolatorTest {
     }
 
     @Test
+    public void externalSecretsAreRecordedAndNeverShownByTheResult() {
+        Interpolator withSecrets = new Interpolator(Map.of("db.password", "Sys1"),
+                Map.of("WRAPPER.APP.PASSWORD", "Env2", "PLAIN", "p"), true, ConfigKeys.registry());
+
+        Interpolator.Result result = withSecrets.interpolate(entries(
+                "a", "${sys:db.password}", "b", "${env:wrapper.app.password}", "c", "${PLAIN}", "d", "${a}"));
+
+        assertEquals(result.externalSecrets(), java.util.Set.of(new Secret("Sys1"), new Secret("Env2")));
+        assertFalse(result.toString().contains("Sys1") || result.toString().contains("Env2"), result.toString());
+    }
+
+    @Test
     public void forCurrentProcessReadsThisJvm() {
         Interpolator current = Interpolator.forCurrentProcess();
 

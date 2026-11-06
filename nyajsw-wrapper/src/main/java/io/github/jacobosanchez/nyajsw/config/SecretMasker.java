@@ -3,12 +3,14 @@ package io.github.jacobosanchez.nyajsw.config;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Stream;
 
 /**
  * Hides secrets wherever a configuration value could be shown (AGENTS.md §4.7). The value of a
  * secret key is replaced as a whole; in every other value, each run of characters covered by an
  * occurrence of a secret's text is replaced by one mask, because <code>${...}</code> can copy a
- * password into a key that is not secret ({@code a=${wrapper.app.password}}).
+ * password into a key that is not secret ({@code a=${wrapper.app.password}}), including secrets that
+ * come from outside the configuration ({@link LoadedConfig#externalSecrets()}).
  *
  * <p>Known trade-off of matching text: a short or common secret also masks unrelated text, and the
  * mask's position can hint at the secret (a password {@code Java} shows as {@code C:\****\bin}).
@@ -30,9 +32,11 @@ public final class SecretMasker {
      */
     public SecretMasker(KeyRegistry registry, LoadedConfig config) {
         this.registry = Objects.requireNonNull(registry, "registry");
-        this.secrets = config.entries().stream()
-                .filter(entry -> registry.isSecret(entry.key()) && !entry.value().isEmpty())
-                .map(ConfigEntry::value)
+        this.secrets = Stream.concat(
+                        config.entries().stream()
+                                .filter(entry -> registry.isSecret(entry.key()) && !entry.value().isEmpty())
+                                .map(ConfigEntry::value),
+                        config.externalSecrets().stream().map(Secret::reveal))
                 .distinct()
                 .toList();
     }

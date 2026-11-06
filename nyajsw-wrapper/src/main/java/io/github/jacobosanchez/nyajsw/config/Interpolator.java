@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Resolves <code>${...}</code> variable references in configuration values (plan §4.5).
@@ -146,7 +147,8 @@ public final class Interpolator {
             String value = expansion.entryValue(entry).value();
             resolved.add(value.equals(entry.value()) ? entry : new ConfigEntry(entry.key(), value, entry.location()));
         }
-        return new Result(resolved, expansion.warnings);
+        return new Result(resolved, expansion.warnings,
+                expansion.externalSecrets.stream().map(Secret::new).collect(Collectors.toSet()));
     }
 
     /**
@@ -172,14 +174,19 @@ public final class Interpolator {
     /**
      * The outcome of {@link #interpolate(List)}.
      *
-     * @param entries  the entries with resolved values, in input order, unmodifiable
-     * @param warnings warnings in the order they were raised, unmodifiable
+     * @param entries         the entries with resolved values, in input order, unmodifiable
+     * @param warnings        warnings in the order they were raised, unmodifiable
+     * @param externalSecrets values read from system properties or environment variables whose names
+     *                        the registry marks as secret (<code>${env:wrapper.app.password}</code>,
+     *                        <code>${sys:db.password}</code>): they are no configuration entries, yet
+     *                        copies of them in other values must be hidden too ({@link SecretMasker})
      */
-    public record Result(List<ConfigEntry> entries, List<ConfigWarning> warnings) {
+    public record Result(List<ConfigEntry> entries, List<ConfigWarning> warnings, Set<Secret> externalSecrets) {
 
         public Result {
             entries = List.copyOf(entries);
             warnings = List.copyOf(warnings);
+            externalSecrets = Set.copyOf(externalSecrets);
         }
     }
 
@@ -230,6 +237,8 @@ public final class Interpolator {
         private final List<ConfigWarning> warnings = new ArrayList<>();
         /** Whether a secret key's value was read during this run. */
         private boolean usedSecret;
+        /** Non-empty values read from system properties or the environment under secret names. */
+        private final Set<String> externalSecrets = new LinkedHashSet<>();
 
         Expansion(Function<String, Optional<ConfigEntry>> config, boolean reportEntryProblems) {
             this.config = config;
@@ -344,15 +353,16 @@ public final class Interpolator {
 
         private Optional<Expanded> lookup(String name) {
             String bare = isPrefixed(name) ? name.substring(SYS_PREFIX.length()) : name;
-            if (!bare.isEmpty() && secret(bare)) {
+            boolean secretName = !bare.isEmpty() && secret(bare);
+            if (secretName) {
                 // Whatever source answers (a key, ${sys:...}, ${env:...}), a secret name yields a secret.
                 usedSecret = true;
             }
             if (name.startsWith(SYS_PREFIX)) {
-                return literal(systemProperties.get(name.substring(SYS_PREFIX.length())));
+                return external(systemProperties.get(bare), secretName);
             }
             if (name.startsWith(ENV_PREFIX)) {
-                return literal(environmentVariable(name.substring(ENV_PREFIX.length())).orElse(null));
+                return external(environmentVariable(bare).orElse(null), secretName);
             }
             if (name.isEmpty()) {
                 return Optional.empty();
@@ -362,7 +372,15 @@ public final class Interpolator {
                 return Optional.of(entryValue(entry.get()));
             }
             String property = systemProperties.get(name);
-            return literal(property != null ? property : environmentVariable(name).orElse(null));
+            return external(property != null ? property : environmentVariable(name).orElse(null), secretName);
+        }
+
+        /** A value from outside the configuration; remembered for masking when its name is secret. */
+        private Optional<Expanded> external(String value, boolean secretName) {
+            if (secretName && value != null && !value.isEmpty()) {
+                externalSecrets.add(value);
+            }
+            return literal(value);
         }
 
         private Optional<Expanded> literal(String value) {

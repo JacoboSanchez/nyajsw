@@ -349,8 +349,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   comma lists. A value that leaves the key unset (`ValueParser.isUnset`: empty for non-string keys,
   no list items) is not checked; default-layer entries are not judged; a secret set by a system
   property warns, known key or not. `SecretMasker` hides secret
-  values wherever they appear, including copies made by `${...}`, and `ConfigDump` is the only
-  sanctioned rendering of values.
+  values wherever they appear, including copies made by `${...}`, and copies of secrets read from
+  system properties or environment variables under secret names (`LoadedConfig.externalSecrets`,
+  held as `Secret`s). A secret under a name the registry cannot recognise (`${env:DB_PASS}`) is not
+  detected. `ConfigDump` is the only sanctioned rendering of values.
 * **Typed views** (P1.6b): `WrapperConfig.from(LoadedConfig)` validates and exposes `JavaConfig`,
   `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` records. Nothing outside `config`
   reads raw strings. A value that is unset or does not fit falls back to the constant default;
@@ -714,6 +716,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.9: the default fallback for files that are not valid UTF-8 is a fixed windows-1252; using the
   JVM's `native.encoding` (the Windows ANSI code page, Java 17+) would read files from non-Western
   installations correctly without `wrapper.conf.encoding`. Decide with real files (Q1).
+- PR review: `WrapperConfig` keeps no `SecretMasker` or secret set, while its values (e.g. JVM
+  options) can hold copies of secrets. P2.2's masking form of the command line needs them: expose a
+  masker (or the secret values as `Secret`s) on `WrapperConfig` when the command line is built.
 - P1.6b: no range checks: `wrapper.java.maxmemory=-5`, `wrapper.readiness.tcp.port=70000` or
   `wrapper.liveness.failures=0` are accepted. Add min/max to `KeySpec` (checked by `ValueParser`)
   when the consuming phases implement those keys.
