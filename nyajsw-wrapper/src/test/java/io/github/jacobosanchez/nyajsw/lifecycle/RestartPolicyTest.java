@@ -40,7 +40,7 @@ public class RestartPolicyTest {
     public void aLaunchErrorIsAFailure() {
         RestartPolicy policy = new RestartPolicy(1, SUCCESSFUL);
 
-        policy.notStarted();
+        policy.failed();
 
         assertEquals(policy.failures(), 1);
         assertFalse(policy.mayRestart());

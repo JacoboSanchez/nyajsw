@@ -24,7 +24,7 @@ public class StateTest {
     /** The transitions of plan §4.6 as far as they are implemented; every pair not listed is refused. */
     private static final Map<State, Set<State>> EXPECTED = new EnumMap<>(Map.of(
             IDLE, EnumSet.of(STARTING, STOPPED, FAILED),
-            STARTING, EnumSet.of(RUNNING, RESTART_WAIT, FAILED),
+            STARTING, EnumSet.of(RUNNING, STOPPING, RESTART_WAIT, IDLE, STOPPED, FAILED),
             RUNNING, EnumSet.of(STOPPING, RESTART_WAIT, IDLE, STOPPED, FAILED),
             STOPPING, EnumSet.of(STOPPED, FAILED),
             RESTART_WAIT, EnumSet.of(STARTING, STOPPED, FAILED),

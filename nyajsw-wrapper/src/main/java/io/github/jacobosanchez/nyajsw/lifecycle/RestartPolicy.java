@@ -6,8 +6,8 @@ import java.util.Objects;
 /**
  * Counts failed invocations in a row and says when to give up (plan §4.6, as YAJSW documents {@code
  * wrapper.max_failed_invocations} and {@code wrapper.successful_invocation_time}): an invocation
- * that cannot be started, or that ends before it has run for the successful-invocation time, is a
- * failure; one that runs at least that long resets the count. Once the count reaches the maximum
+ * that cannot be started, does not become ready, or ends before it has run for the
+ * successful-invocation time, is a failure; one that runs at least that long resets the count. Once the count reaches the maximum
  * there is no further restart.
  *
  * <p>Mutable, and used only by the supervisor's own thread.
@@ -37,8 +37,11 @@ final class RestartPolicy {
         }
     }
 
-    /** Records an invocation that could not be started. */
-    void notStarted() {
+    /**
+     * Records an invocation that failed whatever its run time: it could not be started or did not
+     * become ready.
+     */
+    void failed() {
         failures++;
     }
 

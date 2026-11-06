@@ -8,6 +8,7 @@ import static io.github.jacobosanchez.nyajsw.lifecycle.State.STARTING;
 import static io.github.jacobosanchez.nyajsw.lifecycle.State.STOPPED;
 import static io.github.jacobosanchez.nyajsw.lifecycle.State.STOPPING;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
@@ -18,6 +19,10 @@ import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
 import io.github.jacobosanchez.nyajsw.launch.LaunchException;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.probe.ProbeRegistry;
+import io.github.jacobosanchez.nyajsw.probe.ProbeResult;
+import io.github.jacobosanchez.nyajsw.probe.ProbeRunner;
+import io.github.jacobosanchez.nyajsw.probe.ProcessProbe;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -35,7 +40,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -48,15 +55,21 @@ public class SupervisorTest {
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration SUCCESSFUL_TIME = Duration.ofSeconds(60);
     private static final int MAX_FAILED = 5;
+    private static final Duration READINESS_INTERVAL = Duration.ofSeconds(1);
+    private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(30);
 
     private FakeScheduler scheduler;
     private List<FakeApplication> launched;
     private List<String> transitions;
     private ByteArrayOutputStream logBytes;
     private WrapperLog log;
+    /** The default readiness: the process probe, checked every second. */
+    private ProbeRunner readiness;
 
     @BeforeMethod
     public void setUp() {
+        readiness = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe(ProcessProbe.TYPE, new ProcessProbe())),
+                READINESS_INTERVAL);
         scheduler = new FakeScheduler();
         launched = new CopyOnWriteArrayList<>();
         transitions = new CopyOnWriteArrayList<>();
@@ -76,7 +89,7 @@ public class SupervisorTest {
     private static LifecycleConfig lifecycle(ControlMode control, ExitAction defaultAction,
             Map<Integer, ExitAction> actions, int maxFailedInvocations, Duration startupDelay) {
         return new LifecycleConfig(control, actions, defaultAction, RESTART_DELAY, maxFailedInvocations,
-                SUCCESSFUL_TIME, startupDelay, Duration.ofSeconds(30), SHUTDOWN_TIMEOUT, Optional.empty(),
+                SUCCESSFUL_TIME, startupDelay, STARTUP_TIMEOUT, SHUTDOWN_TIMEOUT, Optional.empty(),
                 Optional.empty(), List.of("terminate"), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
@@ -85,7 +98,8 @@ public class SupervisorTest {
     }
 
     private Supervisor supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher) {
-        return new Supervisor(lifecycle, launcher, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+        return new Supervisor(lifecycle, launcher, readiness, Runnable::run, scheduler, log,
+                (from, to) -> transitions.add(from + "->" + to));
     }
 
     private FakeApplication launch(int invocation) {
@@ -274,8 +288,7 @@ public class SupervisorTest {
     @Test
     public void anApplicationThatSurvivesTerminationIsGivenUp() {
         FakeApplication stubborn = new FakeApplication(1).survivingTermination();
-        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), invocation -> stubborn,
-                scheduler, log, (from, to) -> { });
+        Supervisor supervisor = supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), invocation -> stubborn);
         supervisor.start();
         supervisor.runPending();
 
@@ -689,8 +702,8 @@ public class SupervisorTest {
 
     @Test
     public void aFailingListenerIsLoggedAndSupervisionGoesOn() {
-        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch,
-                scheduler, log, (from, to) -> {
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                Runnable::run, scheduler, log, (from, to) -> {
             throw new IllegalStateException("listener broke");
         });
 
@@ -701,6 +714,283 @@ public class SupervisorTest {
 
         assertEquals(supervisor.state(), STOPPED);
         assertTrue(logged().contains("a state listener failed on IDLE -> STARTING"), logged());
+    }
+
+    /** Makes readiness depend on {@code ready}; the probe reports {@code not yet} until then. */
+    private void readinessWhen(AtomicBoolean ready) {
+        readiness = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("custom",
+                context -> ready.get() ? ProbeResult.pass("answers") : ProbeResult.fail("not yet"))),
+                READINESS_INTERVAL);
+    }
+
+    private Supervisor starting(LifecycleConfig lifecycle) {
+        Supervisor supervisor = supervisor(lifecycle);
+        supervisor.start();
+        supervisor.runPending();
+        assertEquals(supervisor.state(), STARTING);
+        return supervisor;
+    }
+
+    @Test
+    public void theApplicationIsRunningOnlyOnceTheProbesPass() {
+        AtomicBoolean ready = new AtomicBoolean();
+        readinessWhen(ready);
+        Supervisor supervisor = starting(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+
+        advance(supervisor, READINESS_INTERVAL.multipliedBy(3));
+        assertEquals(supervisor.state(), STARTING);
+
+        ready.set(true);
+        advance(supervisor, READINESS_INTERVAL);
+        assertEquals(supervisor.state(), RUNNING);
+        assertTrue(logged().contains("jvm 1 is ready (custom)"), logged());
+        assertEquals(scheduler.pending(), 0, "neither the startup timeout nor another check is left");
+    }
+
+    @Test
+    public void anApplicationNotReadyWithinTheStartupTimeoutIsTerminatedAndRestartedAfterItEnded() {
+        readinessWhen(new AtomicBoolean());
+        Supervisor supervisor = starting(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+        FakeApplication unready = launched.get(0).survivingTermination();
+
+        advance(supervisor, STARTUP_TIMEOUT.minusMillis(1));
+        assertEquals(supervisor.state(), STARTING);
+        advance(supervisor, Duration.ofMillis(1));
+        assertEquals(supervisor.state(), RESTART_WAIT);
+        assertEquals(unready.terminations(), 1, "terminated at once, not after wrapper.shutdown.timeout");
+        assertTrue(logged().contains("jvm 1 did not become ready within 30 s (wrapper.startup.timeout); last check:"
+                + " custom: not yet; terminating it"), logged());
+
+        advance(supervisor, RESTART_DELAY);
+        assertEquals(launched.size(), 1, "no restart before the terminated invocation has ended");
+        unready.exit(1);
+        supervisor.runPending();
+        assertFalse(logged().contains("exit code 1 means"), "no exit action: the wrapper ended it");
+        advance(supervisor, RESTART_DELAY.minusMillis(1));
+        assertEquals(launched.size(), 1);
+        advance(supervisor, Duration.ofMillis(1));
+
+        assertEquals(supervisor.state(), STARTING);
+        assertEquals(launched.size(), 2);
+        assertEquals(transitions, List.of("IDLE->STARTING", "STARTING->RESTART_WAIT", "RESTART_WAIT->STARTING"),
+                "never STOPPING, which a service host would report as a stop");
+    }
+
+    @Test
+    public void notBecomingReadyIsAFailureEvenWhenTheStartupTimeoutExceedsTheSuccessfulTime() {
+        readinessWhen(new AtomicBoolean());
+        Duration longStartup = SUCCESSFUL_TIME.plusSeconds(30);
+        Supervisor supervisor = starting(new LifecycleConfig(ControlMode.TIGHT, Map.of(), ExitAction.SHUTDOWN,
+                RESTART_DELAY, 1, SUCCESSFUL_TIME, Duration.ZERO, longStartup, SHUTDOWN_TIMEOUT, Optional.empty(),
+                Optional.empty(), List.of("terminate"), Optional.empty(), Optional.empty(), Optional.empty()));
+
+        advance(supervisor, longStartup);
+
+        assertEquals(supervisor.state(), FAILED);
+        assertEquals(launched.get(0).terminations(), 1);
+        assertTrue(logged().contains("does not become ready"), logged());
+    }
+
+    @Test
+    public void aStartupTimeoutOfZeroMeansNoLimit() {
+        AtomicBoolean ready = new AtomicBoolean();
+        readinessWhen(ready);
+        Supervisor supervisor = starting(new LifecycleConfig(ControlMode.TIGHT, Map.of(), ExitAction.SHUTDOWN,
+                RESTART_DELAY, MAX_FAILED, SUCCESSFUL_TIME, Duration.ZERO, Duration.ZERO, SHUTDOWN_TIMEOUT,
+                Optional.empty(), Optional.empty(), List.of("terminate"), Optional.empty(), Optional.empty(),
+                Optional.empty()));
+
+        advance(supervisor, Duration.ofHours(2));
+        assertEquals(supervisor.state(), STARTING);
+        ready.set(true);
+        advance(supervisor, READINESS_INTERVAL);
+
+        assertEquals(supervisor.state(), RUNNING);
+    }
+
+    @Test
+    public void aLateResultOfAnEarlierInvocationIsIgnored() {
+        List<Runnable> checks = new ArrayList<>();
+        AtomicBoolean ready = new AtomicBoolean();
+        readinessWhen(ready);
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.RESTART, Map.of()), this::launch, readiness,
+                checks::add, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+        supervisor.start();
+        supervisor.runPending();
+        Runnable firstCheck = checks.get(0); // jvm 1's check, still pending
+
+        launched.get(0).exit(1);
+        supervisor.runPending();
+        advance(supervisor, RESTART_DELAY);
+        assertEquals(supervisor.state(), STARTING);
+        ready.set(true);
+        firstCheck.run(); // passes, but for jvm 1
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), STARTING, "jvm 2 has not been checked yet");
+    }
+
+    @Test
+    public void aLostExitOfATerminatedUnreadyInvocationFailsSupervision() {
+        readinessWhen(new AtomicBoolean());
+        Supervisor supervisor = starting(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+        FakeApplication unready = launched.get(0).survivingTermination();
+        advance(supervisor, STARTUP_TIMEOUT);
+
+        unready.loseTrack(new IllegalStateException("reaper gone"));
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), FAILED);
+    }
+
+    @Test
+    public void aProbeExecutorThatRejectsALaterCheckFailsSupervision() {
+        readinessWhen(new AtomicBoolean());
+        AtomicBoolean shutDown = new AtomicBoolean();
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                task -> {
+                    if (shutDown.get()) {
+                        throw new RejectedExecutionException("shut down");
+                    }
+                    task.run();
+                }, scheduler, log, (from, to) -> { });
+        supervisor.start();
+        supervisor.runPending();
+
+        shutDown.set(true);
+        advance(supervisor, READINESS_INTERVAL);
+
+        assertEquals(supervisor.state(), FAILED);
+        assertEquals(launched.get(0).terminations(), 1);
+    }
+
+    @Test(dataProvider = "actions")
+    public void anExitWhileStartingAppliesItsAction(ExitAction action) {
+        readinessWhen(new AtomicBoolean());
+        Supervisor supervisor = starting(lifecycle(ControlMode.APPLICATION, ExitAction.SHUTDOWN, Map.of(3, action),
+                MAX_FAILED, Duration.ZERO));
+
+        launched.get(0).exit(3);
+        supervisor.runPending();
+
+        State expected = switch (action) {
+            case RESTART -> RESTART_WAIT;
+            case SHUTDOWN -> STOPPED;
+            case STOP -> IDLE;
+        };
+        assertEquals(supervisor.state(), expected);
+        assertEquals(scheduler.pending(), action == ExitAction.RESTART ? 1 : 0, "only a restart timer is left");
+    }
+
+    @Test
+    public void aStopWhileStartingStopsWithoutRestart() {
+        readinessWhen(new AtomicBoolean());
+        Supervisor supervisor = starting(lifecycle(ExitAction.RESTART, Map.of()));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        assertEquals(supervisor.state(), STOPPING);
+        launched.get(0).exit(0);
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), STOPPED);
+        advance(supervisor, STARTUP_TIMEOUT.plus(RESTART_DELAY));
+        assertEquals(launched.size(), 1);
+    }
+
+    @Test
+    public void aStopWhileStartingUnderLooseLeavesTheApplicationRunning() {
+        readinessWhen(new AtomicBoolean());
+        Supervisor supervisor = starting(lifecycle(ControlMode.LOOSE, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ZERO));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), STOPPED);
+        assertTrue(launched.get(0).isAlive());
+    }
+
+    @Test
+    public void aStopRequestWhileAnUnreadyInvocationEndsCancelsItsRestart() {
+        readinessWhen(new AtomicBoolean());
+        Supervisor supervisor = starting(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+        launched.get(0).survivingTermination();
+        advance(supervisor, STARTUP_TIMEOUT);
+        assertEquals(supervisor.state(), RESTART_WAIT);
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        launched.get(0).exit(0);
+        supervisor.runPending();
+        advance(supervisor, RESTART_DELAY);
+
+        assertEquals(supervisor.state(), STOPPED);
+        assertEquals(launched.size(), 1);
+        assertTrue(logged().contains("stopping: jvm 1 has been terminated and will not be restarted"), logged());
+    }
+
+    @Test
+    public void anApplicationNotReadyThatSurvivesTerminationFailsInsteadOfRestarting() {
+        readinessWhen(new AtomicBoolean());
+        FakeApplication stubborn = new FakeApplication(1).survivingTermination();
+        Supervisor supervisor = supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), invocation -> stubborn);
+        supervisor.start();
+        supervisor.runPending();
+
+        advance(supervisor, STARTUP_TIMEOUT);
+        advance(supervisor, Supervisor.AFTER_TERMINATION.minusMillis(1));
+        assertEquals(supervisor.state(), RESTART_WAIT);
+        advance(supervisor, Duration.ofMillis(1));
+
+        assertEquals(supervisor.state(), FAILED);
+        assertTrue(logged().contains("giving up on it instead of starting the application again"), logged());
+    }
+
+    @Test
+    public void aReadinessResultThatArrivesAfterTheStateChangedIsIgnored() {
+        List<Runnable> checks = new ArrayList<>();
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                checks::add, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+        supervisor.start();
+        supervisor.runPending();
+        assertEquals(checks.size(), 1, "the first check is queued at once");
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        checks.get(0).run(); // the process probe passes, but too late
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), STOPPING);
+        assertFalse(transitions.contains("STARTING->RUNNING"), transitions.toString());
+    }
+
+    @Test
+    public void aReadinessCheckThatThrowsIsANotReadyResult() {
+        readiness = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("broken", context -> {
+            throw new IllegalStateException("secret-looking detail");
+        })), READINESS_INTERVAL);
+        Supervisor supervisor = starting(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+
+        advance(supervisor, STARTUP_TIMEOUT);
+
+        assertEquals(supervisor.state(), RESTART_WAIT);
+        assertTrue(logged().contains("last check: broken: the probe threw java.lang.IllegalStateException"),
+                logged());
+        assertFalse(logged().contains("secret-looking detail"), logged());
+    }
+
+    @Test
+    public void aProbeExecutorThatRejectsTheCheckFailsSupervision() {
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                task -> {
+                    throw new RejectedExecutionException("shut down");
+                }, scheduler, log, (from, to) -> { });
+        supervisor.start();
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), FAILED);
+        assertEquals(launched.get(0).terminations(), 1);
     }
 
     @Test
@@ -715,8 +1005,8 @@ public class SupervisorTest {
     public void runProcessesEventsUntilSupervisionIsOver() throws Exception {
         CountDownLatch supervisorRunning = new CountDownLatch(1);
         CountDownLatch stopping = new CountDownLatch(1);
-        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch,
-                scheduler, log, (from, to) -> {
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                Runnable::run, scheduler, log, (from, to) -> {
             if (to == RUNNING) {
                 supervisorRunning.countDown();
             }

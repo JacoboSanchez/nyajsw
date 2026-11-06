@@ -436,8 +436,9 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
   `ERROR_SERVICE_SPECIFIC_ERROR`. Note that SCM recovery (failure actions) ignores a service that
   reports `STOPPED` unless `SERVICE_CONFIG_FAILURE_ACTIONS_FLAG` is set; nyajsw sets that flag
   whenever failure actions are configured (P9) and the migration guide explains the interplay (R6).
-* **Startup**: `wrapper.startup.timeout` (default 30 s) bounds readiness. On timeout the invocation
-  is treated as failed and the restart policy applies.
+* **Startup**: `wrapper.startup.timeout` (default 30 s, 0 for no limit) bounds readiness. On
+  timeout the invocation is treated as failed (whatever its run time), the application is
+  terminated and the restart policy applies (P3.3).
 * **Stop sequence**: an ordered chain of `StopStrategy` instances from `StopStrategyRegistry`,
   selected by `wrapper.stop.strategy`. The registry and the `terminate` strategy exist from P3;
   P7 registers `agent` and changes the default to `agent,terminate` whenever
@@ -864,8 +865,29 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       coupled (`wrapperEndsWithApplication`, `applicationEndsWithWrapper`, also for the job object
       of P6.4); under `LOOSE`/`WRAPPER` a stop request leaves the application running and ends
       `STOPPED`. The keys stay *planned* until console mode runs through the supervisor (P3.6).
-- [ ] P3.3 `Probe` SPI, `ProbeContext`/`ProbeResult`, `ProbeRegistry`, `ProbeRunner` and
+- [x] P3.3 `Probe` SPI, `ProbeContext`/`ProbeResult`, `ProbeRegistry`, `ProbeRunner` and
       `ProcessProbe`; `wrapper.startup.timeout` bounds readiness.
+      **Done:** `ProbeRegistry.defaults()` maps type names to factories over `ProbeConfig` (only
+      `process` so far; P7 adds entries) and refuses unknown types; `ProbeRunner` holds the probes
+      that must all pass and the interval, checks them in order up to the first failure, and turns
+      an exception (or no result) into a failure named by exception class only, since a message may
+      quote a configured value. `ProbeContext` carries the invocation; probes get their settings
+      when created, and one instance serves every invocation (per-invocation state is keyed on the
+      context's application). The supervisor stays `STARTING` until a check passes: it checks at
+      once, then every interval, on a probe executor (a check may block; each check needs its own
+      thread so a hung one cannot hold up the next invocation's), and takes the result as an
+      event, ignored when the state or invocation changed meanwhile; the task posts a result
+      whatever happens. A state may now hold several timers (startup timeout and next check), all
+      cancelled when it changes. Not ready within `wrapper.startup.timeout` (0: no limit, as in
+      the Tanuki format) → error with the last check's detail, a failed invocation, and the
+      application is terminated at once, whatever `wrapper.control` says, as the Tanuki/YAJSW
+      startup timeout kills the JVM. The restart waits in `RESTART_WAIT` for the terminated
+      invocation to end, then `wrapper.restart.delay`; it never passes through `STOPPING`, so the
+      service host (P6) cannot mistake it for a stop. A stop request meanwhile cancels the
+      restart, and an invocation still alive 10 s after termination ends `FAILED` instead of being
+      restarted beside itself. An exit while `STARTING` applies its exit action as when `RUNNING`,
+      and a stop request is handled the same way. `wrapper.readiness.type`/`interval` stay
+      *planned* (P7), so the wiring (P3.6) uses their defaults: `process`, every second.
 - [ ] P3.4 `StopStrategy` SPI, `StopStrategyRegistry`, `TerminateStopStrategy` (process tree),
       `wrapper.stop.strategy` (default `terminate` for now), `wrapper.shutdown.timeout` plus
       `wrapper.jvm_exit.timeout`.
@@ -1018,6 +1040,12 @@ entry names the commit/plan item it came from; remove entries when addressed.
   error would suit scripts better.
 - P3.1: `ConsoleMode` still has its own stop sequence (wait `wrapper.shutdown.timeout`, terminate,
   wait 10 s) next to the supervisor's; P3.6 replaces it with the supervisor and must remove it.
+- P3.3: when P7 makes `wrapper.readiness.type` supported, an unknown type must be a
+  `ConfigException` naming the key, not the registry's `IllegalArgumentException`; the probe
+  factories will also change when `ProbeConfig` is split per probe (see the P1.6b entry).
+  `ProbeContext` hands probes the whole `RunningApplication`, `terminateTree()` included; a
+  narrower view would suit probes that are not ours. The meaning of `wrapper.startup.timeout=0`
+  (no limit) comes from the Tanuki format and is unconfirmed for YAJSW (§10 Q1).
 - P3.2: under `LOOSE`/`WRAPPER` the application "keeps running" after the wrapper ends, but its
   standard output and error are pipes the wrapper owns, so it loses them (and may fail writing to
   them), and in console mode it shares the console and its Ctrl+C. P3.6/P6 must decide: redirect
