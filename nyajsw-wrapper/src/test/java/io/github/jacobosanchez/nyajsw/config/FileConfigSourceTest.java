@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.testng.SkipException;
@@ -307,14 +308,107 @@ public class FileConfigSourceTest {
         assertTrue(content.warnings().get(0).message().contains("#include.debug"));
     }
 
-    @Test
-    public void variableInIncludePathIsReportedAsUnsupported() throws IOException {
-        Path main = write("main.conf", "include = ${wrapper_home}/conf/extra.conf\n");
+    // ---- variables in include paths ----
 
-        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main).read());
+    @Test
+    public void includePathResolvesKeysDefinedEarlierRecursively() throws IOException {
+        Path extra = write("conf/extra.conf", "e=1\n");
+        Path main = write("main.conf", "app_home=" + slashes(dir) + "\nconf_dir=${app_home}/conf\n"
+                + "include = ${conf_dir}/extra.conf\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(2), entry("e", "1", extra, 1));
+        assertTrue(content.warnings().isEmpty(), content.warnings().toString());
+    }
+
+    @Test
+    public void includePathResolvesSystemPropertiesAndEnvironment() throws IOException {
+        Path extra = write("conf/extra.conf", "e=1\n");
+        Path main = write("main.conf", "#include.required ${sys:base}/${env:SUB}/extra.conf\n");
+
+        SourceContent content = new FileConfigSource(main,
+                interpolator(Map.of("base", slashes(dir)), Map.of("SUB", "conf"))).read();
+
+        assertEquals(content.entries(), List.of(entry("e", "1", extra, 1)));
+    }
+
+    @Test
+    public void includePathUsesTheLastDefinitionReadBeforeTheIncludeLine() throws IOException {
+        Path second = write("b/x.conf", "from=b\n");
+        write("a/x.conf", "from=a\n");
+        write("c/x.conf", "from=c\n");
+        Path main = write("main.conf", "sub=a\nsub=b\ninclude = ${sub}/x.conf\nsub=c\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(2), entry("from", "b", second, 1));
+    }
+
+    @Test
+    public void includedFileSeesKeysOfTheIncludingFile() throws IOException {
+        Path leaf = write("conf/leaf.conf", "l=1\n");
+        write("conf/middle.conf", "include = ${root}/conf/leaf.conf\n");
+        Path main = write("main.conf", "root=" + slashes(dir) + "\ninclude = conf/middle.conf\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(1), entry("l", "1", leaf, 1));
+    }
+
+    @Test
+    public void unresolvedVariableInRequiredIncludeIsAnError() throws IOException {
+        Path main = write("main.conf", "include = ${wrapper_home}/conf/extra.conf\nwrapper_home=late\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
 
         assertEquals(e.location().orElseThrow(), new ConfigLocation(main.toString(), 1));
-        assertTrue(e.getMessage().contains("variables in include paths are not supported yet"), e.getMessage());
+        assertTrue(e.getMessage().contains("unresolved variable in include path ${wrapper_home}/conf/extra.conf"),
+                e.getMessage());
+    }
+
+    @Test
+    public void variableLeftUnresolvedInAReferencedKeyMakesTheIncludeFail() throws IOException {
+        Path main = write("main.conf", "base=${missing}\ninclude = ${base}/x.conf\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("unresolved variable in include path ${base}/x.conf"), e.getMessage());
+    }
+
+    @Test
+    public void optionalIncludeWithGroovyOrCycleInItsPathIsSkippedWithWarning() throws IOException {
+        Path main = write("main.conf", "a=${a}\n#include ${util.f('x')}\n#include ${a}/x.conf\nk=v\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(1), entry("k", "v", main, 4));
+        assertEquals(content.warnings().stream().map(w -> w.location().line()).toList(), List.of(2, 3));
+        assertTrue(content.warnings().get(0).message().startsWith("optional include skipped, Groovy"),
+                content.warnings().toString());
+        assertTrue(content.warnings().get(1).message().contains("cycle"), content.warnings().toString());
+    }
+
+    @Test
+    public void groovyInIncludePathIsAnError() throws IOException {
+        Path main = write("main.conf", "include = ${util.inquireCLI('path')}\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("Groovy"), e.getMessage());
+    }
+
+    @Test
+    public void includePathThatResolvesToNothingIsAnError() throws IOException {
+        Path main = write("main.conf", "empty=\ninclude = ${empty}\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("include path is empty"), e.getMessage());
     }
 
     @Test
@@ -439,7 +533,7 @@ public class FileConfigSourceTest {
         Files.createDirectories(dir.resolve("folder"));
         Path main = write("main.conf", "#include\n#include ${home}/x.conf\n#include folder\nk=v\n");
 
-        SourceContent content = new FileConfigSource(main).read();
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
 
         assertEquals(content.entries(), List.of(entry("k", "v", main, 4)));
         assertEquals(content.warnings().stream().map(w -> w.location().line()).toList(), List.of(1, 2, 3));
@@ -526,6 +620,15 @@ public class FileConfigSourceTest {
         Files.createDirectories(file.getParent());
         Files.writeString(file, content, StandardCharsets.UTF_8);
         return file.toAbsolutePath().normalize();
+    }
+
+    private static Interpolator interpolator(Map<String, String> systemProperties, Map<String, String> environment) {
+        return new Interpolator(systemProperties, environment, false, ConfigKeys.registry());
+    }
+
+    /** The path with forward slashes, which configuration values may contain on every OS. */
+    private static String slashes(Path path) {
+        return path.toString().replace('\\', '/');
     }
 
     private static Path fixture(String name) throws URISyntaxException {
