@@ -1,7 +1,7 @@
 # nyajsw — Implementation Plan
 
 Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
-Last updated: 2026-11-06
+Last updated: 2026-11-07
 
 How to use this document: pick the next unchecked item in §5, implement it following
 [AGENTS.md](../AGENTS.md), and update the checkbox, the decisions log (§9) and the compatibility
@@ -176,8 +176,8 @@ older JVMs than the wrapper requires.
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
 | `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode`, `ConsoleMode` (P2.5; the supervisor takes over in P3.6) |
 | `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `CompatibilityDocument`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
-| `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
-| `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
+| `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess` (a `RunningApplication`, started per invocation through an `ApplicationLauncher`), `OutputPump`, `LaunchException` |
+| `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `Scheduler`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
 | `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (fixed layout until P4), `LogFormat`, `RollingFileHandler` |
@@ -411,7 +411,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
 ### 4.6 Lifecycle, restart and stop semantics
 
 State machine in `Supervisor`: `IDLE → STARTING → (readiness) → RUNNING → STOPPING → STOPPED`,
-with `RESTART_WAIT` between invocations and `FAILED` when the restart policy gives up.
+with `RESTART_WAIT` between invocations and `FAILED` when the restart policy gives up. `IDLE` is
+also where the wrapper waits after a `STOP` exit action. The allowed moves are listed once, in
+`State`; the supervisor processes one event at a time on its own thread, timers come from a
+`Scheduler`, so every transition is tested with a fake clock (P3.1).
 
 * **Exit handling**: `wrapper.on_exit.<code>` / `wrapper.on_exit.default` → `RESTART`,
   `SHUTDOWN` (stop application and wrapper/service) or `STOP` (stop the application, keep the
@@ -823,8 +826,26 @@ captured on Linux and Windows.
 
 ### P3 — Supervisor, probe SPI and stop strategies
 Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake clock/process.
-- [ ] P3.1 `Supervisor` state machine and `State` transitions (table-driven tests), including
+- [x] P3.1 `Supervisor` state machine and `State` transitions (table-driven tests), including
       "no exit actions while `STOPPING`".
+      **Done:** `State.successors()` is the one transition table and the supervisor refuses any
+      other move. The supervisor handles one event at a time on the thread that calls `run()` (the
+      start, an exit, `requestStop()` from any thread, timers of a `Scheduler`), so tests drive it
+      step by step with a fake scheduler and fake processes (`launch.RunningApplication`, which
+      `ApplicationProcess` implements, started through `launch.ApplicationLauncher` per
+      invocation). A `StateListener` sees every change (for the service host, P6). Interim
+      behaviour that later items replace: a started application counts as ready (P3.3); an exit
+      applies `LifecycleConfig.exitAction` directly, `RESTART` waits `wrapper.restart.delay` without
+      counting failures and `STOP` returns to `IDLE`, where the wrapper waits to be stopped (P3.2);
+      a stop waits `wrapper.shutdown.timeout`, then terminates the tree and gives up on a process
+      still alive 10 s later, ending `STOPPED` (P3.4); a launch error or an exit that cannot be
+      observed ends `FAILED`. Exits while `STOPPING` only end the stop. Any unexpected error while
+      handling an event (a collaborator that throws) is logged, a live application is terminated
+      and supervision ends `FAILED`, which every state that is not terminal may move to, so the
+      wrapper never hangs with the application unwatched. One timer counts at a time; each change
+      of state cancels it (`Scheduler.Timer`). The outcome's exit code is that of the last
+      invocation, never an earlier one's. The supervisor is not wired into console mode yet (P3.6,
+      which also brings the real `Scheduler` and a way for other threads to wait for the outcome).
 - [ ] P3.2 `ExitActionResolver` (on `config.ExitAction` / `LifecycleConfig.exitAction`) and `RestartPolicy`
       (`restart.delay`, `max_failed_invocations`, `successful_invocation_time`, `startup.delay`),
       `wrapper.control`, and whether `STOP` keeps the wrapper alive under every `wrapper.control`.
@@ -980,6 +1001,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
   carry them.
 - P2.5: usage messages and "not implemented yet" go to standard output with everything else; standard
   error would suit scripts better.
+- P3.1: `ConsoleMode` still has its own stop sequence (wait `wrapper.shutdown.timeout`, terminate,
+  wait 10 s) next to the supervisor's; P3.6 replaces it with the supervisor and must remove it.
+  `wrapper.successful_invocation_time` (P3.2) needs a clock, which `Scheduler` does not have yet.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
