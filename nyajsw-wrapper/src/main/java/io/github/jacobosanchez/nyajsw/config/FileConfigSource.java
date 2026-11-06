@@ -15,6 +15,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -39,9 +40,12 @@ import java.util.stream.Collectors;
  *       compared case-insensitively) insert another file at that point. A relative path is resolved
  *       against the directory of the including file; when nothing exists there but the path exists
  *       relative to the main configuration file, as YAJSW resolved it, that file is used with a
- *       warning. Surrounding double quotes are removed. A missing file, an include cycle or a
- *       {@code ${...}} variable in the path (not supported yet) is an error naming file and line.
- *       Other {@code #include.*} directives are ignored with a warning.</li>
+ *       warning. Surrounding double quotes are removed. {@code #include.required} and
+ *       {@code include =} are <em>required</em>: a missing file or a {@code ${...}} variable in the
+ *       path (not supported yet) is an error naming file and line. A plain {@code #include} is
+ *       optional, as in the Tanuki format it comes from (and YAJSW treats it as a comment): the same
+ *       problems only produce a warning. An include cycle is always an error. Other
+ *       {@code #include.*} directives are ignored with a warning.</li>
  *   <li>Files are read as UTF-8; a leading byte order mark is skipped. A file without a byte order
  *       mark that is not valid UTF-8 is read as windows-1252, the usual encoding of files edited
  *       with Notepad on Western-European Windows, with a warning. UTF-16 files (byte order mark
@@ -58,6 +62,8 @@ public final class FileConfigSource implements ConfigSource {
     private static final String HASH_INCLUDE = "#include";
     private static final String HASH_INCLUDE_REQUIRED = "#include.required";
     private static final String INCLUDE_KEY = "include";
+    /** An unsupported {@code #include.*} directive name, cut before anything that could be a value. */
+    private static final Pattern OTHER_HASH_INCLUDE = Pattern.compile("^#include\\.[A-Za-z0-9_.]*");
     private static final Charset FALLBACK_CHARSET = Charset.forName("windows-1252");
     /** A continuation line that starts like this was probably meant to be an entry of its own. */
     private static final Pattern LOOKS_LIKE_WRAPPER_ENTRY = Pattern.compile("^wrapper\\.[^\\s=]*\\s*=.*");
@@ -106,12 +112,12 @@ public final class FileConfigSource implements ConfigSource {
          */
         void readFile(Path path, ConfigLocation includedAt) {
             ConfigLocation openLocation = includedAt != null ? includedAt : ConfigLocation.of(path.toString());
-            String noun = includedAt != null ? "included file" : "configuration file";
-            if (!Files.exists(path)) {
-                throw new ConfigException(openLocation, noun + " not found: " + path);
-            }
-            if (!Files.isRegularFile(path)) {
-                throw new ConfigException(openLocation, noun + " is not a regular file: " + path);
+            String problem = openProblem(path);
+            if (problem != null) {
+                // The main file's location already names it; an include line does not.
+                throw new ConfigException(openLocation, includedAt != null
+                        ? "included " + problem + ": " + path
+                        : "configuration " + problem);
             }
             Path realPath;
             try {
@@ -178,7 +184,7 @@ public final class FileConfigSource implements ConfigSource {
                 if (!line.isEmpty() && !isComment(line)) {
                     break;
                 }
-                if (includeDirectiveLength(line) > 0) {
+                if (includeDirective(line) != null) {
                     warnings.add(new ConfigWarning(new ConfigLocation(path.toString(), index + 1),
                             "include ignored: it is inside a value continued with a trailing backslash"));
                 }
@@ -188,12 +194,14 @@ public final class FileConfigSource implements ConfigSource {
         }
 
         private void readCommentLine(Path path, String line, ConfigLocation location) {
-            int directiveLength = includeDirectiveLength(line);
-            if (directiveLength > 0) {
-                include(path, line.substring(directiveLength), location);
-            } else if (line.startsWith(HASH_INCLUDE + ".")) {
-                String directive = line.split("\\s", 2)[0];
-                warnings.add(new ConfigWarning(location, "directive ignored, not supported: " + directive));
+            String directive = includeDirective(line);
+            if (directive != null) {
+                include(path, line.substring(directive.length()), location, directive.equals(HASH_INCLUDE_REQUIRED));
+                return;
+            }
+            Matcher other = OTHER_HASH_INCLUDE.matcher(line);
+            if (other.find()) {
+                warnings.add(new ConfigWarning(location, "directive ignored, not supported: " + other.group()));
             }
         }
 
@@ -211,25 +219,32 @@ public final class FileConfigSource implements ConfigSource {
                 return;
             }
             if (key.toLowerCase(Locale.ROOT).equals(INCLUDE_KEY)) {
-                include(path, value, location);
+                include(path, value, location, true);
                 return;
             }
             entries.add(new ConfigEntry(key, value, location));
         }
 
-        private void include(Path includingFile, String rawPath, ConfigLocation location) {
+        /**
+         * @param required whether a file that cannot be included is an error ({@code include =},
+         *                 {@code #include.required}) or only a warning (plain {@code #include})
+         */
+        private void include(Path includingFile, String rawPath, ConfigLocation location, boolean required) {
             String pathText = unquote(trim(rawPath));
             if (pathText.isEmpty()) {
-                throw new ConfigException(location, "include without a file name");
+                skipOrFail(required, location, "include without a file name");
+                return;
             }
             if (pathText.contains("${")) {
-                throw new ConfigException(location, "variables in include paths are not supported yet: " + pathText);
+                skipOrFail(required, location, "variables in include paths are not supported yet: " + pathText);
+                return;
             }
             Path relative;
             try {
                 relative = Path.of(pathText);
             } catch (InvalidPathException e) {
-                throw new ConfigException(location, "invalid include path: " + pathText, e);
+                skipOrFail(required, location, "invalid include path: " + pathText + " (" + e.getReason() + ")");
+                return;
             }
             Path target = includingFile.resolveSibling(relative).normalize();
             if (!relative.isAbsolute() && !Files.exists(target)) {
@@ -240,7 +255,19 @@ public final class FileConfigSource implements ConfigSource {
                     target = fromMain;
                 }
             }
+            String problem = openProblem(target);
+            if (problem != null && !required) {
+                warnings.add(new ConfigWarning(location, "optional include skipped, " + problem + ": " + target));
+                return;
+            }
             readFile(target, location);
+        }
+
+        private void skipOrFail(boolean required, ConfigLocation location, String message) {
+            if (required) {
+                throw new ConfigException(location, message);
+            }
+            warnings.add(new ConfigWarning(location, "optional include skipped, " + message));
         }
 
         private String decode(Path path, ConfigLocation openLocation) {
@@ -285,17 +312,28 @@ public final class FileConfigSource implements ConfigSource {
     }
 
     /**
-     * Length of the include directive the line starts with ({@code #include} or
-     * {@code #include.required} followed by whitespace or the end of the line), or {@code 0}.
+     * The include directive the line starts with ({@code #include} or {@code #include.required}
+     * followed by whitespace or the end of the line), or {@code null}.
      */
-    private static int includeDirectiveLength(String line) {
+    private static String includeDirective(String line) {
         for (String directive : List.of(HASH_INCLUDE_REQUIRED, HASH_INCLUDE)) {
             if (line.startsWith(directive)
                     && (line.length() == directive.length() || isBlank(line.charAt(directive.length())))) {
-                return directive.length();
+                return directive;
             }
         }
-        return 0;
+        return null;
+    }
+
+    /** Why the path cannot be opened as a configuration file ("file not found", ...), or {@code null}. */
+    private static String openProblem(Path path) {
+        if (!Files.exists(path)) {
+            return "file not found";
+        }
+        if (!Files.isRegularFile(path)) {
+            return "file is not a regular file";
+        }
+        return null;
     }
 
     private static boolean endsWithContinuation(String line) {
