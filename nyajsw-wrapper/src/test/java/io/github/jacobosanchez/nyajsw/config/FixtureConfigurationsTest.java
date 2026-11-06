@@ -87,12 +87,11 @@ public class FixtureConfigurationsTest {
         assertEquals(java.classpath(), List.of("lib\\*.jar", "conf", "..\\plugins\\*"));
         assertEquals(java.jvmOptions(), List.of("-Xss512k", "-Dfile.encoding=UTF-8", "-Dinventory.mode=production",
                 "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=log",
-                "-Dinventory.data=\"C:\\\\Program Files\\\\Inventory\\\\data\""));
+                "-Dinventory.data=\"C:\\Program Files\\Inventory\\data\""));
         assertEquals(java.initMemoryMb(), Optional.of(128));
         assertEquals(java.maxMemoryMb(), Optional.of(512));
-        // Text values keep backslashes as written (D7); only path keys and the account undo doubled
-        // ones. YAJSW's Commons Configuration probably reads "\\\\" as one backslash here: settled in P1.9.
-        assertEquals(java.parameters(), List.of("--config", "conf\\\\inventory.properties"));
+        // An escaped backslash is one backslash in every value, as in YAJSW (P1.9, settled with a real file).
+        assertEquals(java.parameters(), List.of("--config", "conf\\inventory.properties"));
         assertEquals(java.environment(), Map.of("INVENTORY_MODE", "production"));
 
         ServiceConfig service = config.service();

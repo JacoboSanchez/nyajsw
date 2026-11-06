@@ -41,7 +41,9 @@ import java.util.Optional;
  * @param jar            {@code wrapper.java.app.jar}, if set
  * @param parameters     {@code wrapper.app.parameter.<n>} in index order
  * @param classpath      {@code wrapper.java.classpath.<n>} in index order, backslashes normalised
- * @param libraryPath    {@code wrapper.java.library.path.<n>} in index order
+ * @param libraryPath    {@code wrapper.java.library.path.<n>} in index order, an entry that lists
+ *                       several paths separated by {@code ;} (copied from <code>${path}</code>) split
+ *                       into them
  * @param jvmOptions     {@code wrapper.java.additional.<n>} in index order
  * @param initMemoryMb   {@code wrapper.java.initmemory}, if set
  * @param maxMemoryMb    {@code wrapper.java.maxmemory}, if set
@@ -89,7 +91,7 @@ public record JavaConfig(Optional<String> command, boolean javaw, Optional<Strin
                 values.path(JAVA_APP_JAR, workingDir),
                 values.familyValues(APP_PARAMETER),
                 values.familyValues(JAVA_CLASSPATH).stream().map(ValueParser::normalisePath).toList(),
-                values.familyPaths(JAVA_LIBRARY_PATH, workingDir),
+                values.familyPathLists(JAVA_LIBRARY_PATH, workingDir),
                 values.familyValues(JAVA_ADDITIONAL),
                 values.integer(JAVA_INITMEMORY),
                 values.integer(JAVA_MAXMEMORY),

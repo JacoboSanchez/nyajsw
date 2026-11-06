@@ -272,11 +272,11 @@ public class JavaCommandBuilderTest {
 
         assertEquals(arguments.subList(1, 6), List.of("-Xms128m", "-Xmx512m", "-Xss512k", "-Dfile.encoding=UTF-8",
                 "-Dinventory.mode=production"), arguments.toString());
-        // The quotes around the value are gone; text values keep doubled backslashes for now (plan P1.9).
-        assertTrue(arguments.contains("-Dinventory.data=C:\\\\Program Files\\\\Inventory\\\\data"),
+        // The quotes around the value are gone, and the escaped backslashes are single ones.
+        assertTrue(arguments.contains("-Dinventory.data=C:\\Program Files\\Inventory\\data"),
                 arguments.toString());
         assertEquals(arguments.subList(arguments.size() - 5, arguments.size()), List.of("-classpath",
                 "lib/a.jar;conf", "com.example.inventory.InventoryServer", "--config",
-                "conf\\\\inventory.properties"));
+                "conf\\inventory.properties"));
     }
 }

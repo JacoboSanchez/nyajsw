@@ -156,6 +156,8 @@ public final class ConfigKeys {
     public static final KeySpec JAVA_LIBRARY_PATH = yajsw("wrapper.java.library.path.<n>", PATH, JAVA)
             .status(SUPPORTED)
             .description("Entry of the application's java.library.path")
+            .notes("May list several paths separated by ;, as when it copies ${path}; an invalid one in such a"
+                    + " list is skipped with a warning")
             .build();
 
     public static final KeySpec JAVA_CLASSPATH_USE_ENVIRONMENT =

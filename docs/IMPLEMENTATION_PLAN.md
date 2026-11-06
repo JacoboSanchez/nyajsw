@@ -291,16 +291,22 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   another charset is an error). A system property wins (UTF-16 or EBCDIC can only be given that
   way; set empty, it forces the detection); otherwise a lenient probe of the file finds its own
   declaration (last one wins, no variables), which must be ASCII-compatible, and the file and its
-  includes are read again with it and must still declare the same charset. Backslashes are **literal** except that
-  a line ending in an odd number of `\` continues on the next line (as in YAJSW's Commons
-  Configuration parser); blank and comment lines inside a continued value are skipped, as there.
-  So `C:\app\` must be written `C:\app\\` or `C:/app/`; a continuation line that looks like a new
-  `wrapper.*` entry gets a warning. Doubled backslashes in path-typed keys are normalised by
-  `ValueParser`: every `\\` becomes `\`, except a leading `\\` followed by another character, which
-  is a literal UNC or `\\?\` prefix (`\\server\share\\` gives `\\server\share\`); four leading
-  backslashes are its escaped form. Entries keep file and line (`ConfigLocation`) for messages; problems that do
-  not stop loading are `ConfigWarning`s. Several statements above (backslash handling, treatment of
-  `include`, encoding default) are unconfirmed against YAJSW itself; see the D7 note and P1.9.
+  includes are read again with it and must still declare the same charset. A line ending in an
+  odd number of `\` continues on the next line (as in YAJSW's Commons Configuration parser); blank
+  and comment lines inside a continued value are skipped, as there. So `C:\app\` must be written
+  `C:\app\\` or `C:/app/`; a continuation line that looks like a new `wrapper.*` entry gets a
+  warning. In every value read from a file (and in `include =` paths) a backslash before `\`, `,`,
+  `"`, `'`, a space or one of `# = : !` stands for that character, as in YAJSW's Commons
+  Configuration, which the owner's real files show (`-Djava.locale.providers=COMPAT\,SPI`,
+  `C:/Product/9/app\\conf`, P1.9); every other backslash is literal: `\a` as in YAJSW, but also
+  `\t`, `\n`, `\r`, `\f`, `\b` and `\u` + four hex digits, which YAJSW reads as control
+  characters and Unicode escapes, so Windows paths such as `C:\temp` keep their meaning. Values from system
+  properties and the environment are taken as they are, as in YAJSW; plain `#include` paths too,
+  since the Tanuki format has no escapes. Path-typed keys then go through `ValueParser`'s tolerance
+  for doubled backslashes (`\\` becomes `\`, except a leading `\\` followed by another character,
+  a literal UNC or `\\?\` prefix). Entries keep file and line (`ConfigLocation`) for messages;
+  problems that do not stop loading are `ConfigWarning`s. The treatment of `include` and the
+  encoding default are still unconfirmed against YAJSW itself; see the D7 note and P1.9.
 * **Interpolation** (`Interpolator`): `${name}` resolved against, in order, keys in the
   configuration itself (YAJSW lets any key act as a variable, e.g. `JAVA_HOME=…` then
   `${JAVA_HOME}`), wrapper JVM system properties, environment variables (case-insensitive on
@@ -593,8 +599,9 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       (`CompatibilityDocTest`; `-Dnyajsw.docs.update=true` rewrites); the hand-written §7 tables are
       retired.
 - [x] P1.8 Fixtures: a YAJSW-style default template written from scratch, plus the owner's
-      anonymised real configurations as soon as they are provided (§10 Q1; not a blocker; **real
-      configurations still pending**). The template is
+      anonymised real configurations as soon as they are provided (§10 Q1). Two real service
+      configurations were checked (P1.9) but are not kept in the repository.
+      The template is
       `src/test/resources/conf/fixtures/yajsw-style/conf/wrapper.conf` (CRLF, doubled backslashes,
       an include, a continued value, forward-referenced variables, commented-out keys, trailing
       blanks, quotes and spaces in a JVM option, an account and a password, planned, ignored,
@@ -604,9 +611,12 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       on one without a manifest, so adding a real configuration means adding a directory with a
       manifest.
 - [~] P1.9 D7 follow-ups once real fixtures exist: honour `wrapper.conf.encoding` (**done**, see
-      §4.5 Parsing; the rest of this item waits for real files); settle backslash
-      escaping (including text values such as `wrapper.app.parameter.2=conf\\x.properties`, which
-      nyajsw keeps doubled while Commons Configuration probably reads one backslash), `include`
+      §4.5 Parsing); settle backslash escaping (**done** with the owner's real files: YAJSW's
+      character escapes are undone in every file value, see §4.5; strictly they show what one product
+      writes for YAJSW 13.x, and `\,` only means a comma when YAJSW enables commons-configuration's
+      list delimiter, so the version in 13.18's `lib/` folder is still worth a look; the real file
+      also showed that a library path entry may list several paths,
+      `wrapper.java.library.path.2=${path}`, now split on `;`); `include`
       handling and case of environment names against a real file; check how
       YAJSW treats an index written twice (`.7` and `.07`; nyajsw keeps both with a warning, P1.4)
       and a key set twice (nyajsw: last value wins with a warning, P1.5; YAJSW's Commons
@@ -624,14 +634,10 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       takes the first application argument as the main class, so P2.2 should do the same); YAJSW
       14.01 parses with commons-configuration2 2.15.1 (13.18 is the reference, §10 Q9; its version
       is still to be read from its `lib/` folder), and its migration guide tells users to
-      double every backslash (or use `/`) and to escape commas as `\,`, which suggests
-      backslash-escaping and comma lists in every value, not only in paths (to be confirmed with
-      YAJSW-shaped fixtures: commons-configuration2 splits lists only when YAJSW enables it);
-      **settle before Phase 2 closes:** since P2.2 text values reach the application, doubled
-      backslashes in them do too (`conf\\x.properties`, and a UNC path `\\\\srv\\share` written
-      escaped arrives with four leading backslashes), while YAJSW, whose reference calls `\` the
-      escape character, passes one; and quoted values of path keys (`wrapper.java.command="C:\Program
-      Files\...\java.exe"`) are not unquoted, so `Path.of` rejects them with a warning; update §4.5.
+      double every backslash (or use `/`) and to escape commas as `\,`, as the owner's real file does;
+      what YAJSW does with an *unescaped* comma (split into a list, and then use which part?) is
+      still open, nyajsw keeps the comma; quoted values of path keys (`wrapper.java.command="C:\Program
+      Files\...\java.exe"`) are not unquoted, so `Path.of` rejects them with a warning.
 - [x] P1.10 Apply the YAJSW reference check of 2026-11-06 (§11) to the registry and regenerate
       `docs/COMPATIBILITY.md`. Defaults that differ from the registry: `wrapper.on_exit.default`
       `SHUTDOWN` (registry `RESTART`; §3.3 says defaults match YAJSW where known, so keeping
@@ -1025,7 +1031,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
 | D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (P0.4: JNA and `jna-platform` 5.19.1, managed in the parent POM; added to `nyajsw-wrapper` in P5.2) |
 | D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Proposed (confirm in P4) |
-| D7 | Custom line parser (§4.5); literal backslashes except odd-trailing-`\` continuation, skipping blank/comment lines inside it; UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected unless declared through `-Dwrapper.conf.encoding`; `wrapper.conf.encoding` decoded strictly; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW defaults to the platform charset, i.e. the JVM default, UTF-8 on Java 18+ per JEP 400, else the ANSI code page), so non-ASCII text may now read differently, and on non-Western Windows (windows-1251, MS932, GBK) a file without `wrapper.conf.encoding` falls back to windows-1252 with a warning; a declared encoding is decoded strictly where YAJSW's reader probably replaced bad bytes silently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: verify the backslash and lower-cased-environment behaviour against a real file; `${...}` in include paths is supported since P1.3 and `wrapper.conf.encoding` since P1.9 |
+| D7 | Custom line parser (§4.5); odd-trailing-`\` continuation, skipping blank/comment lines inside it; in file values a backslash before `\ , " ' # = : !` or a space stands for that character (YAJSW's escapes, as the owner's real files show; P1.9), every other backslash literal (YAJSW would read `\t`, `\n`, `\r`, `\f`, `\b`, `\uXXXX` as control characters and Unicode); UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected unless declared through `-Dwrapper.conf.encoding`; `wrapper.conf.encoding` decoded strictly; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW defaults to the platform charset, i.e. the JVM default, UTF-8 on Java 18+ per JEP 400, else the ANSI code page), so non-ASCII text may now read differently, and on non-Western Windows (windows-1251, MS932, GBK) a file without `wrapper.conf.encoding` falls back to windows-1252 with a warning; a declared encoding is decoded strictly where YAJSW's reader probably replaced bad bytes silently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: verify the backslash and lower-cased-environment behaviour against a real file; `${...}` in include paths is supported since P1.3 and `wrapper.conf.encoding` since P1.9 |
 | D8 | Single key registry drives parsing, validation, warnings and generated docs. Keys are `public static final KeySpec` constants in `ConfigKeys`, collected into one immutable `KeyRegistry`; derived defaults are declared there by description and computed by the typed view that owns the key (P1.6), or by the loader for `wrapper.conf.encoding`, because they depend on typed values (e.g. `wrapper.agent.enabled`) or the configuration file's location rather than on raw strings | One source of truth; no drift between code and docs; constants let code refer to keys without repeating names | Accepted (P1.2) |
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
@@ -1041,7 +1047,10 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 
 ## 10. Open questions for the project owner
 
-1. **Real configuration files.** Please add the current `wrapper.conf` (anonymised) as a fixture,
+1. **Real configuration files.** (*Partly answered 2026-11-06:* two real service
+   configurations were checked and settled the escaping rules, P1.9; they are not kept in the
+   repository. YAJSW 13.18's `doc/` folder would still help.)
+   Please add the current `wrapper.conf` (anonymised) as a fixture,
    together with the `conf/wrapper.conf.default` template and `doc/` folder of the YAJSW version in
    use (reading key names and defaults is within the clean-room rule), and tell us the Java version
    the application runs on (*answered 2026-11-06: Java 21*; the YAJSW version, 13.18, is recorded

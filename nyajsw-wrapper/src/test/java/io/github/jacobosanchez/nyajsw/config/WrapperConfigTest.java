@@ -312,6 +312,46 @@ public class WrapperConfigTest {
     }
 
     @Test
+    public void aLibraryPathEntryMayListSeveralPaths() throws IOException {
+        String separator = ";";
+        // A NUL is invalid in a path on every platform; the file cannot hold one, a system property can.
+        WrapperConfig config = loadWith(Map.of("wrapper.java.library.path.1", "a" + separator + "\"b c\"" + separator
+                + separator + "d" + separator + "bad\u0000path"), "wrapper.java.library.path.2=e");
+
+        assertEquals(config.java().libraryPath(), List.of(dir.resolve("a"), dir.resolve("b c"), dir.resolve("d"),
+                dir.resolve("e")));
+        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("one of the paths in"
+                + " wrapper.java.library.path.1 is skipped")), messages(config).toString());
+    }
+
+    @Test
+    public void uncPathsFromTheFileKeepTheirPrefix() throws IOException {
+        // Escaped as YAJSW files write it, and written raw, which YAJSW reads as a single backslash too.
+        WrapperConfig escaped = load("wrapper.java.app.jar=\\\\\\\\srv\\\\share\\\\app.jar");
+        WrapperConfig raw = load("wrapper.java.app.jar=\\\\srv\\share\\app.jar");
+
+        assertEquals(escaped.java().jar().orElseThrow().toString().replace('/', '\\'),
+                dir.resolve("\\\\srv\\share\\app.jar").normalize().toString().replace('/', '\\'));
+        assertTrue(raw.java().jar().orElseThrow().toString().replace('/', '\\').endsWith("\\srv\\share\\app.jar"),
+                raw.java().jar().toString());
+    }
+
+    @Test
+    public void aQuotedSingleLibraryPathIsUnquoted() throws IOException {
+        WrapperConfig config = load("wrapper.java.library.path.1=\"lib dir\"");
+
+        assertEquals(config.java().libraryPath(), List.of(dir.resolve("lib dir")));
+    }
+
+    @Test
+    public void aSingleInvalidLibraryPathIsStillAnError() {
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> loadWith(Map.of("wrapper.java.library.path.1", "bad\u0000path")));
+
+        assertTrue(e.getMessage().contains("invalid path"), e.getMessage());
+    }
+
+    @Test
     public void environmentNamesDifferingOnlyInCaseWarn() throws IOException {
         WrapperConfig config = load("wrapper.app.env.Path=a", "wrapper.app.env.PATH=b");
 

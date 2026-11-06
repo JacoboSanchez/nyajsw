@@ -54,7 +54,7 @@ public class FileConfigSourceTest {
                 entry("wrapper.java.app.mainclass", "com.example.Main", file, 5),
                 entry("wrapper.java.additional.1", "-Dkey=a=b", file, 6),
                 entry("wrapper.app.parameter.1", "value # not a comment", file, 7),
-                entry("wrapper.working.dir", "C:\\app\\\\", file, 8),
+                entry("wrapper.working.dir", "C:\\app\\", file, 8), // C:\app\\ as written, unescaped
                 entry("wrapper.java.classpath.1", "C:\\app\\lib\\*.jar", file, 9),
                 entry("wrapper.ntservice.description", "first part second part", file, 10),
                 entry("wrapper.ntservice.displayname", "", file, 12)));
@@ -195,8 +195,38 @@ public class FileConfigSourceTest {
 
         List<ConfigEntry> entries = new FileConfigSource(file).read().entries();
 
-        assertEquals(entries, List.of(entry("odd", "C:\\\\x", file, 1), entry("even", "C:\\\\", file, 3),
+        // The pair before the continuing backslash is an escaped backslash, as in YAJSW.
+        assertEquals(entries, List.of(entry("odd", "C:\\x", file, 1), entry("even", "C:\\", file, 3),
                 entry("next", "y", file, 4)));
+    }
+
+    @Test
+    public void escapedBackslashesAndCommasAreUndoneAndOtherBackslashesKept() throws IOException {
+        Path file = write("main.conf", "locales=-Djava.locale.providers=COMPAT\\,SPI\n"
+                + "mixed=C:/Product/9\\\\conf\n"
+                + "single=C:\\app\\lib\n"
+                + "unc=\\\\\\\\server\\\\share\n"
+                + "comma=a,b\n"
+                + "include = inc\\\\x.conf\n");
+        Files.createDirectories(file.getParent().resolve("inc"));
+        Files.writeString(file.getParent().resolve("inc").resolve("x.conf"), "included=yes\n");
+
+        List<ConfigEntry> entries = new FileConfigSource(file).read().entries();
+
+        assertEquals(entries.stream().map(ConfigEntry::value).toList(), List.of(
+                "-Djava.locale.providers=COMPAT,SPI", "C:/Product/9\\conf", "C:\\app\\lib", "\\\\server\\share", "a,b",
+                "yes"));
+    }
+
+    @Test
+    public void unescapeHandlesEdgeCases() {
+        assertEquals(FileConfigSource.unescape(""), "");
+        assertEquals(FileConfigSource.unescape("\\"), "\\");
+        assertEquals(FileConfigSource.unescape("a\\\\\\,b"), "a\\,b");
+        assertEquals(FileConfigSource.unescape("\\\\\\"), "\\\\");
+        // YAJSW's other character escapes are undone too; control and Unicode escapes stay literal.
+        assertEquals(FileConfigSource.unescape("-Dx=\\\"a b\\\" \\#\\=\\:\\!\\'\\ "), "-Dx=\"a b\" #=:!' ");
+        assertEquals(FileConfigSource.unescape("C:\\temp\\new\\users\\b\\f\\r"), "C:\\temp\\new\\users\\b\\f\\r");
     }
 
     @Test

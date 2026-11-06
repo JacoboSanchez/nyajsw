@@ -55,7 +55,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.java.classpath.<n>` | Classpath entry of the application; * and ? wildcards as in YAJSW | path | — | **supported** | A whole ** segment matches any depth, a nyajsw extension; matches are sorted by path |
 | `wrapper.java.classpath.use_environment` | Tanuki: append the CLASSPATH environment variable to the classpath | boolean | — | **unsupported** | Declared so that it is not read as a classpath entry |
 | `wrapper.java.classpath.missing_log_level` | Tanuki: log level used when a classpath entry does not exist | text | — | **unsupported** | Declared so that it is not read as a classpath entry |
-| `wrapper.java.library.path.<n>` | Entry of the application's java.library.path | path | — | **supported** |  |
+| `wrapper.java.library.path.<n>` | Entry of the application's java.library.path | path | — | **supported** | May list several paths separated by ;, as when it copies ${path}; an invalid one in such a list is skipped with a warning |
 | `wrapper.java.library.path.append_system_path` | Tanuki: append the system PATH to java.library.path | boolean | — | **unsupported** | Declared so that it is not read as a library path entry |
 | `wrapper.java.additional.<n>` | JVM option or -D system property of the application | text | — | **supported** |  |
 | `wrapper.java.additional.auto_bits` | Tanuki: add -d32 or -d64 to the JVM options to match the wrapper | boolean | — | **unsupported** | Declared so that it is not read as a JVM option |
