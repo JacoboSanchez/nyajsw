@@ -352,6 +352,7 @@ public final class ConfigKeys {
             .status(PLANNED, "P3")
             .description("Ordered stop strategies tried before the application is terminated")
             .derivedDefault("agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate")
+            .notes("Strategies and their order: implementation plan, section 4.6")
             .build();
 
     public static final KeySpec STOP_COMMAND = nyajsw("wrapper.stop.command", STRING, LIFECYCLE)
@@ -511,6 +512,7 @@ public final class ConfigKeys {
             .status(PLANNED, "P7")
             .description("Readiness probes that must all pass before the service reports RUNNING")
             .defaultValue("process")
+            .notes("Probe types and their settings: implementation plan, section 4.7")
             .build();
 
     public static final KeySpec READINESS_INTERVAL = nyajsw("wrapper.readiness.interval", DURATION, PROBES)

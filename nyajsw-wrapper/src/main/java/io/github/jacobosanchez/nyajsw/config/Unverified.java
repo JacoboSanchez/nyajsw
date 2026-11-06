@@ -3,7 +3,7 @@ package io.github.jacobosanchez.nyajsw.config;
 /**
  * Parts of a YAJSW key declaration that are not yet confirmed against the YAJSW reference or real
  * configuration files (risk R11). They are confirmed, and the marker removed, before the key is
- * implemented; the compatibility matrix shows them as "(verify)".
+ * implemented; the compatibility matrix shows them as "<em>Verify:</em> name, default".
  */
 public enum Unverified {
 

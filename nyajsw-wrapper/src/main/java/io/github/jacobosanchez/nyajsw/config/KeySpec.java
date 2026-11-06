@@ -76,6 +76,10 @@ public record KeySpec(
         if (description.isBlank()) {
             throw invalid(name, "description is required");
         }
+        String derived = defaultValue instanceof KeyDefault.Derived d ? d.description() : "";
+        if ((description + notes + derived).chars().anyMatch(c -> c == '\n' || c == '\r')) {
+            throw invalid(name, "description, notes and derived default must be single lines");
+        }
         if (status == KeyStatus.PLANNED && phase.isEmpty()) {
             throw invalid(name, "a planned key needs the phase that implements it");
         }
