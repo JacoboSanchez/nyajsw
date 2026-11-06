@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
+import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ExitAction;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
@@ -35,11 +36,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * supervisor is {@link State#STOPPING STOPPING}, the application ends because the wrapper asked, so
  * {@code wrapper.on_exit.*} does not apply and it is never restarted.
  *
- * <p>Still to come in this phase: the restart policy and {@code wrapper.control} (P3.2), readiness
- * probes between {@link State#STARTING STARTING} and {@link State#RUNNING RUNNING} (P3.3, until then
- * a started application counts as ready) and the stop strategies (P3.4, until then a stop waits
- * {@code wrapper.shutdown.timeout} for the application to end by itself, as in console mode, where
- * it receives the same Ctrl+C, and then terminates its process tree).
+ * <p>Otherwise an exit is decided by {@link ExitActionResolver} ({@code wrapper.on_exit.*} with
+ * {@code wrapper.control}), and a restart is subject to the {@link RestartPolicy}: an invocation that
+ * cannot be started, or ends before {@code wrapper.successful_invocation_time}, is a failure, and
+ * after {@code wrapper.max_failed_invocations} of them in a row supervision ends {@link
+ * State#FAILED FAILED}. A launch error is retried like such a failure, whatever the exit actions
+ * say, since there is no exit code to look up. The first start waits {@code wrapper.startup.delay}.
+ *
+ * <p>A stop request stops the application only when {@code wrapper.control} ties it to the wrapper
+ * ({@code TIGHT}, {@code APPLICATION}); under {@code LOOSE} and {@code WRAPPER} supervision ends and
+ * the application keeps running, as YAJSW documents. The safety nets do not follow that rule: after
+ * an unexpected error, or when the exit of the application can no longer be observed, a live
+ * application is terminated whatever {@code wrapper.control} says, since nothing would watch it.
+ *
+ * <p>Still to come in this phase: readiness probes between {@link State#STARTING STARTING} and
+ * {@link State#RUNNING RUNNING} (P3.3, until then a started application counts as ready) and the
+ * stop strategies (P3.4, until then a stop waits {@code wrapper.shutdown.timeout} for the
+ * application to end by itself, as in console mode, where it receives the same Ctrl+C, and then
+ * terminates its process tree).
  */
 public final class Supervisor {
 
@@ -88,6 +102,8 @@ public final class Supervisor {
     }
 
     private final LifecycleConfig lifecycle;
+    private final ExitActionResolver exits;
+    private final RestartPolicy restarts;
     private final ApplicationLauncher launcher;
     private final Scheduler scheduler;
     private final WrapperLog log;
@@ -99,6 +115,8 @@ public final class Supervisor {
     private volatile State state = State.IDLE;
     private int invocation;
     private RunningApplication application;
+    /** When the current invocation was started, on the scheduler's clock. */
+    private Duration launchedAt;
     private Integer lastExitCode;
     /** The id of the one timer that still counts, 0 for none; earlier timers fire into the void. */
     private long timer;
@@ -116,6 +134,8 @@ public final class Supervisor {
     public Supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher, Scheduler scheduler, WrapperLog log,
             StateListener listener) {
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
+        this.exits = new ExitActionResolver(lifecycle);
+        this.restarts = new RestartPolicy(lifecycle.maxFailedInvocations(), lifecycle.successfulInvocationTime());
         this.launcher = Objects.requireNonNull(launcher, "launcher");
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
         this.log = Objects.requireNonNull(log, "log");
@@ -200,7 +220,7 @@ public final class Supervisor {
         switch (event) {
             case Start start -> {
                 if (state == State.IDLE && invocation == 0) {
-                    launch();
+                    begin();
                 }
             }
             case Exited exited -> exited(exited);
@@ -216,6 +236,16 @@ public final class Supervisor {
         }
     }
 
+    private void begin() {
+        Duration delay = lifecycle.startupDelay();
+        if (delay.isZero()) {
+            launch();
+        } else {
+            log.status("starting in " + delay.toSeconds() + " s (" + ConfigKeys.STARTUP_DELAY.name() + ")");
+            startTimer(delay, this::launch);
+        }
+    }
+
     private void launch() {
         invocation++;
         lastExitCode = null; // the outcome reports this invocation's exit, not an earlier one's
@@ -224,10 +254,13 @@ public final class Supervisor {
         try {
             launched = launcher.launch(invocation);
         } catch (LaunchException e) {
-            log.error("cannot start jvm " + invocation + ": " + e.getMessage());
-            moveTo(State.FAILED);
+            String name = ApplicationLauncher.nameOf(invocation);
+            log.error("cannot start " + name + ": " + e.getMessage());
+            restarts.notStarted();
+            restartOrGiveUp(name);
             return;
         }
+        launchedAt = scheduler.now();
         application = launched;
         int current = invocation;
         launched.onExit().whenComplete((code, error) -> events.add(new Exited(current, code, error)));
@@ -262,18 +295,42 @@ public final class Supervisor {
     }
 
     private void applyExitAction(String name, int code) {
-        ExitAction action = lifecycle.exitAction(code);
-        log.status(name + " exit code " + code + " means " + action);
-        switch (action) {
-            case RESTART -> {
-                moveTo(State.RESTART_WAIT);
-                Duration delay = lifecycle.restartDelay();
-                log.status("restarting in " + delay.toSeconds() + " s");
-                startTimer(delay, this::launch);
+        restarts.ended(scheduler.now().minus(launchedAt));
+        ExitActionResolver.Decision decision = exits.resolve(code);
+        log.status(name + " exit code " + code + " means " + decision.action());
+        switch (decision.next()) {
+            case RESTART -> restartOrGiveUp(name);
+            case END -> {
+                if (decision.action() == ExitAction.STOP) {
+                    log.status("STOP ends the wrapper as well: " + ConfigKeys.CONTROL.name() + "="
+                            + lifecycle.control() + " ends the wrapper with the application");
+                }
+                moveTo(State.STOPPED);
             }
-            case SHUTDOWN -> moveTo(State.STOPPED);
-            case STOP -> moveTo(State.IDLE);
+            case WAIT -> {
+                log.status("the wrapper keeps running without the application until it is stopped ("
+                        + ConfigKeys.CONTROL.name() + "=" + lifecycle.control() + ")");
+                moveTo(State.IDLE);
+            }
         }
+    }
+
+    /** After a failed or ended invocation that is to be restarted: restarts after the delay, or gives up. */
+    private void restartOrGiveUp(String name) {
+        if (!restarts.mayRestart()) {
+            log.error("giving up after " + name + ": " + restarts.failures() + " failed invocation(s) in a row reach "
+                    + ConfigKeys.MAX_FAILED_INVOCATIONS.name() + " (limit " + restarts.maxFailedInvocations()
+                    + "; an invocation fails when it cannot be started or"
+                    + " ends within " + ConfigKeys.SUCCESSFUL_INVOCATION_TIME.name() + ", "
+                    + lifecycle.successfulInvocationTime().toSeconds() + " s)");
+            moveTo(State.FAILED);
+            return;
+        }
+        moveTo(State.RESTART_WAIT);
+        Duration delay = lifecycle.restartDelay();
+        log.status("restarting in " + delay.toSeconds() + " s (failed invocations in a row: " + restarts.failures()
+                + " of " + restarts.maxFailedInvocations() + ")");
+        startTimer(delay, this::launch);
     }
 
     private void stopRequested() {
@@ -282,7 +339,16 @@ public final class Supervisor {
                 log.status("stopping: no application is running");
                 moveTo(State.STOPPED);
             }
-            case RUNNING -> beginStop();
+            case RUNNING -> {
+                if (lifecycle.control().applicationEndsWithWrapper()) {
+                    beginStop();
+                } else {
+                    log.status("stopping the wrapper only: " + application.name() + " (pid " + application.pid()
+                            + ") keeps running (" + ConfigKeys.CONTROL.name() + "=" + lifecycle.control() + ")");
+                    application = null;
+                    moveTo(State.STOPPED);
+                }
+            }
             case STOPPING, STOPPED, FAILED -> log.debug("stop requested again; already " + state);
             // A launch completes within one event, so no event ever sees STARTING until probes arrive (P3.3).
             case STARTING -> throw new IllegalStateException("stop requested while " + state);

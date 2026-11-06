@@ -16,6 +16,11 @@ final class FakeScheduler implements Scheduler {
     private long scheduled;
 
     @Override
+    public synchronized Duration now() {
+        return now;
+    }
+
+    @Override
     public synchronized Timer schedule(Duration delay, Runnable task) {
         Task added = new Task(now.plus(delay), scheduled++, task);
         tasks.add(added);

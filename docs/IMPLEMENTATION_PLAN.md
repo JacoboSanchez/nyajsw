@@ -421,15 +421,18 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
   wrapper alive). Default, as YAJSW documents it: `SHUTDOWN` (`wrapper.on_exit.default`), so an
   application that exits with an error is not restarted unless the file asks for it; the default
   covers every code, 0 included, unless `wrapper.on_exit.<code>` (or the exact
-  `wrapper.on_exit.0`) sets one. YAJSW's change log says that after `STOP` whether the wrapper
-  keeps running depends on `wrapper.control`, unlike the `STOP` above; P3.2 settles that.
+  `wrapper.on_exit.0`) sets one. Whether the wrapper keeps running after `STOP` depends on
+  `wrapper.control` (D20): only under `LOOSE` and `APPLICATION`, where the wrapper survives the
+  application; under `TIGHT` (the default) and `WRAPPER` the wrapper ends with it, as for
+  `SHUTDOWN`.
   Exit actions are **not** evaluated while the supervisor is `STOPPING`: an application that exits
   because we asked it to is never restarted.
 * **Restart policy**: `wrapper.restart.delay` (default 5 s), `wrapper.max_failed_invocations`
   (default 5, minimum 1), `wrapper.successful_invocation_time` (default 60 s), all as YAJSW
   documents them; `wrapper.startup.delay` (default 0) delays the first start. An invocation that
-  exits (or fails readiness) before the successful-invocation time counts as failed; the counter
-  resets after a successful one. Exceeding the limit → `FAILED` → the service reports `STOPPED` with
+  cannot be started, or exits (or fails readiness) before the successful-invocation time, counts as
+  failed; the counter resets after a successful one. A launch error is retried whatever the exit
+  actions say. Reaching the limit → `FAILED` → the service reports `STOPPED` with
   `ERROR_SERVICE_SPECIFIC_ERROR`. Note that SCM recovery (failure actions) ignores a service that
   reports `STOPPED` unless `SERVICE_CONFIG_FAILURE_ACTIONS_FLAG` is set; nyajsw sets that flag
   whenever failure actions are configured (P9) and the migration guide explains the interplay (R6).
@@ -455,9 +458,9 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
   application and application end (after exit actions) stops the wrapper; `WRAPPER` — the wrapper
   ends when the application ends, but the application survives the wrapper; `APPLICATION` — the
   application ends when the wrapper ends, but the wrapper survives the application; `LOOSE` —
-  independent (meanings as YAJSW documents them; `ControlMode`'s Javadoc has the two swapped,
-  P1.10). On Windows a
-  job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` enforces `TIGHT`/`APPLICATION` even if the
+  independent (meanings as YAJSW documents them, P1.10). The supervisor honours both directions
+  (P3.2, D20): under `LOOSE`/`WRAPPER` a stop request ends supervision and leaves the application
+  running, logged with its pid. On Windows a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` enforces `TIGHT`/`APPLICATION` even if the
   wrapper dies abruptly: the job is created before launch, the child is assigned right after start
   (`OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE)`), the job handle stays open for the
   wrapper's lifetime, and the tiny pre-assignment window is accepted and documented (P6.4).
@@ -844,9 +847,23 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       of state cancels it (`Scheduler.Timer`). The outcome's exit code is that of the last
       invocation, never an earlier one's. The supervisor is not wired into console mode yet (P3.6,
       which also brings the real `Scheduler` and a way for other threads to wait for the outcome).
-- [ ] P3.2 `ExitActionResolver` (on `config.ExitAction` / `LifecycleConfig.exitAction`) and `RestartPolicy`
+- [x] P3.2 `ExitActionResolver` (on `config.ExitAction` / `LifecycleConfig.exitAction`) and `RestartPolicy`
       (`restart.delay`, `max_failed_invocations`, `successful_invocation_time`, `startup.delay`),
       `wrapper.control`, and whether `STOP` keeps the wrapper alive under every `wrapper.control`.
+      **Done:** `ExitActionResolver` turns the action into restart, end or wait: `STOP` waits in
+      `IDLE` only under `LOOSE`/`APPLICATION` (D20). `RestartPolicy` counts failures in a row on
+      the scheduler's clock (`Scheduler.now()`): an invocation that ends before
+      `wrapper.successful_invocation_time` (at exactly that time it is a success) or cannot be
+      started; at `wrapper.max_failed_invocations` (values below 1 count as 1; N failures in a
+      row, so at most N-1 restarts, D20) the supervisor gives up `FAILED` with an error naming both
+      keys and the limit. `STOP` that ends the wrapper says why in the log, and the `on_exit` keys
+      note it. A launch error is retried after
+      `wrapper.restart.delay` like such a failure (`STARTING → RESTART_WAIT`), as YAJSW's reference
+      describes the limit. `wrapper.startup.delay` (now in `LifecycleConfig`) delays only the first
+      start, in `IDLE`, where a stop ends supervision. `ControlMode` says which way the lifetimes are
+      coupled (`wrapperEndsWithApplication`, `applicationEndsWithWrapper`, also for the job object
+      of P6.4); under `LOOSE`/`WRAPPER` a stop request leaves the application running and ends
+      `STOPPED`. The keys stay *planned* until console mode runs through the supervisor (P3.6).
 - [ ] P3.3 `Probe` SPI, `ProbeContext`/`ProbeResult`, `ProbeRegistry`, `ProbeRunner` and
       `ProcessProbe`; `wrapper.startup.timeout` bounds readiness.
 - [ ] P3.4 `StopStrategy` SPI, `StopStrategyRegistry`, `TerminateStopStrategy` (process tree),
@@ -1001,7 +1018,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
   error would suit scripts better.
 - P3.1: `ConsoleMode` still has its own stop sequence (wait `wrapper.shutdown.timeout`, terminate,
   wait 10 s) next to the supervisor's; P3.6 replaces it with the supervisor and must remove it.
-  `wrapper.successful_invocation_time` (P3.2) needs a clock, which `Scheduler` does not have yet.
+- P3.2: under `LOOSE`/`WRAPPER` the application "keeps running" after the wrapper ends, but its
+  standard output and error are pipes the wrapper owns, so it loses them (and may fail writing to
+  them), and in console mode it shares the console and its Ctrl+C. P3.6/P6 must decide: redirect
+  its output, detach it from the console, and keep it out of the kill-on-close job of P6.4.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -1072,6 +1092,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D17 | Migration path (design only, blocked on §10 Q8): ship a thin alias class named like YAJSW's service booter (`org.rzo.yajsw.boot.WrapperServiceBooter`, a deliberate exception to D11 because existing service registrations store that name) that detects service mode when `--service` is absent and delegates to the normal entry point; a migration command rewrites an existing service's binary path to a Java 21 `javaw.exe` and our classpath (D12), since a bare jar swap cannot work when the old registration names an older JVM; `-D` options on the wrapper command line (e.g. `-Dwrapper.tmp.path`, a `jna_tmpdir` property, `-Dpath`) feed the system-property layer of §4.6; we also set the real `jna.tmpdir` from `wrapper.tmp.path` (R3). Short CLI options already exist in §3 | Observed in a vendor's public knowledge base (not tested by us): its services are registered as `java.exe … WrapperServiceBooter <conf>`, installed with `-i <conf>`, and re-pointed with `sc config` plus `-D` flags for non-admin accounts. Whether the underscore-spelled `jna_tmpdir` is read by YAJSW or JNA is unknown | Proposed (P5.4a; confirm with §10 Q1 and Q8) |
 | D18 | The registry declares the YAJSW keys its public reference documents as supported by YAJSW, each with a nyajsw status; Tanuki keys that the reference lists as not (yet) supported by YAJSW (e.g. `wrapper.disable_restarts`, `wrapper.jvm.port`, `wrapper.ntservice.pausable`) stay undeclared and get the generic unknown-key warning (keys seeded earlier, such as `wrapper.syslog.*`, keep their entries). Defaults follow the reference where it states one (§3.3), including `wrapper.on_exit.default=SHUTDOWN` | A YAJSW file can only rely on keys YAJSW honours; declaring Tanuki-only keys would suggest a compatibility YAJSW never had. Following YAJSW's defaults keeps migrated services behaving as before | Accepted (P1.10) |
 | D19 | Arguments of the application are passed as an array. One pair of double quotes around a whole argument, or around everything after its first `=` (`-Dx="a b"`, `-XX:OnError="cmd /c x"`), is removed, as a shell would; any other double quote is a launch error naming the key family, with the argument masked | On POSIX every argument reaches the application unchanged, quotes included; on Windows `ProcessBuilder` wraps an argument with blanks in quotes, so `-Dx="a b"` would become `"-Dx="a b""` and break the command line, and an embedded quote is passed on unescaped (`jdk.lang.Process.allowAmbiguousCommands` defaults to true on JDK 21), which breaks it as well; checked by running `java.exe` through `ProcessBuilder` on JDK 21.0.13, which also handles trailing backslashes and empty arguments itself. Dropping a stray quote would change the value | Accepted (P2.2) |
+| D20 | `wrapper.control` is honoured in both directions. Application ends → wrapper ends under `TIGHT` and `WRAPPER`, so there the exit action `STOP` ends the wrapper like `SHUTDOWN`; only under `LOOSE` and `APPLICATION` does `STOP` keep the wrapper running without an application until it is stopped. Wrapper stopped → application stopped under `TIGHT` and `APPLICATION`; under `LOOSE` and `WRAPPER` the application is left running (logged with its pid). Launch errors count as failed invocations and are retried, also those a retry cannot fix (a missing Java executable is logged `wrapper.max_failed_invocations` times, `wrapper.restart.delay` apart, before `FAILED`). `wrapper.max_failed_invocations=N` means N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures; with 1 there is none | YAJSW's reference (read 2026-11-06/07) defines the four couplings that way and `STOP` as "stop the application but not the wrapper"; its change log ties `STOP` to `wrapper.control`, and this is the reading that coupling implies. The reference counts launches that fail towards `wrapper.max_failed_invocations` and gives its default as "5 invocations", though its "maximum number of times … to restart" also allows N restarts | Proposed (P3.2; the coupling itself is documented, its effect on `STOP` is our reading; confirm with YAJSW 13.18 or real use, §10 Q1) |
 
 ## 10. Open questions for the project owner
 
@@ -1084,7 +1105,9 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
    the application runs on (*answered 2026-11-06: Java 21*; the YAJSW version, 13.18, is recorded
    in Q9). This settles D7 and the unverified registry entries. In particular: does any file rely
    on `:` or whitespace as the key/value separator, on comma-separated lists in values (Commons
-   Configuration's list delimiter, unless YAJSW disables it), or on `${...}` in include paths? What encoding are the files saved in? Anonymised copies of your own installed
+   Configuration's list delimiter, unless YAJSW disables it), or on `${...}` in include paths? What encoding are the files saved in? Does any service use
+   `wrapper.on_exit.*=STOP` or a `wrapper.control` other than `TIGHT`, and how many restarts does
+   YAJSW make with `wrapper.max_failed_invocations=1` (D20)? Anonymised copies of your own installed
    `service.conf` files are the fixtures we need most. Do not add vendor templates unless their
    licence allows redistribution in an Apache-2.0 repository.
 2. **Package/groupId** `io.github.jacobosanchez.nyajsw` acceptable? (D11)

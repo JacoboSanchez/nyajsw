@@ -50,6 +50,8 @@ public final class ConfigKeys {
     private static final String P9_BACKLOG = "P9";
     private static final List<String> LOG_LEVELS = names(LogLevel.class);
     private static final List<String> EXIT_ACTIONS = names(ExitAction.class);
+    private static final String STOP_ACTION_NOTE = "STOP keeps the wrapper running only when wrapper.control is LOOSE"
+            + " or APPLICATION; otherwise it ends the wrapper like SHUTDOWN (D20)";
 
     // ---- configuration file ----
 
@@ -363,6 +365,8 @@ public final class ConfigKeys {
             .description("Coupling between the lifetimes of the wrapper and the application")
             .values(names(ControlMode.class))
             .defaultValue("TIGHT")
+            .notes("The exit action STOP keeps the wrapper running only under LOOSE and APPLICATION; a stop of the"
+                    + " wrapper leaves the application running under LOOSE and WRAPPER (D20)")
             .build();
 
     public static final KeySpec ON_EXIT_DEFAULT = yajsw("wrapper.on_exit.default", ENUM, LIFECYCLE)
@@ -370,6 +374,7 @@ public final class ConfigKeys {
             .description("Action when the application exits with a code that has no wrapper.on_exit.<code>")
             .values(EXIT_ACTIONS)
             .defaultValue("SHUTDOWN")
+            .notes(STOP_ACTION_NOTE)
             .build();
 
     public static final KeySpec ON_EXIT_0 = yajsw("wrapper.on_exit.0", ENUM, LIFECYCLE)
@@ -377,12 +382,14 @@ public final class ConfigKeys {
             .description("Action when the application exits with code 0; when absent, wrapper.on_exit.default"
                     + " applies")
             .values(EXIT_ACTIONS)
+            .notes(STOP_ACTION_NOTE)
             .build();
 
     public static final KeySpec ON_EXIT = yajsw("wrapper.on_exit.<code>", ENUM, LIFECYCLE)
             .status(PLANNED, "P3")
             .description("Action when the application exits with this exit code")
             .values(EXIT_ACTIONS)
+            .notes(STOP_ACTION_NOTE)
             .build();
 
     public static final KeySpec RESTART_DELAY = yajsw("wrapper.restart.delay", DURATION, LIFECYCLE)
@@ -395,6 +402,10 @@ public final class ConfigKeys {
             .status(PLANNED, "P3")
             .description("Failed invocations in a row after which the wrapper gives up")
             .defaultValue("5")
+            .notes("N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures"
+                    + " (D20). An invocation fails when it cannot be started or ends within"
+                    + " wrapper.successful_invocation_time; a launch error is retried whatever wrapper.on_exit says."
+                    + " Values below 1 count as 1")
             .build();
 
     public static final KeySpec SUCCESSFUL_INVOCATION_TIME =

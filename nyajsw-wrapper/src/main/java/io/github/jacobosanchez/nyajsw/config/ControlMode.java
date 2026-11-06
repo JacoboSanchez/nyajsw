@@ -17,5 +17,21 @@ public enum ControlMode {
     APPLICATION,
 
     /** The wrapper ends when the application ends; the application survives the wrapper. */
-    WRAPPER
+    WRAPPER;
+
+    /**
+     * Whether the wrapper ends once the application has ended: {@link #TIGHT} and {@link #WRAPPER}.
+     * Decides whether the exit action {@code STOP} keeps the wrapper running (D20).
+     */
+    public boolean wrapperEndsWithApplication() {
+        return this == TIGHT || this == WRAPPER;
+    }
+
+    /**
+     * Whether the application is stopped when the wrapper ends: {@link #TIGHT} and {@link
+     * #APPLICATION}. Otherwise a stop of the wrapper leaves the application running.
+     */
+    public boolean applicationEndsWithWrapper() {
+        return this == TIGHT || this == APPLICATION;
+    }
 }

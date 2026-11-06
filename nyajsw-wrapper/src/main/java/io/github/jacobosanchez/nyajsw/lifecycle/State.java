@@ -11,8 +11,9 @@ import java.util.Set;
 public enum State {
 
     /**
-     * No application is running and none is due: before the first start, and after an exit whose
-     * action is {@code STOP}, which keeps the wrapper alive until it is stopped itself.
+     * No application is running: before the first start (which may wait for {@code
+     * wrapper.startup.delay}), and after an exit whose action is {@code STOP} where {@code
+     * wrapper.control} keeps the wrapper alive until it is stopped itself.
      */
     IDLE,
 
@@ -25,12 +26,16 @@ public enum State {
     /** The application is being stopped; it exits because the wrapper asked, so no exit action applies. */
     STOPPING,
 
-    /** The application has ended and the next invocation waits for {@code wrapper.restart.delay}. */
+    /**
+     * The application has ended, or could not be started, and the next invocation waits for {@code
+     * wrapper.restart.delay}.
+     */
     RESTART_WAIT,
 
     /**
-     * Supervision is over as planned and the wrapper may end: the application has ended, or was
-     * given up on after it survived termination (the supervisor logs that as an error).
+     * Supervision is over as planned and the wrapper may end: the application has ended, was left
+     * running because {@code wrapper.control} lets it outlive the wrapper, or was given up on after
+     * it survived termination (the supervisor logs that as an error).
      */
     STOPPED,
 
@@ -44,7 +49,7 @@ public enum State {
     public Set<State> successors() {
         return switch (this) {
             case IDLE -> EnumSet.of(STARTING, STOPPED, FAILED);
-            case STARTING -> EnumSet.of(RUNNING, FAILED);
+            case STARTING -> EnumSet.of(RUNNING, RESTART_WAIT, FAILED);
             case RUNNING -> EnumSet.of(STOPPING, RESTART_WAIT, IDLE, STOPPED, FAILED);
             case STOPPING -> EnumSet.of(STOPPED, FAILED);
             case RESTART_WAIT -> EnumSet.of(STARTING, STOPPED, FAILED);
