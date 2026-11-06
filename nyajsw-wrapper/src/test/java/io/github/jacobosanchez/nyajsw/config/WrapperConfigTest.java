@@ -135,6 +135,8 @@ public class WrapperConfigTest {
         assertEquals(lifecycle.successfulInvocationTime(), Duration.ofSeconds(60));
         assertEquals(lifecycle.startupDelay(), Duration.ZERO);
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(30));
+        assertEquals(lifecycle.jvmExitTimeout(), Duration.ZERO);
+        assertEquals(lifecycle.stopBudget(), Duration.ofSeconds(30));
         assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
         // The agent is enabled by default but not implemented yet (P7), so the defaults do without it.
         assertEquals(lifecycle.stopStrategies(), List.of("terminate"));
@@ -428,6 +430,16 @@ public class WrapperConfigTest {
 
     private static List<String> messages(WrapperConfig config) {
         return config.warnings().stream().map(ConfigWarning::message).toList();
+    }
+
+    @Test
+    public void theStopBudgetAddsTheJvmExitTimeoutToTheShutdownTimeout() throws IOException {
+        LifecycleConfig lifecycle = load("wrapper.java.app.mainclass=Main", "wrapper.shutdown.timeout=20",
+                "wrapper.jvm_exit.timeout=15", "wrapper.startup.delay=3").lifecycle();
+
+        assertEquals(lifecycle.jvmExitTimeout(), Duration.ofSeconds(15));
+        assertEquals(lifecycle.stopBudget(), Duration.ofSeconds(35));
+        assertEquals(lifecycle.startupDelay(), Duration.ofSeconds(3));
     }
 
     private WrapperConfig load(String... lines) throws IOException {

@@ -51,12 +51,12 @@ import org.testng.annotations.Test;
 
 public class SupervisorTest {
 
-    private static final Duration RESTART_DELAY = Duration.ofSeconds(5);
-    private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(30);
-    private static final Duration SUCCESSFUL_TIME = Duration.ofSeconds(60);
-    private static final int MAX_FAILED = 5;
+    private static final Duration RESTART_DELAY = Lifecycles.RESTART_DELAY;
+    private static final Duration SHUTDOWN_TIMEOUT = Lifecycles.SHUTDOWN_TIMEOUT;
+    private static final Duration SUCCESSFUL_TIME = Lifecycles.SUCCESSFUL_TIME;
+    private static final int MAX_FAILED = Lifecycles.MAX_FAILED;
     private static final Duration READINESS_INTERVAL = Duration.ofSeconds(1);
-    private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration STARTUP_TIMEOUT = Lifecycles.STARTUP_TIMEOUT;
 
     private FakeScheduler scheduler;
     private List<FakeApplication> launched;
@@ -65,9 +65,12 @@ public class SupervisorTest {
     private WrapperLog log;
     /** The default readiness: the process probe, checked every second. */
     private ProbeRunner readiness;
+    /** The default stop: no graceful strategy, then terminate. */
+    private StopChain stops;
 
     @BeforeMethod
     public void setUp() {
+        stops = StopStrategyRegistry.defaults().chain(lifecycle(ExitAction.SHUTDOWN, Map.of()));
         readiness = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe(ProcessProbe.TYPE, new ProcessProbe())),
                 READINESS_INTERVAL);
         scheduler = new FakeScheduler();
@@ -88,9 +91,15 @@ public class SupervisorTest {
 
     private static LifecycleConfig lifecycle(ControlMode control, ExitAction defaultAction,
             Map<Integer, ExitAction> actions, int maxFailedInvocations, Duration startupDelay) {
-        return new LifecycleConfig(control, actions, defaultAction, RESTART_DELAY, maxFailedInvocations,
-                SUCCESSFUL_TIME, startupDelay, STARTUP_TIMEOUT, SHUTDOWN_TIMEOUT, Optional.empty(),
-                Optional.empty(), List.of("terminate"), Optional.empty(), Optional.empty(), Optional.empty());
+        return lifecycle(control, defaultAction, actions, maxFailedInvocations, startupDelay, STARTUP_TIMEOUT,
+                Duration.ZERO);
+    }
+
+    private static LifecycleConfig lifecycle(ControlMode control, ExitAction defaultAction,
+            Map<Integer, ExitAction> actions, int maxFailedInvocations, Duration startupDelay, Duration startupTimeout,
+            Duration jvmExitTimeout) {
+        return Lifecycles.lifecycle(control, defaultAction, actions, maxFailedInvocations, startupDelay,
+                startupTimeout, jvmExitTimeout, List.of(TerminateStopStrategy.NAME));
     }
 
     private Supervisor supervisor(LifecycleConfig lifecycle) {
@@ -98,7 +107,7 @@ public class SupervisorTest {
     }
 
     private Supervisor supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher) {
-        return new Supervisor(lifecycle, launcher, readiness, Runnable::run, scheduler, log,
+        return new Supervisor(lifecycle, launcher, readiness, Runnable::run, stops, scheduler, log,
                 (from, to) -> transitions.add(from + "->" + to));
     }
 
@@ -263,7 +272,7 @@ public class SupervisorTest {
         advance(supervisor, Duration.ofMillis(1));
         assertEquals(application.terminations(), 1);
         assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.of(1)));
-        assertTrue(logged().contains("jvm 1 did not end within 30 s; terminating it"), logged());
+        assertTrue(logged().contains("jvm 1 did not end within 30 s; terminating it (terminate)"), logged());
     }
 
     @Test
@@ -703,7 +712,7 @@ public class SupervisorTest {
     @Test
     public void aFailingListenerIsLoggedAndSupervisionGoesOn() {
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, scheduler, log, (from, to) -> {
+                Runnable::run, stops, scheduler, log, (from, to) -> {
             throw new IllegalStateException("listener broke");
         });
 
@@ -780,9 +789,8 @@ public class SupervisorTest {
     public void notBecomingReadyIsAFailureEvenWhenTheStartupTimeoutExceedsTheSuccessfulTime() {
         readinessWhen(new AtomicBoolean());
         Duration longStartup = SUCCESSFUL_TIME.plusSeconds(30);
-        Supervisor supervisor = starting(new LifecycleConfig(ControlMode.TIGHT, Map.of(), ExitAction.SHUTDOWN,
-                RESTART_DELAY, 1, SUCCESSFUL_TIME, Duration.ZERO, longStartup, SHUTDOWN_TIMEOUT, Optional.empty(),
-                Optional.empty(), List.of("terminate"), Optional.empty(), Optional.empty(), Optional.empty()));
+        Supervisor supervisor = starting(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), 1,
+                Duration.ZERO, longStartup, Duration.ZERO));
 
         advance(supervisor, longStartup);
 
@@ -795,10 +803,8 @@ public class SupervisorTest {
     public void aStartupTimeoutOfZeroMeansNoLimit() {
         AtomicBoolean ready = new AtomicBoolean();
         readinessWhen(ready);
-        Supervisor supervisor = starting(new LifecycleConfig(ControlMode.TIGHT, Map.of(), ExitAction.SHUTDOWN,
-                RESTART_DELAY, MAX_FAILED, SUCCESSFUL_TIME, Duration.ZERO, Duration.ZERO, SHUTDOWN_TIMEOUT,
-                Optional.empty(), Optional.empty(), List.of("terminate"), Optional.empty(), Optional.empty(),
-                Optional.empty()));
+        Supervisor supervisor = starting(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ZERO, Duration.ZERO, Duration.ZERO));
 
         advance(supervisor, Duration.ofHours(2));
         assertEquals(supervisor.state(), STARTING);
@@ -814,7 +820,7 @@ public class SupervisorTest {
         AtomicBoolean ready = new AtomicBoolean();
         readinessWhen(ready);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.RESTART, Map.of()), this::launch, readiness,
-                checks::add, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+                checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
         supervisor.start();
         supervisor.runPending();
         Runnable firstCheck = checks.get(0); // jvm 1's check, still pending
@@ -853,7 +859,7 @@ public class SupervisorTest {
                         throw new RejectedExecutionException("shut down");
                     }
                     task.run();
-                }, scheduler, log, (from, to) -> { });
+                }, stops, scheduler, log, (from, to) -> { });
         supervisor.start();
         supervisor.runPending();
 
@@ -951,7 +957,7 @@ public class SupervisorTest {
     public void aReadinessResultThatArrivesAfterTheStateChangedIsIgnored() {
         List<Runnable> checks = new ArrayList<>();
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                checks::add, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+                checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
         supervisor.start();
         supervisor.runPending();
         assertEquals(checks.size(), 1, "the first check is queued at once");
@@ -985,11 +991,201 @@ public class SupervisorTest {
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
                 task -> {
                     throw new RejectedExecutionException("shut down");
-                }, scheduler, log, (from, to) -> { });
+                }, stops, scheduler, log, (from, to) -> { });
         supervisor.start();
         supervisor.runPending();
 
         assertEquals(supervisor.state(), FAILED);
+        assertEquals(launched.get(0).terminations(), 1);
+    }
+
+    /** What a recording stop strategy does when asked. */
+    private enum Behaviour { ASKS, ENDS_APPLICATION, THROWS, NOT_APPLICABLE }
+
+    /** A stop strategy that records when it was asked, and with what share. */
+    private StopChain.Step recording(String name, List<String> asked, Behaviour behaviour) {
+        return new StopChain.Step(name, context -> {
+            asked.add(name + "@" + scheduler.now().toSeconds());
+            return switch (behaviour) {
+                case ASKS -> StopStrategy.Result.REQUESTED;
+                case ENDS_APPLICATION -> {
+                    ((FakeApplication) context.application()).exit(0);
+                    yield StopStrategy.Result.REQUESTED;
+                }
+                case THROWS -> throw new IllegalStateException(name + " broke");
+                case NOT_APPLICABLE -> StopStrategy.Result.NOT_APPLICABLE;
+            };
+        });
+    }
+
+    private void chainOf(StopChain.Step... graceful) {
+        stops = new StopChain(List.of(graceful), stops.last(), List.of());
+    }
+
+    @Test
+    public void gracefulStrategiesShareTheStopBudgetBeforeTerminate() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("first", asked, Behaviour.ASKS), recording("second", asked, Behaviour.ASKS));
+        Duration jvmExit = Duration.ofSeconds(10);
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ZERO, STARTUP_TIMEOUT, jvmExit));
+        scheduler.advance(Duration.ofSeconds(100)); // so that the times below are relative to the stop
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        advance(supervisor, Duration.ofSeconds(20).minusMillis(1));
+        assertEquals(asked, List.of("first@100"));
+        advance(supervisor, Duration.ofMillis(1));
+        assertEquals(asked, List.of("first@100", "second@120"), "each gets half of 30 s + 10 s");
+        advance(supervisor, Duration.ofSeconds(20).minusMillis(1));
+        assertEquals(launched.get(0).terminations(), 0);
+        advance(supervisor, Duration.ofMillis(1));
+
+        assertEquals(launched.get(0).terminations(), 1);
+        assertEquals(supervisor.state(), STOPPED);
+        assertTrue(logged().contains("stopping jvm 1: first, waiting up to 20 s"), logged());
+        assertTrue(logged().contains("jvm 1 did not end within 40 s; terminating it (terminate)"), logged());
+    }
+
+    @Test
+    public void aStrategyThatEndsTheApplicationEndsTheStop() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("first", asked, Behaviour.ENDS_APPLICATION), recording("second", asked, Behaviour.ASKS));
+        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        assertEquals(scheduler.pending(), 0, "the exit cancelled the step's timer");
+        advance(supervisor, SHUTDOWN_TIMEOUT.plus(Supervisor.AFTER_TERMINATION));
+
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.of(0)));
+        assertEquals(asked, List.of("first@0"));
+        assertEquals(launched.get(0).terminations(), 0);
+    }
+
+    @Test
+    public void aStrategyThatThrowsIsLoggedAndHandsItsShareToTheNextStep() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("broken", asked, Behaviour.THROWS), recording("next", asked, Behaviour.ASKS));
+        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+
+        assertEquals(asked, List.of("broken@0", "next@0"));
+        assertEquals(supervisor.state(), STOPPING);
+        assertTrue(logged().contains("the stop strategy broken failed; going on with the next step"), logged());
+        assertTrue(logged().contains("stopping jvm 1: next, waiting up to 30 s"), logged());
+        advance(supervisor, SHUTDOWN_TIMEOUT.minusMillis(1));
+        assertEquals(launched.get(0).terminations(), 0, "the application still has the whole budget");
+        advance(supervisor, Duration.ofMillis(1));
+        assertEquals(launched.get(0).terminations(), 1);
+    }
+
+    @Test
+    public void aStrategyThatDoesNotApplyHandsItsShareToTheNextStep() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("first", asked, Behaviour.ASKS), recording("absent", asked, Behaviour.NOT_APPLICABLE),
+                recording("third", asked, Behaviour.ASKS));
+        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        advance(supervisor, Duration.ofSeconds(10)); // first's third of 30 s
+
+        assertEquals(asked, List.of("first@0", "absent@10", "third@10"));
+        assertTrue(logged().contains("stopping jvm 1: third, waiting up to 20 s"), logged());
+        assertFalse(logged().contains("failed; going on"), logged());
+        advance(supervisor, Duration.ofSeconds(20));
+        assertEquals(launched.get(0).terminations(), 1);
+    }
+
+    @Test
+    public void whenTheLastGracefulStepFailsTheApplicationIsTerminatedAtOnce() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("broken", asked, Behaviour.THROWS));
+        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+
+        assertEquals(launched.get(0).terminations(), 1);
+        assertEquals(supervisor.state(), STOPPED);
+        assertTrue(logged().contains("jvm 1 did not end within 0 s; terminating it (terminate)"), logged());
+    }
+
+    @Test
+    public void aStopBudgetOfZeroTerminatesWithoutTheGracefulSteps() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("first", asked, Behaviour.ASKS));
+        Supervisor supervisor = running(Lifecycles.withoutStopBudget());
+
+        supervisor.requestStop();
+        supervisor.runPending();
+
+        assertEquals(asked, List.of());
+        assertEquals(launched.get(0).terminations(), 1);
+        assertEquals(supervisor.state(), STOPPED);
+    }
+
+    @Test
+    public void anApplicationThatSurvivesTheWholeChainIsGivenUp() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("first", asked, Behaviour.ASKS));
+        FakeApplication stubborn = new FakeApplication(1).survivingTermination();
+        Supervisor supervisor = supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), invocation -> stubborn);
+        supervisor.start();
+        supervisor.runPending();
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        advance(supervisor, SHUTDOWN_TIMEOUT);
+        advance(supervisor, Supervisor.AFTER_TERMINATION);
+
+        assertEquals(asked, List.of("first@0"));
+        assertEquals(stubborn.terminations(), 1);
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.empty()));
+    }
+
+    @Test
+    public void sharesThatAreNotWholeSecondsAreLoggedWithMilliseconds() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("a", asked, Behaviour.ASKS), recording("b", asked, Behaviour.ASKS),
+                recording("c", asked, Behaviour.ASKS), recording("d", asked, Behaviour.ASKS));
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ZERO, STARTUP_TIMEOUT, Duration.ZERO)); // 30 s over 4 steps
+
+        supervisor.requestStop();
+        supervisor.runPending();
+
+        assertTrue(logged().contains("stopping jvm 1: a, waiting up to 7.500 s"), logged());
+    }
+
+    @Test
+    public void theJvmExitTimeoutExtendsTheWaitBeforeTerminate() {
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ZERO, STARTUP_TIMEOUT, Duration.ofSeconds(15)));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        advance(supervisor, SHUTDOWN_TIMEOUT);
+        assertEquals(launched.get(0).terminations(), 0);
+        advance(supervisor, Duration.ofSeconds(15));
+
+        assertEquals(launched.get(0).terminations(), 1);
+        assertTrue(logged().contains("stopping: waiting up to 45 s for jvm 1 to end"), logged());
+    }
+
+    @Test
+    public void anUnreadyInvocationIsEndedByTheLastStepWithoutTheGracefulOnes() {
+        List<String> asked = new ArrayList<>();
+        chainOf(recording("first", asked, Behaviour.ASKS));
+        readinessWhen(new AtomicBoolean());
+        Supervisor supervisor = starting(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+
+        advance(supervisor, STARTUP_TIMEOUT);
+
+        assertEquals(asked, List.of());
         assertEquals(launched.get(0).terminations(), 1);
     }
 
@@ -1006,7 +1202,7 @@ public class SupervisorTest {
         CountDownLatch supervisorRunning = new CountDownLatch(1);
         CountDownLatch stopping = new CountDownLatch(1);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, scheduler, log, (from, to) -> {
+                Runnable::run, stops, scheduler, log, (from, to) -> {
             if (to == RUNNING) {
                 supervisorRunning.countDown();
             }

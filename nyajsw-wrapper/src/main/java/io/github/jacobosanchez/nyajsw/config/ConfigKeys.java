@@ -440,6 +440,7 @@ public final class ConfigKeys {
     public static final KeySpec JVM_EXIT_TIMEOUT = yajsw("wrapper.jvm_exit.timeout", DURATION, LIFECYCLE)
             .status(PLANNED, "P3")
             .description("Time added to wrapper.shutdown.timeout before the application is terminated")
+            .notes("When not set it adds nothing")
             .build();
 
     public static final KeySpec PIDFILE = yajsw("wrapper.pidfile", PATH, LIFECYCLE)
@@ -626,7 +627,9 @@ public final class ConfigKeys {
             .status(PLANNED, "P3")
             .description("Ordered stop strategies tried before the application is terminated")
             .derivedDefault("agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate")
-            .notes("Strategies and their order: implementation plan, section 4.6")
+            .notes("Names ignore case; unknown ones are skipped with a warning and terminate is always the last"
+                    + " step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout;"
+                    + " when both are 0 they are skipped. Strategies: implementation plan, section 4.6")
             .build();
 
     public static final KeySpec STOP_COMMAND = nyajsw("wrapper.stop.command", STRING, LIFECYCLE)
