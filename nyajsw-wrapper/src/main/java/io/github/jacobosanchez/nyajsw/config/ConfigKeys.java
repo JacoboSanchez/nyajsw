@@ -149,7 +149,8 @@ public final class ConfigKeys {
 
     public static final KeySpec JAVA_CLASSPATH = yajsw("wrapper.java.classpath.<n>", PATH, JAVA)
             .status(PLANNED, "P2")
-            .description("Classpath entry of the application; * and ** wildcards allowed")
+            .description("Classpath entry of the application; * and ? wildcards as in YAJSW")
+            .notes("A whole ** segment matches any depth, a nyajsw extension; matches are sorted by path")
             .build();
 
     public static final KeySpec JAVA_LIBRARY_PATH = yajsw("wrapper.java.library.path.<n>", PATH, JAVA)

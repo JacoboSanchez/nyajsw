@@ -52,7 +52,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.java.mainclass` | YAJSW's in-JVM bootstrap class | text | — | **ignored** | nyajsw starts the application main class directly; the optional agent replaces the bootstrap |
 | `wrapper.app.parameter.<n>` | Program argument passed to the application | text | — | **planned** (P2) |  |
 | `wrapper.app.parameter.<n>.stripquotes` | Tanuki: remove quotes from wrapper.app.parameter.&lt;n&gt; | boolean | — | **unsupported** | Declared so that it is not read as a program argument |
-| `wrapper.java.classpath.<n>` | Classpath entry of the application; * and ** wildcards allowed | path | — | **planned** (P2) |  |
+| `wrapper.java.classpath.<n>` | Classpath entry of the application; * and ? wildcards as in YAJSW | path | — | **planned** (P2) | A whole ** segment matches any depth, a nyajsw extension; matches are sorted by path |
 | `wrapper.java.classpath.use_environment` | Tanuki: append the CLASSPATH environment variable to the classpath | boolean | — | **unsupported** | Declared so that it is not read as a classpath entry |
 | `wrapper.java.classpath.missing_log_level` | Tanuki: log level used when a classpath entry does not exist | text | — | **unsupported** | Declared so that it is not read as a classpath entry |
 | `wrapper.java.library.path.<n>` | Entry of the application's java.library.path | path | — | **planned** (P2) |  |

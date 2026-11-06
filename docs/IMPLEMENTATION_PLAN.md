@@ -752,8 +752,20 @@ Goal: build and run the application command line exactly as the configuration sa
       `WrapperConfig.secrets()` now carries. Text values keep doubled backslashes until P1.9
       settles escaping, so `-Dx=C:\\dir` reaches the JVM with both backslashes, which Windows
       paths tolerate. `-Xrs` (P6.2) and the agent (P7.3) are added by later items.
-- [ ] P2.3 `ClasspathExpander`: `wrapper.java.classpath.N` with `*`/`**` wildcards, directories,
-      relative to the working dir, deterministic order, de-duplication.
+- [x] P2.3 `ClasspathExpander`: `wrapper.java.classpath.N` with `*`/`**` wildcards, directories,
+      relative to the working dir, deterministic order, de-duplication. **Done:** results are
+      absolute; `*` and `?` work within a segment and in directory segments (`lib/*/*.jar`), as in
+      YAJSW; a whole `**` segment (any depth) is a nyajsw extension, since YAJSW's reference says
+      recursive wildcards are not supported; wildcards match regular files only, sorted by relative
+      path (case-insensitively first, R7); `/` and `\` both separate segments; links are followed
+      (loops warn); a directory that cannot be read is skipped with a warning, and only an
+      unreadable base directory stops the launch; directories that cannot lead to a match are not
+      walked; under Windows rules names match ignoring case, a `\\?\` prefix is literal and a
+      drive-relative entry (`C:lib`) is skipped with a warning; `..` after a wildcard is refused
+      with a warning; a missing plain entry is kept and a wildcard that matches nothing is dropped,
+      both with a warning; the first occurrence of a file wins (by text: short names and links
+      are not resolved); messages show entries masked. On macOS, whose file system ignores case,
+      names still match case-sensitively.
 - [ ] P2.4 `ApplicationProcess` + `OutputPump`: check that the Java executable exists before
       starting (YAJSW does), `ProcessBuilder` with `wrapper.app.env.*`,
       `wrapper.working.dir`, `wrapper.tmp.path`, piped output with explicit charset, pid, exit code,
