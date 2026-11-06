@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
+import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 
 import java.util.concurrent.CompletableFuture;
@@ -19,7 +20,7 @@ final class FakeApplication implements RunningApplication {
     private volatile boolean failingOnExit;
 
     FakeApplication(int invocation) {
-        this.name = "jvm " + invocation;
+        this.name = ApplicationLauncher.nameOf(invocation);
         this.pid = 1000 + invocation;
     }
 

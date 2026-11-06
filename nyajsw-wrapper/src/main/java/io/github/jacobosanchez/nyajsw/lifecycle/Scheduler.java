@@ -3,11 +3,17 @@ package io.github.jacobosanchez.nyajsw.lifecycle;
 import java.time.Duration;
 
 /**
- * Runs a task after a delay. The {@link Supervisor} takes every timed decision through it (restart
- * delay, shutdown timeout), so tests drive time with a fake instead of sleeping.
+ * Runs a task after a delay and tells the time. The {@link Supervisor} takes every timed decision
+ * through it (restart delay, shutdown timeout, how long an invocation ran), so tests drive time
+ * with a fake instead of sleeping.
  */
-@FunctionalInterface
 public interface Scheduler {
+
+    /**
+     * The time on a monotonic clock, from an arbitrary origin: only differences between two
+     * readings mean something.
+     */
+    Duration now();
 
     /** A scheduled task that has not necessarily run yet. */
     @FunctionalInterface

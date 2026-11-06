@@ -11,6 +11,7 @@ import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_INTERVAL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.RESTART_DELAY;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.SHUTDOWN_TIMEOUT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STARTUP_DELAY;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STARTUP_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STOP_COMMAND;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STOP_STRATEGY;
@@ -37,6 +38,7 @@ import java.util.TreeMap;
  * @param restartDelay             {@code wrapper.restart.delay}
  * @param maxFailedInvocations     {@code wrapper.max_failed_invocations}
  * @param successfulInvocationTime {@code wrapper.successful_invocation_time}
+ * @param startupDelay             {@code wrapper.startup.delay}
  * @param startupTimeout           {@code wrapper.startup.timeout}
  * @param shutdownTimeout          {@code wrapper.shutdown.timeout}
  * @param pidFile                  {@code wrapper.pidfile}, if set
@@ -49,7 +51,7 @@ import java.util.TreeMap;
  * @param pingTimeout              {@code wrapper.ping.timeout}, if set
  */
 public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exitActions, ExitAction defaultExitAction,
-        Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime,
+        Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime, Duration startupDelay,
         Duration startupTimeout, Duration shutdownTimeout, Optional<Path> pidFile, Optional<Path> javaPidFile,
         List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
         Optional<Duration> pingTimeout) {
@@ -60,6 +62,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
         Objects.requireNonNull(defaultExitAction, "defaultExitAction");
         Objects.requireNonNull(restartDelay, "restartDelay");
         Objects.requireNonNull(successfulInvocationTime, "successfulInvocationTime");
+        Objects.requireNonNull(startupDelay, "startupDelay");
         Objects.requireNonNull(startupTimeout, "startupTimeout");
         Objects.requireNonNull(shutdownTimeout, "shutdownTimeout");
         Objects.requireNonNull(pidFile, "pidFile");
@@ -93,6 +96,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 values.required(values.duration(RESTART_DELAY), RESTART_DELAY),
                 values.required(values.integer(MAX_FAILED_INVOCATIONS), MAX_FAILED_INVOCATIONS),
                 values.required(values.duration(SUCCESSFUL_INVOCATION_TIME), SUCCESSFUL_INVOCATION_TIME),
+                values.required(values.duration(STARTUP_DELAY), STARTUP_DELAY),
                 values.required(values.duration(STARTUP_TIMEOUT), STARTUP_TIMEOUT),
                 values.required(values.duration(SHUTDOWN_TIMEOUT), SHUTDOWN_TIMEOUT),
                 values.path(PIDFILE),

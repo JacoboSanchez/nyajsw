@@ -21,10 +21,10 @@ import org.testng.annotations.Test;
 
 public class StateTest {
 
-    /** The transitions of plan §4.6 as far as P3.1 implements them; every pair not listed is refused. */
+    /** The transitions of plan §4.6 as far as they are implemented; every pair not listed is refused. */
     private static final Map<State, Set<State>> EXPECTED = new EnumMap<>(Map.of(
             IDLE, EnumSet.of(STARTING, STOPPED, FAILED),
-            STARTING, EnumSet.of(RUNNING, FAILED),
+            STARTING, EnumSet.of(RUNNING, RESTART_WAIT, FAILED),
             RUNNING, EnumSet.of(STOPPING, RESTART_WAIT, IDLE, STOPPED, FAILED),
             STOPPING, EnumSet.of(STOPPED, FAILED),
             RESTART_WAIT, EnumSet.of(STARTING, STOPPED, FAILED),

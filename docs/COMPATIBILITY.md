@@ -93,12 +93,12 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
-| `wrapper.control` | Coupling between the lifetimes of the wrapper and the application | one of `TIGHT`, `LOOSE`, `APPLICATION`, `WRAPPER` | `TIGHT` | **planned** (P3) |  |
-| `wrapper.on_exit.default` | Action when the application exits with a code that has no wrapper.on_exit.&lt;code&gt; | one of `RESTART`, `SHUTDOWN`, `STOP` | `SHUTDOWN` | **planned** (P3) |  |
-| `wrapper.on_exit.0` | Action when the application exits with code 0; when absent, wrapper.on_exit.default applies | one of `RESTART`, `SHUTDOWN`, `STOP` | — | **planned** (P3) |  |
-| `wrapper.on_exit.<code>` | Action when the application exits with this exit code | one of `RESTART`, `SHUTDOWN`, `STOP` | — | **planned** (P3) |  |
+| `wrapper.control` | Coupling between the lifetimes of the wrapper and the application | one of `TIGHT`, `LOOSE`, `APPLICATION`, `WRAPPER` | `TIGHT` | **planned** (P3) | The exit action STOP keeps the wrapper running only under LOOSE and APPLICATION; a stop of the wrapper leaves the application running under LOOSE and WRAPPER (D20) |
+| `wrapper.on_exit.default` | Action when the application exits with a code that has no wrapper.on_exit.&lt;code&gt; | one of `RESTART`, `SHUTDOWN`, `STOP` | `SHUTDOWN` | **planned** (P3) | STOP keeps the wrapper running only when wrapper.control is LOOSE or APPLICATION; otherwise it ends the wrapper like SHUTDOWN (D20) |
+| `wrapper.on_exit.0` | Action when the application exits with code 0; when absent, wrapper.on_exit.default applies | one of `RESTART`, `SHUTDOWN`, `STOP` | — | **planned** (P3) | STOP keeps the wrapper running only when wrapper.control is LOOSE or APPLICATION; otherwise it ends the wrapper like SHUTDOWN (D20) |
+| `wrapper.on_exit.<code>` | Action when the application exits with this exit code | one of `RESTART`, `SHUTDOWN`, `STOP` | — | **planned** (P3) | STOP keeps the wrapper running only when wrapper.control is LOOSE or APPLICATION; otherwise it ends the wrapper like SHUTDOWN (D20) |
 | `wrapper.restart.delay` | Pause between the end of one invocation and the next start | seconds | `5` | **planned** (P3) |  |
-| `wrapper.max_failed_invocations` | Failed invocations in a row after which the wrapper gives up | integer | `5` | **planned** (P3) |  |
+| `wrapper.max_failed_invocations` | Failed invocations in a row after which the wrapper gives up | integer | `5` | **planned** (P3) | N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures (D20). An invocation fails when it cannot be started or ends within wrapper.successful_invocation_time; a launch error is retried whatever wrapper.on_exit says. Values below 1 count as 1 |
 | `wrapper.successful_invocation_time` | Run time after which an invocation counts as successful | seconds | `60` | **planned** (P3) |  |
 | `wrapper.startup.delay` | Pause before the application is started for the first time | seconds | `0` | **planned** (P3) |  |
 | `wrapper.startup.timeout` | Time the application has to become ready | seconds | `30` | **planned** (P3) |  |

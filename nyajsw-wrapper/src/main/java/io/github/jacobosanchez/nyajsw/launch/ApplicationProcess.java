@@ -89,7 +89,7 @@ public final class ApplicationProcess implements RunningApplication {
             throw new LaunchException("the working directory " + secrets.maskText(java.workingDir().toString())
                     + " does not exist");
         }
-        String name = "jvm " + invocation;
+        String name = ApplicationLauncher.nameOf(invocation);
         log.status("launching " + name + ": " + command.loggable());
         Process process;
         try {

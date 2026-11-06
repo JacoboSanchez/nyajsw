@@ -133,6 +133,7 @@ public class WrapperConfigTest {
         assertEquals(lifecycle.exitAction(0), ExitAction.SHUTDOWN);
         assertEquals(lifecycle.maxFailedInvocations(), 5);
         assertEquals(lifecycle.successfulInvocationTime(), Duration.ofSeconds(60));
+        assertEquals(lifecycle.startupDelay(), Duration.ZERO);
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(30));
         assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
         // The agent is enabled by default but not implemented yet (P7), so the defaults do without it.

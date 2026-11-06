@@ -46,6 +46,8 @@ public class SupervisorTest {
 
     private static final Duration RESTART_DELAY = Duration.ofSeconds(5);
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration SUCCESSFUL_TIME = Duration.ofSeconds(60);
+    private static final int MAX_FAILED = 5;
 
     private FakeScheduler scheduler;
     private List<FakeApplication> launched;
@@ -68,9 +70,14 @@ public class SupervisorTest {
     }
 
     private static LifecycleConfig lifecycle(ExitAction defaultAction, Map<Integer, ExitAction> actions) {
-        return new LifecycleConfig(ControlMode.TIGHT, actions, defaultAction, RESTART_DELAY, 5,
-                Duration.ofSeconds(60), Duration.ofSeconds(30), SHUTDOWN_TIMEOUT, Optional.empty(), Optional.empty(),
-                List.of("terminate"), Optional.empty(), Optional.empty(), Optional.empty());
+        return lifecycle(ControlMode.TIGHT, defaultAction, actions, MAX_FAILED, Duration.ZERO);
+    }
+
+    private static LifecycleConfig lifecycle(ControlMode control, ExitAction defaultAction,
+            Map<Integer, ExitAction> actions, int maxFailedInvocations, Duration startupDelay) {
+        return new LifecycleConfig(control, actions, defaultAction, RESTART_DELAY, maxFailedInvocations,
+                SUCCESSFUL_TIME, startupDelay, Duration.ofSeconds(30), SHUTDOWN_TIMEOUT, Optional.empty(),
+                Optional.empty(), List.of("terminate"), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     private Supervisor supervisor(LifecycleConfig lifecycle) {
@@ -87,18 +94,30 @@ public class SupervisorTest {
         return application;
     }
 
+    /** Every exit action under every {@code wrapper.control}, and the state that follows the exit (D20). */
     @DataProvider
     public Object[][] exitActions() {
         return new Object[][] {
-                {ExitAction.RESTART, RESTART_WAIT},
-                {ExitAction.SHUTDOWN, STOPPED},
-                {ExitAction.STOP, IDLE},
+                {ControlMode.TIGHT, ExitAction.RESTART, RESTART_WAIT},
+                {ControlMode.TIGHT, ExitAction.SHUTDOWN, STOPPED},
+                {ControlMode.TIGHT, ExitAction.STOP, STOPPED},
+                {ControlMode.WRAPPER, ExitAction.RESTART, RESTART_WAIT},
+                {ControlMode.WRAPPER, ExitAction.SHUTDOWN, STOPPED},
+                {ControlMode.WRAPPER, ExitAction.STOP, STOPPED},
+                {ControlMode.APPLICATION, ExitAction.RESTART, RESTART_WAIT},
+                {ControlMode.APPLICATION, ExitAction.SHUTDOWN, STOPPED},
+                {ControlMode.APPLICATION, ExitAction.STOP, IDLE},
+                {ControlMode.LOOSE, ExitAction.RESTART, RESTART_WAIT},
+                {ControlMode.LOOSE, ExitAction.SHUTDOWN, STOPPED},
+                {ControlMode.LOOSE, ExitAction.STOP, IDLE},
         };
     }
 
     @Test(dataProvider = "exitActions")
-    public void anExitWhileRunningMovesAsItsActionSays(ExitAction action, State expected) {
-        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of(4, action)));
+    public void anExitWhileRunningMovesAsItsActionAndTheControlModeSay(ControlMode control, ExitAction action,
+            State expected) {
+        Supervisor supervisor = running(lifecycle(control, ExitAction.SHUTDOWN, Map.of(4, action), MAX_FAILED,
+                Duration.ZERO));
 
         launched.get(0).exit(4);
         supervisor.runPending();
@@ -106,9 +125,16 @@ public class SupervisorTest {
         assertEquals(supervisor.state(), expected);
     }
 
-    @Test(dataProvider = "exitActions")
-    public void anExitWhileStoppingIgnoresItsAction(ExitAction action, State ignored) {
-        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of(4, action)));
+    @DataProvider
+    public Object[][] actions() {
+        return new Object[][] {{ExitAction.RESTART}, {ExitAction.SHUTDOWN}, {ExitAction.STOP}};
+    }
+
+    @Test(dataProvider = "actions")
+    public void anExitWhileStoppingIgnoresItsAction(ExitAction action) {
+        // APPLICATION: a stop stops the application, and STOP alone would keep the wrapper waiting.
+        Supervisor supervisor = running(lifecycle(ControlMode.APPLICATION, ExitAction.SHUTDOWN, Map.of(4, action),
+                MAX_FAILED, Duration.ZERO));
 
         supervisor.requestStop();
         supervisor.runPending();
@@ -192,7 +218,8 @@ public class SupervisorTest {
 
     @Test
     public void stopActionKeepsTheWrapperIdleUntilItIsStopped() {
-        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of(0, ExitAction.STOP)));
+        Supervisor supervisor = running(lifecycle(ControlMode.LOOSE, ExitAction.SHUTDOWN, Map.of(0, ExitAction.STOP),
+                MAX_FAILED, Duration.ZERO));
 
         launched.get(0).exit(0);
         supervisor.runPending();
@@ -311,18 +338,221 @@ public class SupervisorTest {
     }
 
     @Test
-    public void aLaunchErrorFailsSupervision() {
-        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.RESTART, Map.of()), invocation -> {
-            throw new LaunchException("the Java executable C:/missing/java does not exist");
-        }, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+    public void aLaunchErrorIsRetriedLikeAFailedInvocationWhateverTheExitActions() {
+        List<Integer> attempts = new ArrayList<>();
+        Supervisor supervisor = supervisor(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), 3,
+                Duration.ZERO), invocation -> {
+                    attempts.add(invocation);
+                    throw new LaunchException("the Java executable C:/missing/java does not exist");
+                });
 
         supervisor.start();
         supervisor.runPending();
+        assertEquals(supervisor.state(), RESTART_WAIT);
+        advance(supervisor, RESTART_DELAY);
+        advance(supervisor, RESTART_DELAY);
 
+        assertEquals(attempts, List.of(1, 2, 3));
         assertEquals(supervisor.outcome(), new Supervisor.Outcome(FAILED, OptionalInt.empty()));
-        assertEquals(transitions, List.of("IDLE->STARTING", "STARTING->FAILED"));
+        assertEquals(transitions, List.of("IDLE->STARTING", "STARTING->RESTART_WAIT", "RESTART_WAIT->STARTING",
+                "STARTING->RESTART_WAIT", "RESTART_WAIT->STARTING", "STARTING->FAILED"));
         assertTrue(logged().contains("cannot start jvm 1: the Java executable C:/missing/java does not exist"),
                 logged());
+        assertTrue(logged().contains("giving up after jvm 3: 3 failed invocation(s) in a row reach"
+                + " wrapper.max_failed_invocations"), logged());
+    }
+
+    @Test
+    public void launchErrorsAndQuickExitsCountTogether() {
+        Supervisor supervisor = supervisor(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 3,
+                Duration.ZERO), invocation -> {
+                    if (invocation == 2) {
+                        throw new LaunchException("cannot start jvm 2");
+                    }
+                    return launch(invocation);
+                });
+        supervisor.start();
+        supervisor.runPending();
+
+        launched.get(0).exit(1); // failure 1
+        supervisor.runPending();
+        advance(supervisor, RESTART_DELAY); // jvm 2 cannot start: failure 2
+        assertEquals(supervisor.state(), RESTART_WAIT);
+        advance(supervisor, RESTART_DELAY);
+        launched.get(1).exit(1); // jvm 3: failure 3
+        supervisor.runPending();
+
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(FAILED, OptionalInt.of(1)));
+    }
+
+    @Test
+    public void aLaunchErrorAfterTheStartupDelayIsRetriedWithoutWaitingItAgain() {
+        List<Duration> attempts = new ArrayList<>();
+        Supervisor supervisor = supervisor(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), 2,
+                Duration.ofSeconds(8)), invocation -> {
+                    attempts.add(scheduler.now());
+                    throw new LaunchException("cannot start jvm " + invocation);
+                });
+        supervisor.start();
+        supervisor.runPending();
+
+        advance(supervisor, Duration.ofSeconds(8));
+        advance(supervisor, RESTART_DELAY);
+
+        assertEquals(attempts, List.of(Duration.ofSeconds(8), Duration.ofSeconds(8).plus(RESTART_DELAY)));
+        assertEquals(supervisor.state(), FAILED);
+    }
+
+    @Test
+    public void stopActionUnderTightLogsWhyTheWrapperEnds() {
+        Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of(0, ExitAction.STOP)));
+
+        launched.get(0).exit(0);
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), STOPPED);
+        assertTrue(logged().contains("STOP ends the wrapper as well: wrapper.control=TIGHT ends the wrapper with"
+                + " the application"), logged());
+    }
+
+    @Test
+    public void stopActionUnderApplicationWaitsUntilTheWrapperIsStopped() {
+        Supervisor supervisor = running(lifecycle(ControlMode.APPLICATION, ExitAction.STOP, Map.of(), MAX_FAILED,
+                Duration.ZERO));
+
+        launched.get(0).exit(2);
+        supervisor.runPending();
+        assertEquals(supervisor.state(), IDLE);
+        supervisor.requestStop();
+        supervisor.runPending();
+
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.of(2)));
+        assertEquals(transitions.get(transitions.size() - 1), "IDLE->STOPPED");
+    }
+
+    @Test
+    public void quickFailuresInARowEndSupervisionAtTheLimit() {
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 3,
+                Duration.ZERO));
+
+        for (int i = 0; i < 2; i++) {
+            advance(supervisor, SUCCESSFUL_TIME.minusMillis(1));
+            launched.get(i).exit(1);
+            supervisor.runPending();
+            assertEquals(supervisor.state(), RESTART_WAIT, "failure " + (i + 1));
+            advance(supervisor, RESTART_DELAY);
+        }
+        launched.get(2).exit(1);
+        supervisor.runPending();
+
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(FAILED, OptionalInt.of(1)));
+        assertEquals(launched.size(), 3);
+    }
+
+    @Test
+    public void aSuccessfulInvocationResetsTheCount() {
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 2,
+                Duration.ZERO));
+
+        launched.get(0).exit(1); // failure 1 of 2
+        supervisor.runPending();
+        advance(supervisor, RESTART_DELAY);
+        advance(supervisor, SUCCESSFUL_TIME);
+        launched.get(1).exit(1); // ran long enough: the count starts again
+        supervisor.runPending();
+        advance(supervisor, RESTART_DELAY);
+        launched.get(2).exit(1); // failure 1 of 2 again
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), RESTART_WAIT);
+        assertTrue(logged().contains("failed invocations in a row: 0 of 2"), logged());
+    }
+
+    @Test
+    public void withALimitOfOneTheFirstQuickFailureEndsSupervision() {
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 1,
+                Duration.ZERO));
+
+        launched.get(0).exit(1);
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), FAILED);
+        assertEquals(launched.size(), 1);
+    }
+
+    @Test
+    public void theFirstStartWaitsTheStartupDelay() {
+        Supervisor supervisor = supervisor(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ofSeconds(8)));
+        supervisor.start();
+        supervisor.runPending();
+        assertEquals(supervisor.state(), IDLE);
+
+        advance(supervisor, Duration.ofSeconds(8).minusMillis(1));
+        assertEquals(launched.size(), 0);
+        advance(supervisor, Duration.ofMillis(1));
+
+        assertEquals(supervisor.state(), RUNNING);
+        assertTrue(logged().contains("starting in 8 s (wrapper.startup.delay)"), logged());
+    }
+
+    @Test
+    public void aRestartDoesNotWaitTheStartupDelay() {
+        Supervisor supervisor = supervisor(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), MAX_FAILED,
+                Duration.ofSeconds(8)));
+        supervisor.start();
+        supervisor.runPending();
+        advance(supervisor, Duration.ofSeconds(8));
+
+        launched.get(0).exit(1);
+        supervisor.runPending();
+        advance(supervisor, RESTART_DELAY);
+
+        assertEquals(launched.size(), 2);
+    }
+
+    @Test
+    public void aStopDuringTheStartupDelayStartsNothing() {
+        Supervisor supervisor = supervisor(lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ofSeconds(8)));
+        supervisor.start();
+        supervisor.runPending();
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        advance(supervisor, Duration.ofSeconds(8));
+
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.empty()));
+        assertEquals(launched.size(), 0);
+    }
+
+    @DataProvider
+    public Object[][] controlModes() {
+        return new Object[][] {
+                {ControlMode.TIGHT, true},
+                {ControlMode.APPLICATION, true},
+                {ControlMode.WRAPPER, false},
+                {ControlMode.LOOSE, false},
+        };
+    }
+
+    @Test(dataProvider = "controlModes")
+    public void aStopOfTheWrapperStopsTheApplicationOnlyWhenTheControlModeTiesThem(ControlMode control,
+            boolean stopsApplication) {
+        Supervisor supervisor = running(lifecycle(control, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED,
+                Duration.ZERO));
+
+        supervisor.requestStop();
+        supervisor.runPending();
+        advance(supervisor, SHUTDOWN_TIMEOUT);
+
+        assertEquals(supervisor.state(), STOPPED);
+        assertEquals(launched.get(0).terminations(), stopsApplication ? 1 : 0);
+        assertEquals(launched.get(0).isAlive(), !stopsApplication);
+        if (!stopsApplication) {
+            assertTrue(logged().contains("stopping the wrapper only: jvm 1 (pid 1001) keeps running"
+                    + " (wrapper.control=" + control + ")"), logged());
+        }
     }
 
     @Test
@@ -350,7 +580,8 @@ public class SupervisorTest {
 
     @Test
     public void aLaunchErrorOnARestartFailsWithoutTheEarlierExitCode() {
-        Supervisor supervisor = supervisor(lifecycle(ExitAction.RESTART, Map.of()), invocation -> {
+        Supervisor supervisor = supervisor(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 2,
+                Duration.ZERO), invocation -> {
             if (invocation > 1) {
                 throw new LaunchException("cannot start jvm " + invocation);
             }

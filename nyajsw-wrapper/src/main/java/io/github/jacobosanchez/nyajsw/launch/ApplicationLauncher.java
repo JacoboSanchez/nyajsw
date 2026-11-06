@@ -15,4 +15,9 @@ public interface ApplicationLauncher {
      * @throws LaunchException when the application cannot be started; the message is masked
      */
     RunningApplication launch(int invocation);
+
+    /** The name of invocation {@code invocation} in the log, {@code jvm N}, also when it could not be started. */
+    static String nameOf(int invocation) {
+        return "jvm " + invocation;
+    }
 }
