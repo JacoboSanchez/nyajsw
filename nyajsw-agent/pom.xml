@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.jacobosanchez.nyajsw</groupId>
+        <artifactId>nyajsw-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>nyajsw-agent</artifactId>
+    <name>nyajsw agent</name>
+    <description>Java agent loaded into the application JVM; also defines the wrapper/agent protocol.
+        Java 8 bytecode, no runtime dependencies.</description>
+
+    <properties>
+        <!-- The agent is injected into application JVMs that may be as old as Java 8 (plan D2);
+             its tests run on the build JVM and may use Java 21. -->
+        <maven.compiler.release>8</maven.compiler.release>
+        <maven.compiler.testRelease>21</maven.compiler.testRelease>
+    </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgs>
+                        <!-- javac 21 warns that release 8 is deprecated; that target is intentional. -->
+                        <arg>-Xlint:-options</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <nyajsw.test.mainClassesDir>${project.build.outputDirectory}</nyajsw.test.mainClassesDir>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
