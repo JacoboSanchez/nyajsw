@@ -1,5 +1,7 @@
 package io.github.jacobosanchez.nyajsw.config;
 
+import io.github.jacobosanchez.nyajsw.platform.HostOs;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -8,7 +10,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -107,7 +108,7 @@ public final class Interpolator {
 
     /** Whether this process's environment variable names are case-insensitive (Windows). */
     static boolean currentEnvironmentIgnoresCase() {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
+        return HostOs.isWindows();
     }
 
     /**

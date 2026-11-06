@@ -176,7 +176,7 @@ older JVMs than the wrapper requires.
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
 | `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode` |
 | `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `CompatibilityDocument`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
-| `launch` | Build the application command line and run it. | `JavaCommandBuilder` (with a secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
+| `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
@@ -617,14 +617,19 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       and the path bases of D13; check files converted from Tanuki, where
       `wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperSimpleApp` takes the real main class
       from `wrapper.app.parameter.1` (nyajsw ignores `wrapper.java.mainclass`, which would then run
-      the wrong class; YAJSW's migration guide says that without `wrapper.java.app.mainclass` it
+      the wrong class, and `WrapperStartStopApp` files, whose second parameter is an argument
+      count the application would then receive; YAJSW's migration guide says that without `wrapper.java.app.mainclass` it
       takes the first application argument as the main class, so P2.2 should do the same); YAJSW
       14.01 parses with commons-configuration2 2.15.1 (13.18 is the reference, §10 Q9; its version
       is still to be read from its `lib/` folder), and its migration guide tells users to
       double every backslash (or use `/`) and to escape commas as `\,`, which suggests
       backslash-escaping and comma lists in every value, not only in paths (to be confirmed with
       YAJSW-shaped fixtures: commons-configuration2 splits lists only when YAJSW enables it);
-      update §4.5.
+      **settle before Phase 2 closes:** since P2.2 text values reach the application, doubled
+      backslashes in them do too (`conf\\x.properties`, and a UNC path `\\\\srv\\share` written
+      escaped arrives with four leading backslashes), while YAJSW, whose reference calls `\` the
+      escape character, passes one; and quoted values of path keys (`wrapper.java.command="C:\Program
+      Files\...\java.exe"`) are not unquoted, so `Path.of` rejects them with a warning; update §4.5.
 - [x] P1.10 Apply the YAJSW reference check of 2026-11-06 (§11) to the registry and regenerate
       `docs/COMPATIBILITY.md`. Defaults that differ from the registry: `wrapper.on_exit.default`
       `SHUTDOWN` (registry `RESTART`; §3.3 says defaults match YAJSW where known, so keeping
@@ -727,16 +732,30 @@ Goal: build and run the application command line exactly as the configuration sa
       standard output (YAJSW's console), never closes it, and reports formatting failures to its
       error manager instead of the caller; lines use YAJSW's default console format `PM` (source
       padded, `|`, message) plus any stack trace until `wrapper.console.format` arrives (P4.2).
-- [ ] P2.2 `JavaCommandBuilder`: `wrapper.java.command` resolution (default: `java`/`javaw` of the
+- [x] P2.2 `JavaCommandBuilder`: `wrapper.java.command` resolution (default: `java`/`javaw` of the
       wrapper's `java.home`; `wrapper.java.command.javaw`), `-Xms/-Xmx` from
       `wrapper.java.initmemory/maxmemory`, `wrapper.java.additional.N`, `-Djava.library.path` from
       `wrapper.java.library.path.N`, main class vs `wrapper.java.app.jar`, `wrapper.app.parameter.N`;
       quoting policy for Windows (`ProcessBuilder` re-quotes arguments and rejects embedded quotes
       unless `jdk.lang.Process.allowAmbiguousCommands` is set — decide, document, test values such
       as `-Dx="a b"`); golden tests compare argument arrays, not joined strings; masking loggable form.
+      **Done:** order executable, `-Xms`/`-Xmx` and `-Djava.library.path` (before the JVM options,
+      so a value written there wins, as YAJSW documents for `-Xmx`), JVM options (empty ones skipped
+      with a warning: `java.exe` would take them for the main class), `-classpath` + main class or
+      `-jar` + jar, program arguments; with a jar, a main class and a classpath are ignored with
+      warnings, and so is `javaw` with an explicit command or off Windows; without main class and
+      jar the first program argument is the main class (YAJSW; an empty one is an error); quoting
+      per D19. Secrets are also recognised without their quotes and with backslashes undone, so a
+      quoted password copied into an option stays masked. The P2 keys stay *planned* in the
+      registry until console mode runs the application (P2.5) and become *supported* then.
+      `JavaCommand.loggable()` (also its `toString()`) masks secrets through the `SecretMasker` that
+      `WrapperConfig.secrets()` now carries. Text values keep doubled backslashes until P1.9
+      settles escaping, so `-Dx=C:\\dir` reaches the JVM with both backslashes, which Windows
+      paths tolerate. `-Xrs` (P6.2) and the agent (P7.3) are added by later items.
 - [ ] P2.3 `ClasspathExpander`: `wrapper.java.classpath.N` with `*`/`**` wildcards, directories,
       relative to the working dir, deterministic order, de-duplication.
-- [ ] P2.4 `ApplicationProcess` + `OutputPump`: `ProcessBuilder` with `wrapper.app.env.*`,
+- [ ] P2.4 `ApplicationProcess` + `OutputPump`: check that the Java executable exists before
+      starting (YAJSW does), `ProcessBuilder` with `wrapper.app.env.*`,
       `wrapper.working.dir`, `wrapper.tmp.path`, piped output with explicit charset, pid, exit code,
       destroy / process-tree termination helper.
 - [ ] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C waits up to
@@ -837,7 +856,8 @@ HTTP probe passes and stops gracefully through the agent.
       kept), `nyajsw-agent.jar`, `bin/*.bat` mirroring YAJSW script names, `conf/wrapper.conf`
       fully commented template, zip assembly.
 - [ ] P8.2 `docs/migration-from-yajsw.md`: what changes, how to read the warnings, differences (§3.4),
-      SCM recovery interplay (R6).
+      SCM recovery interplay (R6), one JVM option or argument per key (`-Xms1g -Xmx2g` in one value
+      is one argument, D19).
 - [ ] P8.3 Run the owner's real configuration(s) end to end on Windows; close gaps; matrix updated.
 - [ ] P8.4 *(recommended)* Release process: version tag, CI builds and attaches the zip to a GitHub
       release.
@@ -878,9 +898,6 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.9: the default fallback for files that are not valid UTF-8 is a fixed windows-1252; using the
   JVM's `native.encoding` (the Windows ANSI code page, Java 17+) would read files from non-Western
   installations correctly without `wrapper.conf.encoding`. Decide with real files (Q1).
-- PR review: `WrapperConfig` keeps no `SecretMasker` or secret set, while its values (e.g. JVM
-  options) can hold copies of secrets. P2.2's masking form of the command line needs them: expose a
-  masker (or the secret values as `Secret`s) on `WrapperConfig` when the command line is built.
 - P1.6b: no range checks: `wrapper.java.maxmemory=-5`, `wrapper.readiness.tcp.port=70000` or
   `wrapper.liveness.failures=0` are accepted. Add min/max to `KeySpec` (checked by `ValueParser`)
   when the consuming phases implement those keys.
@@ -947,7 +964,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | R9 | Hosted Windows CI runner not elevated or flaky SCM | Verify in P0.3; integration tests retry transient `MARKED_FOR_DELETE`; unit coverage does not depend on them. |
 | R10 | Licensing contamination | Clean-room rule in AGENTS.md; only public key names reused; reviewers check for copied text. |
 | R11 | Unverified YAJSW defaults/key names (marked `Unverified` in the registry, "*Verify:*" in the matrix) | Defaults, values and names of registered keys were checked against the public reference on 2026-11-06, and missing YAJSW keys listed (P1.10); what it leaves open is confirmed against the owner's real files/`doc` folder before implementing each key; record the outcome in the registry. |
-| R12 | Windows argument quoting (`ProcessBuilder` re-quoting, embedded quotes) | Explicit policy and tests in P2.2; golden tests on argument arrays. |
+| R12 | Windows argument quoting (`ProcessBuilder` re-quoting, embedded quotes) | Policy D19 with tests (P2.2); golden tests on argument arrays. |
 
 ## 9. Decisions log (ADR-lite)
 
@@ -971,6 +988,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D16 | Default liveness probe is `agent` when the agent is enabled (`wrapper.ping.*` semantics), none otherwise | YAJSW pings by default; keep behaviour parity without forcing the agent | Proposed |
 | D17 | Migration path (design only, blocked on §10 Q8): ship a thin alias class named like YAJSW's service booter (`org.rzo.yajsw.boot.WrapperServiceBooter`, a deliberate exception to D11 because existing service registrations store that name) that detects service mode when `--service` is absent and delegates to the normal entry point; a migration command rewrites an existing service's binary path to a Java 21 `javaw.exe` and our classpath (D12), since a bare jar swap cannot work when the old registration names an older JVM; `-D` options on the wrapper command line (e.g. `-Dwrapper.tmp.path`, a `jna_tmpdir` property, `-Dpath`) feed the system-property layer of §4.6; we also set the real `jna.tmpdir` from `wrapper.tmp.path` (R3). Short CLI options already exist in §3 | Observed in a vendor's public knowledge base (not tested by us): its services are registered as `java.exe … WrapperServiceBooter <conf>`, installed with `-i <conf>`, and re-pointed with `sc config` plus `-D` flags for non-admin accounts. Whether the underscore-spelled `jna_tmpdir` is read by YAJSW or JNA is unknown | Proposed (P5.4a; confirm with §10 Q1 and Q8) |
 | D18 | The registry declares the YAJSW keys its public reference documents as supported by YAJSW, each with a nyajsw status; Tanuki keys that the reference lists as not (yet) supported by YAJSW (e.g. `wrapper.disable_restarts`, `wrapper.jvm.port`, `wrapper.ntservice.pausable`) stay undeclared and get the generic unknown-key warning (keys seeded earlier, such as `wrapper.syslog.*`, keep their entries). Defaults follow the reference where it states one (§3.3), including `wrapper.on_exit.default=SHUTDOWN` | A YAJSW file can only rely on keys YAJSW honours; declaring Tanuki-only keys would suggest a compatibility YAJSW never had. Following YAJSW's defaults keeps migrated services behaving as before | Accepted (P1.10) |
+| D19 | Arguments of the application are passed as an array. One pair of double quotes around a whole argument, or around everything after its first `=` (`-Dx="a b"`, `-XX:OnError="cmd /c x"`), is removed, as a shell would; any other double quote is a launch error naming the key family, with the argument masked | On POSIX every argument reaches the application unchanged, quotes included; on Windows `ProcessBuilder` wraps an argument with blanks in quotes, so `-Dx="a b"` would become `"-Dx="a b""` and break the command line, and an embedded quote is passed on unescaped (`jdk.lang.Process.allowAmbiguousCommands` defaults to true on JDK 21), which breaks it as well; checked by running `java.exe` through `ProcessBuilder` on JDK 21.0.13, which also handles trailing backslashes and empty arguments itself. Dropping a stray quote would change the value | Accepted (P2.2) |
 
 ## 10. Open questions for the project owner
 

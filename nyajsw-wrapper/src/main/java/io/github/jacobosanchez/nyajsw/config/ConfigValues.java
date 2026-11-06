@@ -50,6 +50,11 @@ final class ConfigValues {
         return directory;
     }
 
+    /** Hides this configuration's secrets; shared so that one masker serves the whole configuration. */
+    SecretMasker masker() {
+        return masker;
+    }
+
     Optional<String> string(KeySpec spec) {
         return typed(spec, value -> value);
     }
