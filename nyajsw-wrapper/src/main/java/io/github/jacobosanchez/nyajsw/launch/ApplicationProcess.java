@@ -28,7 +28,7 @@ import java.util.concurrent.TimeoutException;
  * One run of the application (plan P2.4): started from a {@link JavaCommand} in the configured
  * working directory with the configured environment, its standard output and error copied into the
  * wrapper log by {@link OutputPump}s under the source {@code jvm N}, decoded with the charsets the
- * command records, and its standard input closed, so an application that reads it sees the end of
+ * command records and with the configuration's secrets masked, and its standard input closed, so an application that reads it sees the end of
  * input instead of waiting for a console a service does not have.
  *
  * <p>Environment ({@code wrapper.app.env.<variable>}): a value replaces the inherited variable, which
@@ -107,10 +107,10 @@ public final class ApplicationProcess {
         }
         WrapperLog output = log.forSource(name);
         List<Thread> pumps = List.of(
-                pump(new OutputPump(process.getInputStream(), command.stdoutCharset(), output, LogLevel.INFO),
-                        name, "stdout"),
-                pump(new OutputPump(process.getErrorStream(), command.stderrCharset(), output, LogLevel.INFO),
-                        name, "stderr"));
+                pump(new OutputPump(process.getInputStream(), command.stdoutCharset(), output, LogLevel.INFO,
+                        secrets), name, "stdout"),
+                pump(new OutputPump(process.getErrorStream(), command.stderrCharset(), output, LogLevel.INFO,
+                        secrets), name, "stderr"));
         log.status(name + " started, pid " + process.pid());
         return new ApplicationProcess(process, name, pumps, log);
     }

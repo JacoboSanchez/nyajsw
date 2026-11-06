@@ -787,7 +787,9 @@ Goal: build and run the application command line exactly as the configuration sa
       Windows, where Java's map is case-sensitive but Windows is not) and an empty one removes it,
       like `set NAME=` in a command prompt; standard input is closed so the application sees its
       end; stdout and stderr are logged at `INFO` as `jvm N`, decoded with the charset the command
-      line sets (UTF-8 unless the JVM options choose another, see §4.8), in pieces of at most 16 Ki
+      line sets (UTF-8 unless the JVM options choose another, see §4.8), with the configuration's secrets
+      masked (an application may echo an option that holds one; a long line is never cut inside a
+      secret), in pieces of at most 16 Ki
       characters so output without line breaks cannot fill memory, and drained for at most 2 s
       after the exit, since a grandchild may hold the pipes (that is logged at `STATUS`); the exit
       is logged once however often it is awaited; `terminateTree()` kills the process, then its
