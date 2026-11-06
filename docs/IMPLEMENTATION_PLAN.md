@@ -225,8 +225,9 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   `SERVICE_STOP | SERVICE_QUERY_STATUS`.
 * **Service registration**: `CreateService(SERVICE_WIN32_OWN_PROCESS, start type, dependencies as a
   double-NUL-terminated list, account, password)`, then `ChangeServiceConfig2` for the description,
-  delayed auto-start and the pre-shutdown timeout (`wrapper.shutdown.timeout` plus a margin for the
-  final `terminate` step and the `STOPPED` report). It is always set explicitly: the Windows
+  delayed auto-start and the pre-shutdown timeout (the stop budget, `wrapper.shutdown.timeout` plus
+  `wrapper.jvm_exit.timeout`, plus a margin for the final `terminate` step, its 10 s wait and the
+  `STOPPED` report). It is always set explicitly: the Windows
   default is only 10 s since Windows 10 version 1703 (build 15063), 180 s before. When
   `wrapper.ntservice.account` names a real account (not `LocalSystem`, `LocalService` or
   `NetworkService`), it is granted `SeServiceLogonRight` through the LSA binding (as YAJSW/Tanuki
@@ -454,7 +455,8 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
      kills the whole process tree (`TerminateJobObject` when a job object exists, otherwise
      `ProcessHandle.descendants()` + `destroyForcibly()`), because on Windows `Process.destroy()`
      is already `TerminateProcess` and leaves grandchildren (e.g. a wrapped `.bat`) alive.
-  Each strategy gets its share of the timeout; the chain is configurable and extensible.
+  Each graceful strategy gets an equal share of the timeout (with none, the whole timeout is
+  waited); the chain is configurable and extensible (P3.4).
 * **Coupling** (`wrapper.control`, YAJSW default `TIGHT`): `TIGHT` — wrapper exit stops the
   application and application end (after exit actions) stops the wrapper; `WRAPPER` — the wrapper
   ends when the application ends, but the application survives the wrapper; `APPLICATION` — the
@@ -468,9 +470,10 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
 * **Pid files**: `wrapper.pidfile` (wrapper) and `wrapper.java.pidfile` (application), written on
   start, removed on stop, stale files overwritten.
 * **Console mode**: Ctrl+C reaches both the wrapper and the child because they share the console.
-  The wrapper's shutdown hook moves the supervisor to `STOPPING`, waits up to
-  `wrapper.shutdown.timeout` for the child to finish its own shutdown, then runs the remaining
-  strategies; the exit code returned is the application's.
+  The wrapper's shutdown hook asks the supervisor to stop, which runs the stop chain: with the
+  default `terminate` alone it waits the stop budget for the child to finish its own shutdown,
+  then kills it; graceful strategies (P7) share that budget. The exit code returned is the
+  application's.
 
 ### 4.7 Readiness and liveness probes (alternative start validation)
 
@@ -890,9 +893,27 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       restarted beside itself. An exit while `STARTING` applies its exit action as when `RUNNING`,
       and a stop request is handled the same way. `wrapper.readiness.type`/`interval` stay
       *planned* (P7), so the wiring (P3.6) uses their defaults: `process`, every second.
-- [ ] P3.4 `StopStrategy` SPI, `StopStrategyRegistry`, `TerminateStopStrategy` (process tree),
+- [x] P3.4 `StopStrategy` SPI, `StopStrategyRegistry`, `TerminateStopStrategy` (process tree),
       `wrapper.stop.strategy` (default `terminate` for now), `wrapper.shutdown.timeout` plus
       `wrapper.jvm_exit.timeout`.
+      **Done:** a `StopStrategy` only asks: it gets a `StopStrategy.Context` (invocation, log, its
+      share) on the supervisor's thread, returns at once with `REQUESTED` or `NOT_APPLICABLE`, and
+      the supervisor waits for the exit. `StopStrategyRegistry.chain(LifecycleConfig)` builds a
+      `StopChain` from `wrapper.stop.strategy` and never fails, since a stop must always be
+      possible: names ignore case, unknown names (such as `agent` before P7), repetitions and
+      strategies that cannot be built are skipped, and `terminate` is moved or added to the end,
+      each with a warning for the log (P3.6 logs them). The stop budget is
+      `LifecycleConfig.stopBudget()` = `wrapper.shutdown.timeout` + `wrapper.jvm_exit.timeout`
+      (unset: 0, as YAJSW documents no default), counted to a deadline: each graceful step gets an
+      equal share of the time left, so a step that does not apply (or throws, logged) hands its
+      share on and the application always has the whole budget. Without graceful steps the whole
+      budget is waited, which suits console mode, where the application gets the same Ctrl+C; with
+      a budget of 0 the graceful steps are skipped, since asking and killing in the same instant
+      would cut a shutdown short. At the deadline the last step (`terminate`,
+      `RunningApplication.terminateTree()`) ends the application, and one still alive 10 s later
+      is given up on. Shares are logged with milliseconds when they have them. An unready
+      invocation (P3.3) is ended by the last step directly; the safety nets (unexpected error,
+      lost exit) kill the tree without the chain, which may be what failed.
 - [ ] P3.5 `PidFiles` (`wrapper.pidfile`, `wrapper.java.pidfile`).
 - [ ] P3.6 Console mode runs through the supervisor (restart loop, Ctrl+C semantics, exit code).
 Done when: all transitions, timeouts and counters are covered by deterministic tests.
@@ -1042,6 +1063,14 @@ entry names the commit/plan item it came from; remove entries when addressed.
   error would suit scripts better.
 - P3.1: `ConsoleMode` still has its own stop sequence (wait `wrapper.shutdown.timeout`, terminate,
   wait 10 s) next to the supervisor's; P3.6 replaces it with the supervisor and must remove it.
+- P3.4: stop-strategy factories get only `LifecycleConfig`. P7's `agent` needs the invocation's
+  agent channel and `command` a process launcher, the environment and a background executor; give
+  the registry those dependencies then (e.g. `defaults(StopDependencies)`), and cancel a stop
+  command still running when the stop ends. `StopStrategyRegistry` and `ProbeRegistry` share their
+  shape (name → factory, named entries) but differ in input and contract; extract a common
+  `NamedFactories` if a third registry appears. In the Tanuki format a `wrapper.shutdown.timeout` or
+  `wrapper.jvm_exit.timeout` of 0 means "wait forever"; nyajsw reads a budget of 0 as "terminate at
+  once", since a service stop must end; unconfirmed for YAJSW (§10 Q1).
 - P3.3: when P7 makes `wrapper.readiness.type` supported, an unknown type must be a
   `ConfigException` naming the key, not the registry's `IllegalArgumentException`; the probe
   factories will also change when `ProbeConfig` is split per probe (see the P1.6b entry).

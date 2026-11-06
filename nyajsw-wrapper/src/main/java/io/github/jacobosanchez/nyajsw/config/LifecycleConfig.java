@@ -2,6 +2,7 @@ package io.github.jacobosanchez.nyajsw.config;
 
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.CONTROL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JAVA_PIDFILE;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JVM_EXIT_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.MAX_FAILED_INVOCATIONS;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT_0;
@@ -41,6 +42,8 @@ import java.util.TreeMap;
  * @param startupDelay             {@code wrapper.startup.delay}
  * @param startupTimeout           {@code wrapper.startup.timeout}
  * @param shutdownTimeout          {@code wrapper.shutdown.timeout}
+ * @param jvmExitTimeout           {@code wrapper.jvm_exit.timeout}; zero when not set, since YAJSW
+ *                                 documents no default
  * @param pidFile                  {@code wrapper.pidfile}, if set
  * @param javaPidFile              {@code wrapper.java.pidfile}, if set
  * @param stopStrategies           {@code wrapper.stop.strategy}; by default {@code agent,terminate} when
@@ -52,8 +55,8 @@ import java.util.TreeMap;
  */
 public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exitActions, ExitAction defaultExitAction,
         Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime, Duration startupDelay,
-        Duration startupTimeout, Duration shutdownTimeout, Optional<Path> pidFile, Optional<Path> javaPidFile,
-        List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
+        Duration startupTimeout, Duration shutdownTimeout, Duration jvmExitTimeout, Optional<Path> pidFile,
+        Optional<Path> javaPidFile, List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
         Optional<Duration> pingTimeout) {
 
     public LifecycleConfig {
@@ -65,6 +68,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
         Objects.requireNonNull(startupDelay, "startupDelay");
         Objects.requireNonNull(startupTimeout, "startupTimeout");
         Objects.requireNonNull(shutdownTimeout, "shutdownTimeout");
+        Objects.requireNonNull(jvmExitTimeout, "jvmExitTimeout");
         Objects.requireNonNull(pidFile, "pidFile");
         Objects.requireNonNull(javaPidFile, "javaPidFile");
         stopStrategies = List.copyOf(stopStrategies);
@@ -80,6 +84,14 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
     @Override
     public String toString() {
         return "LifecycleConfig[values hidden; see ConfigDump]";
+    }
+
+    /**
+     * The time a stop may take before the application is terminated: {@code wrapper.shutdown.timeout}
+     * plus {@code wrapper.jvm_exit.timeout}, as YAJSW bounds the stop by both together.
+     */
+    public Duration stopBudget() {
+        return shutdownTimeout.plus(jvmExitTimeout);
     }
 
     /** The action for {@code exitCode}. */
@@ -99,6 +111,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 values.required(values.duration(STARTUP_DELAY), STARTUP_DELAY),
                 values.required(values.duration(STARTUP_TIMEOUT), STARTUP_TIMEOUT),
                 values.required(values.duration(SHUTDOWN_TIMEOUT), SHUTDOWN_TIMEOUT),
+                values.duration(JVM_EXIT_TIMEOUT).orElse(Duration.ZERO),
                 values.path(PIDFILE),
                 values.path(JAVA_PIDFILE),
                 stopStrategies.isEmpty() ? defaultStopStrategies(agentInEffect) : stopStrategies,

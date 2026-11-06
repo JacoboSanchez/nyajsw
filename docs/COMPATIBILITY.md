@@ -103,7 +103,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.startup.delay` | Pause before the application is started for the first time | seconds | `0` | **planned** (P3) |  |
 | `wrapper.startup.timeout` | Time the application has to become ready | seconds | `30` | **planned** (P3) | 0 means no limit, as in the Tanuki format |
 | `wrapper.shutdown.timeout` | Time the application has to stop gracefully before it is terminated | seconds | `30` | **supported** | YAJSW documents no default and bounds the stop by this and wrapper.jvm_exit.timeout together. In console mode it is the time the application has after Ctrl+C, which it receives too<br>*Verify:* default |
-| `wrapper.jvm_exit.timeout` | Time added to wrapper.shutdown.timeout before the application is terminated | seconds | — | **planned** (P3) |  |
+| `wrapper.jvm_exit.timeout` | Time added to wrapper.shutdown.timeout before the application is terminated | seconds | — | **planned** (P3) | When not set it adds nothing |
 | `wrapper.pidfile` | File the wrapper writes its process id to | path | — | **planned** (P3) |  |
 | `wrapper.lockfile` | File locked while the application runs, so that a second instance does not start | path | — | **unsupported** (P9) |  |
 | `wrapper.java.pidfile` | File the wrapper writes the application's process id to | path | — | **planned** (P3) |  |
@@ -137,7 +137,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.filter.action.<n>` | Action when wrapper.filter.trigger.&lt;n&gt; matches | one of `RESTART`, `SHUTDOWN`, `NONE` | `RESTART` | **planned** (P9) |  |
 | `wrapper.filter.missing.<setting>` | Filters that act when expected output stops appearing | text | — | **unsupported** (P9) |  |
 | `wrapper.filter.debug.default` | Log the matching of output filters | boolean | — | **unsupported** | *Verify:* meaning |
-| `wrapper.stop.strategy` | Ordered stop strategies tried before the application is terminated | list | agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate | **planned** (P3)<br>nyajsw extension | Strategies and their order: implementation plan, section 4.6 |
+| `wrapper.stop.strategy` | Ordered stop strategies tried before the application is terminated | list | agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate | **planned** (P3)<br>nyajsw extension | Names ignore case; unknown ones are skipped with a warning and terminate is always the last step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout; when both are 0 they are skipped. Strategies: implementation plan, section 4.6 |
 | `wrapper.stop.command` | Command run by the command stop strategy | text | — | **planned** (P7)<br>nyajsw extension |  |
 
 ## Logging

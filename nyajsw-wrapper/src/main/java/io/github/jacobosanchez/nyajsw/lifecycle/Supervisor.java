@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalInt;
@@ -66,9 +67,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * would watch it. A stop request while a terminated, unready invocation is ending cancels its
  * restart.
  *
- * <p>Still to come in this phase: the stop strategies (P3.4; until then a stop waits {@code
- * wrapper.shutdown.timeout} for the application to end by itself, as in console mode, where it
- * receives the same Ctrl+C, and then terminates its process tree).
+ * <p>A stop runs the {@link StopChain}: the graceful strategies of {@code wrapper.stop.strategy}
+ * share the stop budget, then {@code terminate} ends the application by force; one still alive 10 s
+ * after that is given up on.
  */
 public final class Supervisor {
 
@@ -125,6 +126,7 @@ public final class Supervisor {
     private final ApplicationLauncher launcher;
     private final ProbeRunner readiness;
     private final Executor probeExecutor;
+    private final StopChain stops;
     private final Scheduler scheduler;
     private final WrapperLog log;
     private final StateListener listener;
@@ -140,6 +142,9 @@ public final class Supervisor {
     private Integer lastExitCode;
     /** What the last readiness check of the current invocation found. */
     private String lastReadiness;
+    /** When the current stop began and when its budget runs out, on the scheduler's clock. */
+    private Duration stopStartedAt;
+    private Duration stopDeadline;
     /** The timers of the current state, by id; a fired id that is missing is ignored. */
     private final Map<Long, PendingTimer> timers = new HashMap<>();
     private long timersStarted;
@@ -155,18 +160,20 @@ public final class Supervisor {
      *                      one check runs at a time per invocation, but a check that hangs must not
      *                      hold up the next invocation's, so give each check its own thread (virtual
      *                      threads suit) rather than a single shared one
+     * @param stops         the steps of a stop, from {@code wrapper.stop.strategy}
      * @param scheduler     runs the timers and tells the time
      * @param log           the wrapper log
      * @param listener      told about every change of state
      */
     public Supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher, ProbeRunner readiness,
-            Executor probeExecutor, Scheduler scheduler, WrapperLog log, StateListener listener) {
+            Executor probeExecutor, StopChain stops, Scheduler scheduler, WrapperLog log, StateListener listener) {
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
         this.exits = new ExitActionResolver(lifecycle);
         this.restarts = new RestartPolicy(lifecycle.maxFailedInvocations(), lifecycle.successfulInvocationTime());
         this.launcher = Objects.requireNonNull(launcher, "launcher");
         this.readiness = Objects.requireNonNull(readiness, "readiness");
         this.probeExecutor = Objects.requireNonNull(probeExecutor, "probeExecutor");
+        this.stops = Objects.requireNonNull(stops, "stops");
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
         this.log = Objects.requireNonNull(log, "log");
         this.listener = Objects.requireNonNull(listener, "listener");
@@ -230,6 +237,7 @@ public final class Supervisor {
     /** Ends supervision after an unexpected error, so that the wrapper does not hang with the application unwatched. */
     private void fail(RuntimeException error) {
         log.error("supervision failed unexpectedly in state " + state, error);
+        // Straight to the process tree, not through the stop chain: the chain is what may have failed.
         RunningApplication left = application;
         application = null;
         if (left != null) {
@@ -344,7 +352,7 @@ public final class Supervisor {
         log.error(name + " did not become ready within " + lifecycle.startupTimeout().toSeconds() + " s ("
                 + ConfigKeys.STARTUP_TIMEOUT.name() + "); last check: " + lastReadiness + "; terminating it");
         restarts.failed();
-        application.terminateTree();
+        stops.last().strategy().requestStop(new StopStrategy.Context(application, log, Duration.ZERO));
         if (!restarts.mayRestart()) {
             giveUp(name);
             return;
@@ -463,18 +471,66 @@ public final class Supervisor {
         }
     }
 
+    /**
+     * Runs the stop chain within the stop budget ({@code wrapper.shutdown.timeout} plus {@code
+     * wrapper.jvm_exit.timeout}): each graceful strategy asks the application to end and gets an
+     * equal share of the time left until the deadline, so a step that does not apply hands its
+     * share on. Without graceful strategies the whole budget is waited, which in console mode is the
+     * time the application has after the Ctrl+C it receives too. At the deadline the last step ends
+     * it by force; with a budget of zero at once, without the graceful steps, since asking and
+     * killing in the same instant would cut its shutdown short.
+     */
     private void beginStop() {
         moveTo(State.STOPPING);
-        Duration timeout = lifecycle.shutdownTimeout();
-        log.status("stopping: waiting up to " + timeout.toSeconds() + " s for " + application.name() + " to end");
-        startTimer(timeout, this::terminate);
+        Duration budget = lifecycle.stopBudget();
+        stopStartedAt = scheduler.now();
+        stopDeadline = stopStartedAt.plus(budget);
+        if (budget.isZero()) {
+            forceStop();
+        } else if (stops.graceful().isEmpty()) {
+            log.status("stopping: waiting up to " + seconds(budget) + " for " + application.name() + " to end");
+            startTimer(budget, this::forceStop);
+        } else {
+            graceful(0);
+        }
     }
 
-    private void terminate() {
-        log.status(application.name() + " did not end within " + lifecycle.shutdownTimeout().toSeconds()
-                + " s; terminating it");
-        application.terminateTree();
+    private void graceful(int index) {
+        List<StopChain.Step> steps = stops.graceful();
+        Duration left = stopDeadline.minus(scheduler.now());
+        if (index == steps.size() || !left.isPositive()) {
+            forceStop();
+            return;
+        }
+        Duration share = left.dividedBy(steps.size() - index);
+        StopChain.Step step = steps.get(index);
+        log.status("stopping " + application.name() + ": " + step.name() + ", waiting up to " + seconds(share));
+        StopStrategy.Result result;
+        try {
+            result = step.strategy().requestStop(new StopStrategy.Context(application, log, share));
+        } catch (RuntimeException e) {
+            log.error("the stop strategy " + step.name() + " failed; going on with the next step", e);
+            result = StopStrategy.Result.NOT_APPLICABLE;
+        }
+        if (result == StopStrategy.Result.NOT_APPLICABLE) {
+            log.debug(() -> step.name() + " did not apply; going on with the next step");
+            graceful(index + 1);
+        } else {
+            startTimer(share, () -> graceful(index + 1));
+        }
+    }
+
+    private void forceStop() {
+        log.status(application.name() + " did not end within " + seconds(scheduler.now().minus(stopStartedAt))
+                + "; terminating it (" + stops.last().name() + ")");
+        stops.last().strategy().requestStop(new StopStrategy.Context(application, log, Duration.ZERO));
         startTimer(AFTER_TERMINATION, this::abandon);
+    }
+
+    /** {@code 30 s}, or with milliseconds when the duration has them ({@code 7.500 s}). */
+    private static String seconds(Duration duration) {
+        long millis = duration.toMillis();
+        return millis % 1000 == 0 ? millis / 1000 + " s" : String.format(Locale.ROOT, "%.3f s", millis / 1000.0);
     }
 
     private void abandon() {
