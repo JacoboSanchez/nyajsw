@@ -330,15 +330,28 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   both as a list; P1.9). Order: file entries at the position of their winning definition, a
   system-property override in the place of the entry it overrides, other system properties next in
   name order, defaults last. Include paths resolve `${key}` with the same layer order.
-* **Indexed and dynamic keys** (`KeyCollector`): `prefix.N` collected in numeric order, gaps
-  allowed; the same index written twice (`.7`, `.07`) keeps both in file order with a warning; free
+* **Indexed and dynamic keys** (`KeyCollector`): `prefix.N` collected in index order, gaps
+  allowed; an index is a number or a name, possibly dotted (`.3`, `.lib`, `.2.1`), as YAJSW's
+  reference allows, and indices sort by `IndexOrder`: digit runs by value and before other text,
+  which compares by character, so `1 < 5 < ab5 < ab12 < lib` (the reference's own example) and
+  `2 < 2.1 < 2.10 < 3` (P1.11); the same index written twice (`.7`, `.07`) keeps both in file order
+  with a warning; free
   placeholders (`wrapper.app.env.<variable>`) keep file order; a key belongs to the family the
   registry resolves it to, so the exact `wrapper.on_exit.0` is not a `wrapper.on_exit.<code>` member;
   `wrapper.app.env.<KEY>`, `wrapper.on_exit.<code>`, `wrapper.filter.trigger.N` handled by
-  `KeySpec` patterns (`KeyPattern` templates: `<n>` matches an index, `<code>` a signed exit code,
-  any other `<label>` one or more non-empty segments; an exact name wins over a template, then more
-  literal characters win, then numeric placeholders over free ones; the registry rejects two equally
-  specific templates that can match the same key, and declarations another one shadows).
+  `KeySpec` patterns (`KeyPattern` templates: `<n>` matches an index (segments of letters, digits,
+  `_` and `-`), `<code>` a signed exit code, any other `<label>` one or more non-empty segments; an
+  exact name wins over a template, then more literal characters win, then index and exit-code
+  placeholders over free ones; the registry rejects two equally specific templates that can match
+  the same key, and declarations another one shadows). Because an index may be a name, a key such as
+  `wrapper.java.additional.1.stripquotes` would be a member of `wrapper.java.additional.<n>`; the
+  Tanuki keys of that shape (`*.stripquotes`, `wrapper.java.additional.auto_bits*`,
+  `wrapper.java.classpath.use_environment`/`missing_log_level`,
+  `wrapper.java.library.path.append_system_path`) are declared as unsupported so that their own,
+  more specific declaration wins; they carry the `YAJSW` origin (`KeyOrigin` has no Tanuki value)
+  and say "Tanuki" in their description. `IndexOrder` always puts a digit run before text; YAJSW's
+  own comparator may differ for indices with `-` or `.` before digits and may not equate `07` and
+  `7`, which matters for no real file seen so far.
 * **Key registry** (`ConfigKeys`): every key declared once with name/pattern, type (string, int,
   duration-seconds, size, enum, path, boolean, list), default (a constant, or a derived default
   that depends on the resolved configuration or the environment, e.g. the stop-strategy and liveness
@@ -570,7 +583,7 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       `LifecycleConfig`, `ProbeConfig`) built from a validated `LoadedConfig`, with derived defaults
       and relative paths resolved against the configuration directory (D13). Decide per family
       what a repeated index means (lists keep both; exit codes and filter triggers need one value
-      per number, joined through `KeyCollector.Member.numbers()`), and warn when a
+      per index, joined on the normalised index, P1.11), and warn when a
       `wrapper.on_exit.<code>` member is 0 written differently (`00`, `-0`), since the exact
       `wrapper.on_exit.0` carries the default. (Filter triggers, which pair `trigger.<n>` with
       `action.<n>` by number, are unsupported until P9 and get their typed view then.)
@@ -692,12 +705,13 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       `wrapper.save_interpolated` are ignored with a note on how nyajsw behaves; the new
       deliberate differences are in §3.4. **Done (interpolation):** an unresolved
       `${keystore name}` is an error, like Groovy, and omits the name for secret keys.
-- [ ] P1.11 String indices: YAJSW's reference allows `<n>` to be a number or a string, sorted
+- [x] P1.11 String indices: YAJSW's reference allows `<n>` to be a number or a string, sorted
       alphanumerically (`wrapper.java.classpath.lib=lib/*/*.jar`, `wrapper.filter.trigger.exception`
       with `wrapper.filter.action.exception`). `KeyPattern` matches `<n>` as digits only, so such
       keys are unknown and their values dropped with a warning. Accept string indices in
       `KeyPattern`/`KeyCollector`, define the order of mixed numeric and string indices (check
-      the reference's example), and keep `<code>` numeric. Needed before P2.2/P2.3.
+      the reference's example), and keep `<code>` numeric. Needed before P2.2/P2.3. **Done:** see
+      §4.5 "Indexed and dynamic keys"; `KeyCollector.Member.numbers()` now holds exit codes only.
 Done when: every fixture present in the repository loads; every key of the former §7 matrix
 (`ConfigKeysTest.seededKeys`) has a registry entry and a test.
 
@@ -844,7 +858,14 @@ Minor findings from pre-commit reviews that were consciously not fixed in the re
 entry names the commit/plan item it came from; remove entries when addressed.
 - P1.2: `KeyPattern.commonExample` only finds overlaps with one segment per placeholder; free
   placeholders that span several segments in different shapes can still overlap undetected. No
-  declared key is affected; revisit if a template with two free placeholders is added.
+  declared key is affected; revisit if a template with two free placeholders is added. Since P1.11
+  `<n>` also spans segments, so the same holds for index templates, and a free placeholder right
+  before `<n>` takes as many segments as it can (`wrapper.x.<name>.<n>` reads `wrapper.x.a.2.1` as
+  `a.2` and `1`); no declared template has that shape.
+- P1.11: with string indices a misspelt suffix (`wrapper.filter.script.2.agrs`) or a Tanuki key
+  under an index family that is not declared yet is a family member, not an unknown key, so it gets
+  no warning and its value is used. YAJSW, which reads families by prefix, probably does the same;
+  declare more Tanuki keys when real files show them.
 - P1.9: the default fallback for files that are not valid UTF-8 is a fixed windows-1252; using the
   JVM's `native.encoding` (the Windows ANSI code page, Java 17+) would read files from non-Western
   installations correctly without `wrapper.conf.encoding`. Decide with real files (Q1).

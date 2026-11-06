@@ -22,10 +22,10 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | supported | 1 |
 | planned | 71 |
 | ignored | 9 |
-| unsupported | 85 |
+| unsupported | 92 |
 | unsupported, fatal when present | 5 |
 | *of which nyajsw extensions* | 22 |
-| **total** | 171 |
+| **total** | 178 |
 
 ## Configuration file
 
@@ -51,9 +51,16 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.java.app.jar` | Executable jar of the application, instead of a main class | path | — | **planned** (P2) |  |
 | `wrapper.java.mainclass` | YAJSW's in-JVM bootstrap class | text | — | **ignored** | nyajsw starts the application main class directly; the optional agent replaces the bootstrap |
 | `wrapper.app.parameter.<n>` | Program argument passed to the application | text | — | **planned** (P2) |  |
+| `wrapper.app.parameter.<n>.stripquotes` | Tanuki: remove quotes from wrapper.app.parameter.&lt;n&gt; | boolean | — | **unsupported** | Declared so that it is not read as a program argument |
 | `wrapper.java.classpath.<n>` | Classpath entry of the application; * and ** wildcards allowed | path | — | **planned** (P2) |  |
+| `wrapper.java.classpath.use_environment` | Tanuki: append the CLASSPATH environment variable to the classpath | boolean | — | **unsupported** | Declared so that it is not read as a classpath entry |
+| `wrapper.java.classpath.missing_log_level` | Tanuki: log level used when a classpath entry does not exist | text | — | **unsupported** | Declared so that it is not read as a classpath entry |
 | `wrapper.java.library.path.<n>` | Entry of the application's java.library.path | path | — | **planned** (P2) |  |
+| `wrapper.java.library.path.append_system_path` | Tanuki: append the system PATH to java.library.path | boolean | — | **unsupported** | Declared so that it is not read as a library path entry |
 | `wrapper.java.additional.<n>` | JVM option or -D system property of the application | text | — | **planned** (P2) |  |
+| `wrapper.java.additional.auto_bits` | Tanuki: add -d32 or -d64 to the JVM options to match the wrapper | boolean | — | **unsupported** | Declared so that it is not read as a JVM option |
+| `wrapper.java.additional.auto_bits.<platform>` | Tanuki: wrapper.java.additional.auto_bits for one platform | boolean | — | **unsupported** | Declared so that it is not read as a JVM option |
+| `wrapper.java.additional.<n>.stripquotes` | Tanuki: remove quotes from wrapper.java.additional.&lt;n&gt; | boolean | — | **unsupported** | Declared so that it is not read as a JVM option |
 | `wrapper.java.initmemory` | Initial heap of the application in MB (-Xms) | integer | — | **planned** (P2) |  |
 | `wrapper.java.maxmemory` | Maximum heap of the application in MB (-Xmx) | integer | — | **planned** (P2) |  |
 | `wrapper.java.initmemory.relative` | Initial heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |

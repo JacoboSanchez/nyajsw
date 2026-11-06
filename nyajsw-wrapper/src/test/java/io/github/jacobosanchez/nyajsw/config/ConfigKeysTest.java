@@ -292,7 +292,7 @@ public class ConfigKeysTest {
     @Test
     public void unknownAndMisspeltKeysAreNotFound() {
         assertEquals(REGISTRY.lookup("wrapper.java.commandx"), Optional.empty());
-        assertEquals(REGISTRY.lookup("wrapper.java.additional.x"), Optional.empty());
+        assertEquals(REGISTRY.lookup("wrapper.java.additionalx.1"), Optional.empty());
         assertEquals(REGISTRY.lookup("Wrapper.java.command"), Optional.empty());
         assertEquals(REGISTRY.lookup("JAVA_HOME"), Optional.empty());
         // Misspelt exit-code keys are unknown, so they are warned about instead of misread.
@@ -303,6 +303,27 @@ public class ConfigKeysTest {
     @Test
     public void indexedAndDynamicFamiliesResolveToTheirDeclaration() {
         assertEquals(REGISTRY.lookup("wrapper.java.additional.25").orElseThrow(), ConfigKeys.JAVA_ADDITIONAL);
+        assertEquals(REGISTRY.lookup("wrapper.java.additional.jvm-opts").orElseThrow(), ConfigKeys.JAVA_ADDITIONAL);
+        assertEquals(REGISTRY.lookup("wrapper.java.classpath.lib").orElseThrow(), ConfigKeys.JAVA_CLASSPATH);
+        // Tanuki keys under an index family keep their own declaration instead of becoming members.
+        assertEquals(REGISTRY.lookup("wrapper.java.additional.1.stripquotes").orElseThrow(),
+                ConfigKeys.JAVA_ADDITIONAL_STRIPQUOTES);
+        assertEquals(REGISTRY.lookup("wrapper.app.parameter.1.stripquotes").orElseThrow(),
+                ConfigKeys.APP_PARAMETER_STRIPQUOTES);
+        assertEquals(REGISTRY.lookup("wrapper.java.library.path.append_system_path").orElseThrow(),
+                ConfigKeys.JAVA_LIBRARY_PATH_APPEND_SYSTEM_PATH);
+        assertEquals(REGISTRY.lookup("wrapper.java.additional.auto_bits").orElseThrow(),
+                ConfigKeys.JAVA_ADDITIONAL_AUTO_BITS);
+        assertEquals(REGISTRY.lookup("wrapper.java.additional.auto_bits.windows-x86-64").orElseThrow(),
+                ConfigKeys.JAVA_ADDITIONAL_AUTO_BITS_PLATFORM);
+        assertEquals(REGISTRY.lookup("wrapper.java.classpath.use_environment").orElseThrow(),
+                ConfigKeys.JAVA_CLASSPATH_USE_ENVIRONMENT);
+        assertEquals(REGISTRY.lookup("wrapper.java.classpath.missing_log_level").orElseThrow(),
+                ConfigKeys.JAVA_CLASSPATH_MISSING_LOG_LEVEL);
+        // A dotted index before a suffix: the suffix family wins and the whole index is captured.
+        assertEquals(REGISTRY.lookup("wrapper.filter.script.2.1.args").orElseThrow(), ConfigKeys.FILTER_SCRIPT_ARGS);
+        assertEquals(ConfigKeys.FILTER_SCRIPT_ARGS.pattern().captures("wrapper.filter.script.2.1.args"),
+                Optional.of(List.of("2.1")));
         assertEquals(REGISTRY.lookup("wrapper.ntservice.additional.2").orElseThrow(), ConfigKeys.NTSERVICE_ADDITIONAL);
         assertEquals(REGISTRY.lookup("wrapper.app.env.JAVA_OPTS").orElseThrow(), ConfigKeys.APP_ENV);
         assertEquals(REGISTRY.lookup("wrapper.on_exit.default").orElseThrow(), ConfigKeys.ON_EXIT_DEFAULT);

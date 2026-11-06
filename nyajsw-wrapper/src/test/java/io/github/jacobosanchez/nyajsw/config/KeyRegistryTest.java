@@ -34,7 +34,8 @@ public class KeyRegistryTest {
 
         assertEquals(registry.lookup("wrapper.filter.script.2.args"), Optional.of(SCRIPT_ARGS));
         assertEquals(registry.lookup("wrapper.filter.script.2"), Optional.of(SCRIPT));
-        assertEquals(registry.lookup("wrapper.filter.script.x"), Optional.of(anyFilter));
+        assertEquals(registry.lookup("wrapper.filter.script.x"), Optional.of(SCRIPT)); // a named index
+        assertEquals(registry.lookup("wrapper.filter.trigger.x"), Optional.of(anyFilter));
     }
 
     @Test
@@ -42,7 +43,9 @@ public class KeyRegistryTest {
         KeyRegistry registry = new KeyRegistry(List.of(EXACT, SCRIPT));
 
         assertEquals(registry.lookup("wrapper.on_exit"), Optional.empty());
-        assertEquals(registry.lookup("wrapper.filter.script.2.args"), Optional.empty());
+        assertEquals(registry.lookup("wrapper.filter.trigger.2"), Optional.empty());
+        // With only the index family declared, a suffix is part of the index (YAJSW reads such keys by prefix).
+        assertEquals(registry.lookup("wrapper.filter.script.2.args"), Optional.of(SCRIPT));
         assertEquals(registry.lookup("JAVA_HOME"), Optional.empty());
     }
 
@@ -88,16 +91,17 @@ public class KeyRegistryTest {
     }
 
     @Test
-    public void indexTemplateIsMoreSpecificThanFreeTemplate() {
+    public void indexTemplateShadowsAFreeTemplateInTheSamePlace() {
+        // An index may be a name (YAJSW's reference), so <n> ranks above a free label and takes every key
+        // the free template's example stands for: declaring both is a mistake the registry reports.
         KeySpec index = spec("wrapper.x.<n>");
         KeySpec free = spec("wrapper.x.<name>");
-        KeyRegistry registry = new KeyRegistry(List.of(free, index));
 
-        assertEquals(registry.lookup("wrapper.x.7"), Optional.of(index));
-        assertEquals(registry.lookup("wrapper.x.seven"), Optional.of(free));
-        // The label does not matter: any free label ranks below <n>.
-        KeySpec otherLabel = spec("wrapper.x.<id>");
-        assertEquals(new KeyRegistry(List.of(otherLabel, index)).lookup("wrapper.x.id"), Optional.of(otherLabel));
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
+                () -> new KeyRegistry(List.of(free, index)));
+
+        assertTrue(e.getMessage().contains("wrapper.x.<name> is shadowed by wrapper.x.<n>"), e.getMessage());
+        assertEquals(new KeyRegistry(List.of(index)).lookup("wrapper.x.seven"), Optional.of(index));
     }
 
     @Test
@@ -116,6 +120,18 @@ public class KeyRegistryTest {
 
         assertEquals(registry.lookup("wrapper.app.env." + "a.".repeat(20_000) + "a"), Optional.of(env));
         assertEquals(registry.lookup("wrapper.app.env." + "a.".repeat(20_000)), Optional.empty());
+    }
+
+    @Test
+    public void indexKeysWithThousandsOfSegmentsDoNotOverflowTheStack() {
+        KeySpec index = spec("wrapper.x.<n>");
+        KeySpec args = spec("wrapper.x.<n>.args");
+        KeyRegistry registry = new KeyRegistry(List.of(index, args));
+        String longIndex = "a.".repeat(20_000) + "a";
+
+        assertEquals(registry.lookup("wrapper.x." + longIndex), Optional.of(index));
+        assertEquals(registry.lookup("wrapper.x." + longIndex + ".args"), Optional.of(args));
+        assertEquals(registry.lookup("wrapper.x." + longIndex + "."), Optional.empty());
     }
 
     @Test

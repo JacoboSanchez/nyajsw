@@ -15,15 +15,16 @@ import java.util.Set;
  * {@code wrapper.app.env.<variable>} entry, in the order the typed configuration needs (plan §4.5):
  *
  * <ul>
- *   <li>Numeric placeholders ({@code <n>}, {@code <code>}) sort numerically, so
- *       {@code wrapper.java.classpath.10} comes after {@code .9}; gaps are allowed.</li>
+ *   <li>Indices ({@code <n>}) sort by {@link IndexOrder}, so {@code wrapper.java.classpath.10} comes
+ *       after {@code .9} and named indices such as {@code .lib} after the numbers; exit codes
+ *       ({@code <code>}) sort numerically; gaps are allowed.</li>
  *   <li>Members that differ only in free placeholders keep the order of the input, which is file
- *       order. In a template mixing free and numeric placeholders, ordering looks at the numeric ones
+ *       order. In a template mixing free and ordered placeholders, ordering looks at the ordered ones
  *       only, so members sharing a free value are not grouped together.</li>
- *   <li>Two keys with the same numeric value written differently ({@code .7} and {@code .07}) are
- *       both returned, in input order, with a warning, since only one was probably meant; the
+ *   <li>Two keys with the same index or exit code written differently ({@code .7} and {@code .07})
+ *       are both returned, in input order, with a warning, since only one was probably meant; the
  *       consumer decides what that means for its family (a list keeps both, a map of exit codes
- *       cannot). {@link Member#numbers()} gives the normalised values to join or key on.</li>
+ *       cannot). {@link Member#numbers()} gives the exit codes to key on.</li>
  * </ul>
  *
  * <p>A key belongs to a family only when the registry resolves it to that declaration: with
@@ -60,11 +61,11 @@ public final class KeyCollector {
             }
         }
         KeyPattern pattern = spec.pattern();
-        members.sort(numericOrder(pattern)); // stable: ties keep input order
+        members.sort(order(pattern)); // stable: ties keep input order
         return new Collected(members, duplicateIndexWarnings(pattern, members));
     }
 
-    /** The numeric placeholder values; the pattern only matched decimal integers there. */
+    /** The exit-code placeholder values; the pattern only matched decimal integers there. */
     private static List<BigInteger> numbers(KeyPattern pattern, List<String> placeholders) {
         List<BigInteger> numbers = new ArrayList<>();
         for (int position = 0; position < placeholders.size(); position++) {
@@ -75,10 +76,18 @@ public final class KeyCollector {
         return numbers;
     }
 
-    private static Comparator<Member> numericOrder(KeyPattern pattern) {
+    private static Comparator<Member> order(KeyPattern pattern) {
         return (first, second) -> {
-            for (int i = 0; i < first.numbers().size(); i++) {
-                int order = first.numbers().get(i).compareTo(second.numbers().get(i));
+            int number = 0;
+            for (int position = 0; position < pattern.labels().size(); position++) {
+                int order = 0;
+                if (pattern.isIndex(position)) {
+                    order = IndexOrder.NATURAL.compare(first.placeholders().get(position),
+                            second.placeholders().get(position));
+                } else if (pattern.isNumeric(position)) {
+                    order = first.numbers().get(number).compareTo(second.numbers().get(number));
+                    number++;
+                }
                 if (order != 0) {
                     return order;
                 }
@@ -88,7 +97,7 @@ public final class KeyCollector {
     }
 
     private static List<ConfigWarning> duplicateIndexWarnings(KeyPattern pattern, List<Member> members) {
-        if (pattern.numericPlaceholders() == 0) {
+        if (pattern.orderedPlaceholders() == 0) {
             return List.of();
         }
         List<ConfigWarning> warnings = new ArrayList<>();
@@ -104,12 +113,19 @@ public final class KeyCollector {
         return warnings;
     }
 
-    /** The placeholder values with numeric ones normalised, so {@code 7} and {@code 07} are equal. */
+    /** The placeholder values with ordered ones normalised, so {@code 7} and {@code 07} are equal. */
     private static List<Object> identity(KeyPattern pattern, Member member) {
         List<Object> identity = new ArrayList<>();
         int number = 0;
         for (int position = 0; position < pattern.labels().size(); position++) {
-            identity.add(pattern.isNumeric(position) ? member.numbers().get(number++) : member.placeholders().get(position));
+            String value = member.placeholders().get(position);
+            if (pattern.isIndex(position)) {
+                identity.add(IndexOrder.normalise(value));
+            } else if (pattern.isNumeric(position)) {
+                identity.add(member.numbers().get(number++));
+            } else {
+                identity.add(value);
+            }
         }
         return identity;
     }
@@ -120,9 +136,9 @@ public final class KeyCollector {
      * @param entry        the entry
      * @param placeholders what the placeholders stand for, in template order (see
      *                     {@link KeyPattern#captures(String)})
-     * @param numbers      the values of the numeric placeholders ({@code <n>}, {@code <code>}) in
-     *                     template order, normalised ({@code 07} is 7); arbitrary size, so a huge
-     *                     index never overflows
+     * @param numbers      the values of the exit-code placeholders ({@code <code>}) in template
+     *                     order, normalised ({@code 07} is 7); arbitrary size, so a huge code never
+     *                     overflows
      */
     public record Member(ConfigEntry entry, List<String> placeholders, List<BigInteger> numbers) {
 
