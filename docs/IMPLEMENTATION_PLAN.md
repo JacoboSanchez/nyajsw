@@ -5,7 +5,7 @@ Last updated: 2026-11-06
 
 How to use this document: pick the next unchecked item in §5, implement it following
 [AGENTS.md](../AGENTS.md), and update the checkbox, the decisions log (§9) and the compatibility
-matrix (§7) in the same commit.
+matrix (the key registry, regenerating `docs/COMPATIBILITY.md`, §7) in the same commit.
 
 ---
 
@@ -75,7 +75,7 @@ can mean "the application actually answers", not just "a process exists".
   under the wrong account). Partial support is expressed in the key's notes. Whether a key is a nyajsw
   extension is a separate attribute, its origin (`YAJSW`/`NYAJSW`), so an extension can be
   `PLANNED` or `SUPPORTED` like any other key. The registry generates
-  `docs/COMPATIBILITY.md`; §7 is the hand-written initial version used to seed it.
+  `docs/COMPATIBILITY.md` (§7).
 * Enumerated values accept YAJSW spelling and well-known aliases
   (`DELAYED_AUTO_START`/`DELAY_START`, log levels `NONE FATAL ERROR STATUS INFO DEBUG`).
 * Groovy expressions inside `${...}` are detected and rejected with an explanatory error.
@@ -167,7 +167,7 @@ older JVMs than the wrapper requires.
 |---|---|---|
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
 | `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode` |
-| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
+| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `CompatibilityDocument`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
 | `launch` | Build the application command line and run it. | `JavaCommandBuilder` (with a secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
@@ -531,9 +531,9 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       `wrapper.on_exit.<code>` member is 0 written differently (`00`, `-0`), since the exact
       `wrapper.on_exit.0` carries the default. (Filter triggers, which pair `trigger.<n>` with
       `action.<n>` by number, are unsupported until P9 and get their typed view then.)
-- [ ] P1.7 `docs/COMPATIBILITY.md` generator + staleness test (`-Dnyajsw.docs.update=true`
-      rewrites). The registry is already seeded from §7 (P1.2); this item only generates the
-      document from it and retires the hand-written §7 tables.
+- [x] P1.7 `docs/COMPATIBILITY.md` generator (`CompatibilityDocument`) + staleness test
+      (`CompatibilityDocTest`; `-Dnyajsw.docs.update=true` rewrites); the hand-written §7 tables are
+      retired.
 - [ ] P1.8 Fixtures: a YAJSW-style default template written from scratch, plus the owner's
       anonymised real configurations as soon as they are provided (§10 Q1; not a blocker).
 - [ ] P1.9 D7 follow-ups once real fixtures exist: honour `wrapper.conf.encoding`; settle backslash
@@ -547,8 +547,8 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       rejected today), and whether YAJSW skips empty list members such as `wrapper.app.parameter.2=`
       (P1.6b skips them), whether account names really need doubled backslashes (P1.6b undoes them),
       and the path bases of D13; update §4.5.
-Done when: every fixture present in the repository loads; every §7 key has a registry entry and a
-test.
+Done when: every fixture present in the repository loads; every key of the former §7 matrix
+(`ConfigKeysTest.seededKeys`) has a registry entry and a test.
 
 ### P2 — Application launcher
 Goal: build and run the application command line exactly as the configuration says.
@@ -723,94 +723,13 @@ entry names the commit/plan item it came from; remove entries when addressed.
 * **Coverage expectation** (not a gate): every key, probe, stop strategy and state transition is
   exercised at least once.
 
-## 7. Configuration compatibility matrix (initial, hand-written — superseded by the generated `docs/COMPATIBILITY.md` after P1.7)
+## 7. Configuration compatibility matrix
 
-Status: **S** supported · **P** planned (phase) · **I** ignored with warning · **U** unsupported with
-warning · **F** unsupported, fatal when present. **X** marks a nyajsw extension (origin `NYAJSW`) and
-is combined with a status, e.g. `X P7`. "(verify)" marks a
-YAJSW key name or default that must be checked against the YAJSW reference before implementation.
-
-### Java process
-| Key | Meaning | Status |
-|---|---|---|
-| `wrapper.java.command` | Java executable for the application (default: wrapper's JVM) | P2 |
-| `wrapper.java.command.javaw` | Use `javaw.exe` | P2 |
-| `wrapper.java.command.minVersion/.maxVersion/.jreOnly/.jdkOnly/.preferJre/.preferJdk` | JVM discovery | U → P9 |
-| `wrapper.java.customProcName` | Renamed copy of `java.exe` | U → P9 |
-| `wrapper.java.app.mainclass` | Application main class | P2 |
-| `wrapper.java.app.jar` | Executable jar (alternative to main class) | P2 |
-| `wrapper.java.mainclass` | YAJSW in-JVM bootstrap class | I (agent used instead) |
-| `wrapper.app.parameter.N` | Program arguments | P2 |
-| `wrapper.java.classpath.N` | Classpath entries, wildcards | P2 |
-| `wrapper.java.library.path.N` | `java.library.path` entries | P2 |
-| `wrapper.java.additional.N` | JVM options and `-D` system properties | P2 |
-| `wrapper.java.initmemory` / `wrapper.java.maxmemory` | `-Xms` / `-Xmx` in MB | P2 |
-| `wrapper.java.initmemory.relative` / `wrapper.java.maxmemory.relative` | Percent of physical RAM | U → P9 |
-| `wrapper.app.env.<KEY>` | Environment variable for the application | P2 |
-| `wrapper.working.dir` | Working directory (default: configuration directory, D13) | P2 |
-| `wrapper.tmp.path` | Temporary directory (also `jna.tmpdir`) | P2 |
-| `wrapper.image` | Non-Java executable to wrap | P2 (optional) |
-| `wrapper.priority` / `wrapper.affinity` | Process priority / CPU affinity | U → P9 |
-| `wrapper.app.account` / `wrapper.app.password` | Run application as another user | F → P9 |
-| `wrapper.java.monitor.*` (verify) | Deadlock/heap/GC monitoring | U → P9 |
-| `wrapper.groovy` | Groovy scripting | U |
-
-### Lifecycle
-| Key | Meaning | Status |
-|---|---|---|
-| `wrapper.control` | `TIGHT`/`LOOSE`/`APPLICATION`/`WRAPPER` coupling (default verify) | P3 |
-| `wrapper.on_exit.<code>` / `wrapper.on_exit.default` | `RESTART`/`SHUTDOWN`/`STOP` | P3 |
-| `wrapper.restart.delay` | Seconds between invocations | P3 |
-| `wrapper.max_failed_invocations` | Give up after N failed starts (default 5) | P3 |
-| `wrapper.successful_invocation_time` | Seconds after which an invocation counts as successful (default 300) | P3 |
-| `wrapper.startup.timeout` | Readiness bound in seconds (default 30) | P3 |
-| `wrapper.shutdown.timeout` | Graceful stop bound in seconds (default 30) | P3 |
-| `wrapper.pidfile` / `wrapper.java.pidfile` | Pid files | P3 |
-| `wrapper.ping.interval` (verify) / `wrapper.ping.timeout` | Heartbeat via agent | P7 |
-| `wrapper.restart.reload_configuration` (verify) | Reload file on restart | U → P9 |
-| `wrapper.stop.conf` | Separate stop program | U → P9 |
-| `wrapper.exit_on_main_terminate` / `wrapper.exit_on_main_exception` (verify) | In-JVM behaviour | U |
-| `wrapper.filter.trigger.N` | Log pattern trigger | U → P9 |
-| `wrapper.filter.script.N` / `.args` | Groovy on trigger | U |
-| `wrapper.stop.strategy`, `wrapper.stop.command` | Ordered stop strategies (§4.6) | X P3/P7 |
-
-### Logging
-| Key | Meaning | Status |
-|---|---|---|
-| `wrapper.logfile` | Log path with `ROLLNUM`/`YYYYMMDD` | P4 |
-| `wrapper.logfile.format` / `.loglevel` / `.maxsize` / `.maxfiles` / `.rollmode` | File log settings | P4 |
-| `wrapper.console.format` / `.loglevel` | Console log settings | P4 |
-| `wrapper.console.visible` / `.title` | Console window | U → P9 |
-| `wrapper.console.pipestreams` (verify) | Output piping mode | U |
-| `wrapper.debug` / `wrapper.java.debug` | Verbose logging | P4 |
-| `wrapper.syslog.*` (verify) | Syslog | U |
-
-### Windows service
-| Key | Meaning | Status |
-|---|---|---|
-| `wrapper.ntservice.name` | Service name (default verify: main class simple name) | P5 |
-| `wrapper.ntservice.displayname` / `.description` | Display name / description | P5 |
-| `wrapper.ntservice.starttype` | `AUTO_START` (default), `DEMAND_START`, `DELAYED_AUTO_START` (alias `DELAY_START`), `DISABLED` | P5 |
-| `wrapper.ntservice.dependency.N` | Service dependencies | P5 |
-| `wrapper.ntservice.account` / `.password` | Service account (logon right granted at install) | P5 |
-| `wrapper.ntservice.interactive` | Interactive desktop (obsolete on modern Windows) | I |
-| `wrapper.ntservice.failure_actions.*` (verify) | SCM recovery | U → P9 |
-| `wrapper.ntservice.java.additional.N` | Options for the **wrapper** JVM in the service binary path | X P5 |
-
-### Out of scope (accepted, warned, no effect)
-| Key | Status |
-|---|---|
-| `wrapper.daemon.dir` / `.pid.dir` / `.run_level_dir`, `wrapper.update_rc` | U (POSIX, P9) |
-| `wrapper.tray`, `wrapper.tray.port`, `wrapper.tray.icon` | U |
-| `wrapper.jmx`, `wrapper.jmx.rmi.port` / `.user` / `.password` | U |
-
-### nyajsw extensions
-| Key | Meaning | Status |
-|---|---|---|
-| `wrapper.readiness.type`, `wrapper.readiness.interval`, `wrapper.readiness.<type>.*` | Readiness probes (§4.7) | X P7 |
-| `wrapper.liveness.type` / `.interval` / `.failures` / `.action` | Liveness probes | X P7 |
-| `wrapper.agent.enabled` | Inject the agent (default `true`) | X P7 |
-| `wrapper.filter.action.N` | Action for `wrapper.filter.trigger.N` | X P9 |
+The matrix is generated from the key registry into [COMPATIBILITY.md](COMPATIBILITY.md) (P1.7) and
+must not be edited by hand; a test fails when it is stale (AGENTS.md §3 has the command that
+rewrites it). The hand-written initial version that used to live here seeded the registry in P1.2;
+`ConfigKeysTest.seededKeys` keeps its keys and statuses under test. Change a key's status, default
+or notes in `ConfigKeys` and regenerate the document in the same commit.
 
 ## 8. Risks and mitigations
 
@@ -826,7 +745,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 | R8 | Log rotation on Windows (locked files, rename failures) | Single writer, rename with retry/fallback, tests on Windows CI. |
 | R9 | Hosted Windows CI runner not elevated or flaky SCM | Verify in P0.3; integration tests retry transient `MARKED_FOR_DELETE`; unit coverage does not depend on them. |
 | R10 | Licensing contamination | Clean-room rule in AGENTS.md; only public key names reused; reviewers check for copied text. |
-| R11 | Unverified YAJSW defaults/key names (marked "(verify)") | Confirm against the YAJSW reference (read only in summarised form so far) and the owner's real files/`doc` folder before implementing each key; record the outcome in the registry. |
+| R11 | Unverified YAJSW defaults/key names (marked `Unverified` in the registry, "*Verify:*" in the matrix) | Confirm against the YAJSW reference (read only in summarised form so far) and the owner's real files/`doc` folder before implementing each key; record the outcome in the registry. |
 | R12 | Windows argument quoting (`ProcessBuilder` re-quoting, embedded quotes) | Explicit policy and tests in P2.2; golden tests on argument arrays. |
 
 ## 9. Decisions log (ADR-lite)
@@ -856,7 +775,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 1. **Real configuration files.** Please add the current `wrapper.conf` (anonymised) as a fixture,
    together with the `conf/wrapper.conf.default` template and `doc/` folder of the YAJSW version in
    use (reading key names and defaults is within the clean-room rule), and tell us the Java version
-   the application runs on. This settles D7 and the "(verify)" entries. In particular: does any
+   the application runs on. This settles D7 and the unverified registry entries. In particular: does any
    file rely on `:` or whitespace as the key/value separator, on comma-separated lists in values
    (Commons Configuration's list delimiter, unless YAJSW disables it), or on `${...}` in include
    paths? What encoding are the files saved in? Anonymised copies of your own installed
@@ -878,8 +797,8 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 ## 11. References
 
 * YAJSW configuration reference: https://yajsw.sourceforge.io/YAJSW%20Configuration%20Parameters.html
-  (key names in §7 come from YAJSW's published default template as reproduced in third-party
-  examples, hence the "(verify)" marks). The page was read in summarised form on 2026-11-06 and
+  (the key names in the registry and `docs/COMPATIBILITY.md` come from YAJSW's published default
+  template as reproduced in third-party examples, hence the `Unverified` marks). The page was read in summarised form on 2026-11-06 and
   informed the D7 note; a full read of the key reference is pending.
 * Microsoft Learn — Service functions: https://learn.microsoft.com/windows/win32/services/service-functions
 * JNA: https://github.com/java-native-access/jna (`com.sun.jna.platform.win32.Advapi32`, `Winsvc`, `Kernel32`)
