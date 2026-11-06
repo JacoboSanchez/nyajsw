@@ -11,12 +11,13 @@ matrix (the key registry, regenerating `docs/COMPATIBILITY.md`, §7) in the same
 
 ## 1. Summary
 
-nyajsw is a clean-room replacement for YAJSW (Yet Another Java Service Wrapper). YAJSW is no longer
-developed (contested: releases continue, §10 Q9) and its code base predates modern Java, yet it
-still runs production services through a `wrapper.conf` file that many deployments depend on.
-nyajsw keeps that configuration surface (keys, semantics, command-line switches and helper scripts) and reimplements the behaviour on Java 21,
-using JNA to call the generic Windows Service Control Manager (SCM) API, with a cleaner internal
-design and a test suite that runs on every platform.
+nyajsw is a clean-room replacement for YAJSW (Yet Another Java Service Wrapper). YAJSW still
+ships releases and runs production services through a `wrapper.conf` file that many deployments
+depend on, but its code base predates modern Java and the owner wants to move away from it
+(§10 Q9). nyajsw keeps that configuration surface (keys, semantics, command-line switches and
+helper scripts) and reimplements the behaviour on Java 21, using JNA to call the generic Windows
+Service Control Manager (SCM) API, with a cleaner internal design and a test suite that runs on
+every platform.
 
 The two things a user of YAJSW must be able to do on day one:
 
@@ -882,7 +883,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 
 | ID | Decision | Rationale | Status |
 |---|---|---|---|
-| D1 | Clean-room reimplementation, Apache-2.0; compatibility only at the configuration/CLI surface | YAJSW is LGPL and unmaintained (both contested, §10 Q9); avoid license entanglement and legacy design | Accepted |
+| D1 | Clean-room reimplementation, Apache-2.0; compatibility only at the configuration/CLI surface | The owner is moving off YAJSW (§10 Q9); YAJSW lists Apache-2.0 alongside LGPLv3, so a clean room avoids licence entanglement and inherits none of its legacy design | Accepted |
 | D2 | Wrapper requires Java 21; agent compiled to Java 8 bytecode with zero dependencies (tests on 21) | Wrapped applications may run old JVMs; agent is injected into them | Accepted |
 | D3 | Maven multi-module: `nyajsw-agent`, `nyajsw-wrapper`, `nyajsw-dist`; wrapper depends on agent for `AgentProtocol`, never the reverse | Separate compilation target for the agent; one definition of the protocol | Accepted (P0.4 build plugins, parent POM properties: clean 3.5.0, resources 3.5.0, compiler 3.16.0, surefire 3.5.6, jar 3.5.1, install 3.2.0, deploy 3.2.0, enforcer 3.7.0, dependency 3.11.0) |
 | D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
@@ -905,10 +906,10 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 1. **Real configuration files.** Please add the current `wrapper.conf` (anonymised) as a fixture,
    together with the `conf/wrapper.conf.default` template and `doc/` folder of the YAJSW version in
    use (reading key names and defaults is within the clean-room rule), and tell us the Java version
-   the application runs on. This settles D7 and the unverified registry entries. In particular: does any
-   file rely on `:` or whitespace as the key/value separator, on comma-separated lists in values
-   (Commons Configuration's list delimiter, unless YAJSW disables it), or on `${...}` in include
-   paths? What encoding are the files saved in? Anonymised copies of your own installed
+   the application runs on (*answered 2026-11-06: Java 21*; the YAJSW version, 13.18, is recorded
+   in Q9). This settles D7 and the unverified registry entries. In particular: does any file rely
+   on `:` or whitespace as the key/value separator, on comma-separated lists in values (Commons
+   Configuration's list delimiter, unless YAJSW disables it), or on `${...}` in include paths? What encoding are the files saved in? Anonymised copies of your own installed
    `service.conf` files are the fixtures we need most. Do not add vendor templates unless their
    licence allows redistribution in an Apache-2.0 repository.
 2. **Package/groupId** `io.github.jacobosanchez.nyajsw` acceptable? (D11)
@@ -925,10 +926,10 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
    version and run-as accounts are in use? (D17)
 9. **YAJSW is still being released.** SourceForge lists yajsw-stable-13.x through 14.01
    (2026-09-13; Netty 4.2.17, commons-configuration2 2.15.1), and the project now lists
-   Apache-2.0 alongside LGPLv3 (the licence change dates from 12.00). §1 and AGENTS.md describe
-   YAJSW as unmaintained and LGPL. Does the motivation still stand (for example Java 21 as the
-   wrapper runtime, no Groovy, probes), and which YAJSW version do your services run? Defaults and
-   parsing may differ between 12.x and 14.x.
+   Apache-2.0 alongside LGPLv3 (the licence change dates from 12.00). §1, D1, AGENTS.md and the
+   README described YAJSW as unmaintained and LGPL (corrected with the answer below). Does the
+   motivation still stand (for example Java 21 as the wrapper runtime, no Groovy, probes), and
+   which YAJSW version do your services run? Defaults and parsing may differ between 12.x and 14.x.
    *Answer (2026-11-06):* the services run **yajsw-stable-13.18** (2025-10-05). Its readme warns
    that 13.16 and 13.17 are broken and announces that 14.0 needs JDK 11 or later, because the Groovy
    bundled with 13.x does not run on JDK 22 or later and Groovy 5 needs JDK 11. So 13.18 is in
@@ -938,7 +939,8 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
    not hold for 13.18; the jar names in the 13.18 `lib/` folder settle that. 13.18 is therefore
    the reference for compatibility checks. The online reference is unversioned (its changes page
    stops at 12.06, §11), so where it and 13.18 may differ, the 13.18 `doc/` folder and real files
-   decide (Q1). Still open: whether the motivation stands, and the application's Java version (Q1).
+   decide (Q1). *Answer (2026-11-06), motivation:* it stands; the owner wants to move off YAJSW.
+   The application runs on Java 21 (Q1).
 
 ## 11. References
 
