@@ -29,6 +29,14 @@ public enum KeyStatus {
         this.label = label;
     }
 
+    /**
+     * Whether a key with this status takes effect, so that a problem with its value must stop the
+     * wrapper (an error) rather than only be pointed out (a warning).
+     */
+    public boolean takesEffect() {
+        return this == SUPPORTED;
+    }
+
     /** Lower-case wording for warnings and generated documentation. */
     public String label() {
         return label;
