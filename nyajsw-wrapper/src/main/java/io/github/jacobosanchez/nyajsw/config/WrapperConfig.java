@@ -20,9 +20,11 @@ import java.util.Objects;
  * @param probes    readiness, liveness and the agent
  * @param warnings  everything worth telling the operator, from loading, validation and typing, in
  *                  that order
+ * @param secrets   hides the secrets of this configuration in text built from its values, such as
+ *                  the logged command line ({@code launch.JavaCommand})
  */
 public record WrapperConfig(Path file, JavaConfig java, ServiceConfig service, LogConfig log,
-        LifecycleConfig lifecycle, ProbeConfig probes, List<ConfigWarning> warnings) {
+        LifecycleConfig lifecycle, ProbeConfig probes, List<ConfigWarning> warnings, SecretMasker secrets) {
 
     public WrapperConfig {
         Objects.requireNonNull(file, "file");
@@ -32,6 +34,7 @@ public record WrapperConfig(Path file, JavaConfig java, ServiceConfig service, L
         Objects.requireNonNull(lifecycle, "lifecycle");
         Objects.requireNonNull(probes, "probes");
         warnings = List.copyOf(warnings);
+        Objects.requireNonNull(secrets, "secrets");
     }
 
     /**
@@ -65,6 +68,6 @@ public record WrapperConfig(Path file, JavaConfig java, ServiceConfig service, L
         List<ConfigWarning> warnings = new ArrayList<>(config.warnings());
         warnings.addAll(validation.warnings());
         warnings.addAll(values.warnings());
-        return new WrapperConfig(config.file(), java, service, log, lifecycle, probes, warnings);
+        return new WrapperConfig(config.file(), java, service, log, lifecycle, probes, warnings, values.masker());
     }
 }
