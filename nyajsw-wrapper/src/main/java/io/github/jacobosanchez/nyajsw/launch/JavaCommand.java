@@ -2,6 +2,7 @@ package io.github.jacobosanchez.nyajsw.launch;
 
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 
+import java.nio.charset.Charset;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -19,19 +20,36 @@ public final class JavaCommand {
     private final List<String> arguments;
     private final List<String> warnings;
     private final SecretMasker secrets;
+    private final Charset stdoutCharset;
+    private final Charset stderrCharset;
 
     /**
-     * @param arguments the executable followed by its arguments
-     * @param warnings  settings that were ignored while building it, for the caller to log
-     * @param secrets   hides the configuration's secrets in {@link #loggable()}
+     * @param arguments     the executable followed by its arguments
+     * @param warnings      settings that were ignored while building it, for the caller to log
+     * @param secrets       hides the configuration's secrets in {@link #loggable()}
+     * @param stdoutCharset what the application writes its standard output in
+     * @param stderrCharset what the application writes its standard error in
      */
-    public JavaCommand(List<String> arguments, List<String> warnings, SecretMasker secrets) {
+    public JavaCommand(List<String> arguments, List<String> warnings, SecretMasker secrets, Charset stdoutCharset,
+            Charset stderrCharset) {
         this.arguments = List.copyOf(arguments);
         if (this.arguments.isEmpty()) {
             throw new IllegalArgumentException("a command needs at least the executable");
         }
         this.warnings = List.copyOf(warnings);
         this.secrets = Objects.requireNonNull(secrets, "secrets");
+        this.stdoutCharset = Objects.requireNonNull(stdoutCharset, "stdoutCharset");
+        this.stderrCharset = Objects.requireNonNull(stderrCharset, "stderrCharset");
+    }
+
+    /** What the application writes its standard output in, to decode it. */
+    public Charset stdoutCharset() {
+        return stdoutCharset;
+    }
+
+    /** What the application writes its standard error in, to decode it. */
+    public Charset stderrCharset() {
+        return stderrCharset;
     }
 
     /** The executable followed by its arguments, unmodifiable; never log these, see {@link #loggable()}. */

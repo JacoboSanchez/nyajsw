@@ -234,6 +234,7 @@ public final class ConfigKeys {
     public static final KeySpec APP_ENV = yajsw("wrapper.app.env.<variable>", STRING, JAVA)
             .status(PLANNED, "P2")
             .description("Environment variable set for the application")
+            .notes("An empty value removes the inherited variable; on Windows every spelling of the name is replaced")
             .build();
 
     public static final KeySpec WORKING_DIR = yajsw("wrapper.working.dir", PATH, JAVA)
@@ -245,7 +246,8 @@ public final class ConfigKeys {
 
     public static final KeySpec TMP_PATH = yajsw("wrapper.tmp.path", PATH, JAVA)
             .status(PLANNED, "P2")
-            .description("Temporary directory, also used as jna.tmpdir")
+            .description("Temporary directory of the wrapper, also used as jna.tmpdir")
+            .notes("Not passed to the application")
             .toVerify(DEFAULT) // the reference says /tmp, YAJSW's change log jna.tmpdir under its tmp folder
             .build();
 

@@ -66,9 +66,9 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.java.initmemory.relative` | Initial heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |
 | `wrapper.java.initialmemory.relative` | Initial heap as a percentage of physical memory | integer | — | **unsupported** (P9) | The spelling of the YAJSW reference; wrapper.java.initmemory.relative is the other one |
 | `wrapper.java.maxmemory.relative` | Maximum heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |
-| `wrapper.app.env.<variable>` | Environment variable set for the application | text | — | **planned** (P2) |  |
+| `wrapper.app.env.<variable>` | Environment variable set for the application | text | — | **planned** (P2) | An empty value removes the inherited variable; on Windows every spelling of the name is replaced |
 | `wrapper.working.dir` | Working directory of the application | path | the directory of the configuration file (D13) | **planned** (P2) | *Verify:* default |
-| `wrapper.tmp.path` | Temporary directory, also used as jna.tmpdir | path | — | **planned** (P2) | *Verify:* default |
+| `wrapper.tmp.path` | Temporary directory of the wrapper, also used as jna.tmpdir | path | — | **planned** (P2) | Not passed to the application<br>*Verify:* default |
 | `wrapper.cleanup_tmp` | Delete the wrapper's leftover output-buffer files from the temporary directory at start | boolean | — | **unsupported** | YAJSW default: true |
 | `wrapper.image` | Non-Java executable to run instead of a JVM | path | — | **planned** (P2) | Optional plan item P2.6 |
 | `wrapper.priority` | Process priority of the application | text | — | **unsupported** (P9) |  |
