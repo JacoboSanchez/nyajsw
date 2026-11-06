@@ -168,7 +168,9 @@ public class KeySpecTest {
         assertInvalid(base(KeyType.ENUM).values(List.of("A")).defaultValue("B"), "default 'B'");
         assertInvalid(base(KeyType.INTEGER).defaultValue("five"), "default 'five'");
         assertInvalid(base(KeyType.DURATION).defaultValue("1.5"), "default '1.5'");
-        assertInvalid(base(KeyType.BOOLEAN).defaultValue("yes"), "default 'yes'");
+        assertInvalid(base(KeyType.BOOLEAN).defaultValue("maybe"), "default 'maybe'");
+        // Same rules as configured values (ValueParser): a negative duration is no default either.
+        assertInvalid(base(KeyType.DURATION).defaultValue("-1"), "default '-1'");
         assertInvalid(base(KeyType.STRING).defaultValue(""), "default ''");
         base(KeyType.INTEGER).defaultValue("-1").build();
         base(KeyType.BOOLEAN).defaultValue("false").build();

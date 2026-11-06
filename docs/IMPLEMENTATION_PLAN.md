@@ -167,7 +167,7 @@ older JVMs than the wrapper requires.
 |---|---|---|
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
 | `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode` |
-| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records), `ConfigException`, `ConfigWarning` |
+| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records), `ConfigException`, `ConfigWarning` |
 | `launch` | Build the application command line and run it. | `JavaCommandBuilder` (with a secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitAction` (enum `RESTART`/`SHUTDOWN`/`STOP`), `ExitActionResolver`, `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
@@ -276,8 +276,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   a line ending in an odd number of `\` continues on the next line (as in YAJSW's Commons
   Configuration parser); blank and comment lines inside a continued value are skipped, as there.
   So `C:\app\` must be written `C:\app\\` or `C:/app/`; a continuation line that looks like a new
-  `wrapper.*` entry gets a warning. Doubled backslashes in path-typed keys are normalised by the
-  typed layer (P1.6). Entries keep file and line (`ConfigLocation`) for messages; problems that do
+  `wrapper.*` entry gets a warning. Doubled backslashes in path-typed keys are normalised by
+  `ValueParser`: every `\\` becomes `\`, except a leading `\\` followed by another character, which
+  is a literal UNC or `\\?\` prefix (`\\server\share\\` gives `\\server\share\`); four leading
+  backslashes are its escaped form. Entries keep file and line (`ConfigLocation`) for messages; problems that do
   not stop loading are `ConfigWarning`s. Several statements above (backslash handling, treatment of
   `include`, encoding default) are unconfirmed against YAJSW itself; see the D7 note and P1.9.
 * **Interpolation** (`Interpolator`): `${name}` resolved against, in order, keys in the
@@ -328,6 +330,18 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   validation with aggregated errors, unknown/unsupported warnings, secret masking, and **generating
   `docs/COMPATIBILITY.md`** (a test fails when the committed document is stale; running it with
   `-Dnyajsw.docs.update=true` rewrites the document).
+* **Validation** (`ConfigValidator`, P1.6a): unknown `wrapper.*` keys warn (other unknown keys are
+  plain variables); planned, ignored and unsupported keys warn once per declaration; fatal keys with
+  a value (empty ones only warn) and values of supported keys that do not fit their type are errors,
+  all reported together in configuration order (`ConfigException.aggregate`). A planned key has no
+  effect yet, so a value that does not fit only warns. Types (`ValueParser`, also used to check the
+  registry's constant defaults): int; boolean also as `yes/no/on/off`, as Commons Configuration
+  accepts; non-negative seconds; sizes with binary `K/M/G`; enum values and aliases in any case;
+  comma lists. A value that leaves the key unset (`ValueParser.isUnset`: empty for non-string keys,
+  no list items) is not checked; default-layer entries are not judged; a secret set by a system
+  property warns, known key or not. `SecretMasker` hides secret
+  values wherever they appear, including copies made by `${...}`, and `ConfigDump` is the only
+  sanctioned rendering of values.
 * **Typed views**: `WrapperConfig` exposes `JavaConfig`, `ServiceConfig`, `LogConfig`,
   `LifecycleConfig`, `ProbeConfig` records. Nothing outside `config` reads raw strings.
 * Relative paths resolve against the configuration file's directory unless the key says otherwise
@@ -487,14 +501,17 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       one entry per key before `Interpolator.interpolate` ("last definition wins", as for include
       paths), include paths resolved with the same layer order (`FileConfigSource.Layers`), and the
       documented entry order `KeyCollector` relies on.
-- [ ] P1.6 Typed `WrapperConfig` records + validation with aggregated `ConfigException`; unknown /
-      unsupported / fatal key handling; secret masking in dumps. Decide per family what a repeated
-      index means (lists keep both; exit codes and filter triggers need one value per number, joined
-      through `KeyCollector.Member.numbers()`), and warn when a `wrapper.on_exit.<code>` member is 0
-      written differently (`00`, `-0`), since the exact `wrapper.on_exit.0` carries the default.
-      Skip `ConfigLayer.DEFAULT` entries in the unknown/planned/unsupported/fatal checks, and warn
-      when a secret key is set by a system property (the wrapper command line, e.g. a service's
-      ImagePath, is readable by local users), naming the key only.
+- [x] P1.6a Validation with aggregated `ConfigException`; unknown / planned / ignored / unsupported /
+      fatal key handling (default-layer entries skipped); value types (`ValueParser`); secret set
+      by a system property warns; secret masking in dumps, including values copied by `${...}`
+      (`SecretMasker`, `ConfigDump`).
+- [ ] P1.6b Typed `WrapperConfig` records (`JavaConfig`, `ServiceConfig`, `LogConfig`,
+      `LifecycleConfig`, `ProbeConfig`) built from a validated `LoadedConfig`, with derived defaults
+      and relative paths resolved against the configuration directory (D13). Decide per family
+      what a repeated index means (lists keep both; exit codes and filter triggers need one value
+      per number, joined through `KeyCollector.Member.numbers()`), and warn when a
+      `wrapper.on_exit.<code>` member is 0 written differently (`00`, `-0`), since the exact
+      `wrapper.on_exit.0` carries the default.
 - [ ] P1.7 `docs/COMPATIBILITY.md` generator + staleness test (`-Dnyajsw.docs.update=true`
       rewrites). The registry is already seeded from §7 (P1.2); this item only generates the
       document from it and retires the hand-written §7 tables.
@@ -506,7 +523,9 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       and a key set twice (nyajsw: last value wins with a warning, P1.5; YAJSW's Commons
       Configuration probably keeps a list whose first value scalar getters return, i.e. first wins);
       note that nyajsw's constant defaults are visible to `${...}`, which YAJSW's in-code defaults
-      probably are not; update §4.5.
+      probably are not; confirm the accepted boolean spellings (P1.6a accepts `yes/no/on/off`) and
+      the doubled-backslash rule for paths, and whether numbers may be written in hex (`0x10`,
+      rejected today); update §4.5.
 Done when: every fixture present in the repository loads; every §7 key has a registry entry and a
 test.
 
@@ -645,11 +664,12 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.2: `KeyPattern.commonExample` only finds overlaps with one segment per placeholder; free
   placeholders that span several segments in different shapes can still overlap undetected. No
   declared key is affected; revisit if a template with two free placeholders is added.
+- P1.6a: `SecretMasker` hides secrets by matching their text, so a short or common secret also masks
+  unrelated text and the mask's position can hint at it (password `Java` shows as `C:\****\bin`).
+  Tracking during interpolation which values were built from secret keys (or from names a secret
+  referred to) would avoid both; do it if real configurations show the problem.
 - P1.4: `wrapper.app.env.PATH` and `wrapper.app.env.Path` are collected as two variables without a
-  warning, though Windows treats them as one; warn in P1.6 or P2.4 when building the environment.
-- P1.3: a non-secret key whose value refers to a secret one (`a=${wrapper.app.password}`) receives
-  the secret value; P1.6 must mask such derived values in dumps (e.g. by tracking secret taint during
-  interpolation), not only keys the registry marks as secret.
+  warning, though Windows treats them as one; warn in P1.6b or P2.4 when building the environment.
 - P1.3: no bound on interpolation depth or expanded size; a very long reference chain overflows the
   stack and doubling chains grow exponentially. Low risk (files are written by administrators); add
   limits if real configurations show the need.
