@@ -3,7 +3,7 @@ package io.github.jacobosanchez.nyajsw.config;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.CONSOLE_FORMAT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.CONSOLE_LOGLEVEL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.DEBUG;
-import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JAVA_DEBUG;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.DEBUG_LEVEL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_FORMAT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_LOGLEVEL;
@@ -28,11 +28,11 @@ import java.util.Optional;
  * @param consoleFormat  {@code wrapper.console.format}
  * @param consoleLevel   {@code wrapper.console.loglevel}
  * @param debug          {@code wrapper.debug}
- * @param javaDebug      {@code wrapper.java.debug}
+ * @param debugLevel     {@code wrapper.debug.level}
  */
 public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, Optional<LogLevel> logfileLevel,
         Optional<Long> maxSizeBytes, Optional<Integer> maxFiles, Optional<RollMode> rollMode,
-        Optional<String> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, boolean javaDebug) {
+        Optional<String> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, int debugLevel) {
 
     public LogConfig {
         Objects.requireNonNull(logfile, "logfile");
@@ -65,6 +65,6 @@ public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, 
                 values.text(CONSOLE_FORMAT),
                 values.enumeration(CONSOLE_LOGLEVEL, LogLevel.class),
                 values.required(values.bool(DEBUG), DEBUG),
-                values.required(values.bool(JAVA_DEBUG), JAVA_DEBUG));
+                values.required(values.integer(DEBUG_LEVEL), DEBUG_LEVEL));
     }
 }

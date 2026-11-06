@@ -109,7 +109,7 @@ public class FixtureConfigurationsTest {
         assertEquals(lifecycle.control(), ControlMode.TIGHT);
         assertEquals(lifecycle.exitAction(0), ExitAction.SHUTDOWN);
         assertEquals(lifecycle.exitAction(1), ExitAction.RESTART);
-        assertEquals(lifecycle.restartDelay(), Optional.of(Duration.ofSeconds(5)));
+        assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
         assertEquals(lifecycle.maxFailedInvocations(), 3);
         assertEquals(lifecycle.startupTimeout(), Duration.ofSeconds(60));
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(45));

@@ -43,7 +43,8 @@ public final class KeyPattern {
                     .reversed();
 
     private static final Pattern PLACEHOLDER = Pattern.compile("<([a-z]+)>");
-    private static final Pattern SEGMENT = Pattern.compile("[A-Za-z0-9_]+");
+    /** A literal segment; {@code -} occurs in YAJSW's {@code wrapper.filter.trigger-regex.<n>}. */
+    private static final Pattern SEGMENT = Pattern.compile("[A-Za-z0-9_-]+");
     /** Example value for any placeholder; it is accepted by every placeholder kind. */
     private static final String NUMERIC_EXAMPLE = "1";
 
@@ -73,7 +74,7 @@ public final class KeyPattern {
      * Parses a template.
      *
      * @throws IllegalArgumentException if the template is empty, has an empty segment, a segment
-     *                                  with characters other than letters, digits and {@code _}, a
+     *                                  with characters other than letters, digits, {@code _} and {@code -}, a
      *                                  placeholder that is not a whole segment, or starts with a
      *                                  placeholder
      */
@@ -116,7 +117,7 @@ public final class KeyPattern {
                 literalLength += segment.length();
             } else {
                 throw invalid(template, "segment '" + segment + "' must be a placeholder such as <n>, or"
-                        + " non-empty and use only letters, digits and '_'");
+                        + " non-empty and use only letters, digits, '_' and '-'");
             }
         }
         return exact

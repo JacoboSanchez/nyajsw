@@ -107,6 +107,15 @@ public class KeyPatternTest {
     }
 
     @Test
+    public void literalSegmentsMayContainHyphens() {
+        KeyPattern pattern = KeyPattern.of("wrapper.filter.trigger-regex.<n>");
+
+        assertTrue(pattern.matches("wrapper.filter.trigger-regex.2"));
+        assertFalse(pattern.matches("wrapper.filter.trigger.2"));
+        assertEquals(pattern.example(), "wrapper.filter.trigger-regex.1");
+    }
+
+    @Test
     public void regexCharactersInLiteralsAreNotSpecial() {
         KeyPattern pattern = KeyPattern.of("wrapper.a_b.<n>");
 
@@ -125,7 +134,7 @@ public class KeyPatternTest {
                 {"wrapper.<n>x"},
                 {"wrapper.<N>"},
                 {"wrapper.<>"},
-                {"wrapper.a-b"},
+                {"wrapper.a+b"},
                 {"wrapper.a b"},
                 {"wrapper.*"},
         };

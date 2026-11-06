@@ -13,9 +13,9 @@ public enum ControlMode {
     /** They are independent. */
     LOOSE,
 
-    /** The wrapper follows the application. */
+    /** The application ends when the wrapper ends; the wrapper survives the application. */
     APPLICATION,
 
-    /** The application follows the wrapper. */
+    /** The wrapper ends when the application ends; the application survives the wrapper. */
     WRAPPER
 }

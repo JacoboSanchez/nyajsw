@@ -20,18 +20,19 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | Status | Keys |
 |---|---|
 | supported | 1 |
-| planned | 65 |
-| ignored | 2 |
-| unsupported | 39 |
-| unsupported, fatal when present | 2 |
-| *of which nyajsw extensions* | 24 |
-| **total** | 109 |
+| planned | 71 |
+| ignored | 9 |
+| unsupported | 85 |
+| unsupported, fatal when present | 5 |
+| *of which nyajsw extensions* | 22 |
+| **total** | 171 |
 
 ## Configuration file
 
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
 | `wrapper.conf.encoding` | Character encoding of the configuration file and its includes | text | UTF-8, with a windows-1252 fallback and a warning for files that are not valid UTF-8 (D7) | **supported** | A Java charset name, without variables. Set by a system property (required for UTF-16) or in the file itself. Decoding is strict: a byte that does not fit is an error at its line. YAJSW defaults to the platform charset instead |
+| `wrapper.config.script.<name>` | Groovy script that transforms configuration values, such as a password decryptor | text | — | **unsupported, fatal when present** | Fatal because ignoring it would pass on values that were meant to be transformed first |
 
 ## Java process
 
@@ -56,43 +57,79 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.java.initmemory` | Initial heap of the application in MB (-Xms) | integer | — | **planned** (P2) |  |
 | `wrapper.java.maxmemory` | Maximum heap of the application in MB (-Xmx) | integer | — | **planned** (P2) |  |
 | `wrapper.java.initmemory.relative` | Initial heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |
+| `wrapper.java.initialmemory.relative` | Initial heap as a percentage of physical memory | integer | — | **unsupported** (P9) | The spelling of the YAJSW reference; wrapper.java.initmemory.relative is the other one |
 | `wrapper.java.maxmemory.relative` | Maximum heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |
 | `wrapper.app.env.<variable>` | Environment variable set for the application | text | — | **planned** (P2) |  |
 | `wrapper.working.dir` | Working directory of the application | path | the directory of the configuration file (D13) | **planned** (P2) | *Verify:* default |
-| `wrapper.tmp.path` | Temporary directory, also used as jna.tmpdir | path | — | **planned** (P2) |  |
+| `wrapper.tmp.path` | Temporary directory, also used as jna.tmpdir | path | — | **planned** (P2) | *Verify:* default |
+| `wrapper.cleanup_tmp` | Delete the wrapper's leftover output-buffer files from the temporary directory at start | boolean | — | **unsupported** | YAJSW default: true |
 | `wrapper.image` | Non-Java executable to run instead of a JVM | path | — | **planned** (P2) | Optional plan item P2.6 |
 | `wrapper.priority` | Process priority of the application | text | — | **unsupported** (P9) |  |
 | `wrapper.affinity` | CPU affinity of the application | text | — | **unsupported** (P9) |  |
 | `wrapper.app.account` | Run the application as another user | text | — | **unsupported, fatal when present** (P9) | Fatal because ignoring it would run the application under the wrong account |
 | `wrapper.app.password` | Password of wrapper.app.account | text | — | **unsupported, fatal when present** (P9) | Secret: never logged or shown. |
-| `wrapper.java.monitor.<setting>` | Deadlock, heap and garbage-collection monitoring | text | — | **unsupported** (P9) | *Verify:* name |
+| `wrapper.java.monitor.<setting>` | Deadlock, heap and garbage-collection monitoring (deadlock, heap, gc, with .interval, .restart, heap.threshold.percent and gc.threshold) | text | — | **unsupported** (P9) |  |
+| `wrapper.java.debug.port` | Debug port of the application; adds the JDWP options and lifts the wrapper's timeouts | integer | — | **unsupported** (P9) |  |
+| `wrapper.java.jmx` | Register YAJSW's wrapper MBean with the application's MBean server | boolean | — | **unsupported** |  |
+| `wrapper.registry.java_home` | Take the Java home of the application from the Windows registry | text | — | **unsupported** (P9) | *Verify:* meaning |
+| `wrapper.app.pre.script` | Groovy script run before the application starts | text | — | **unsupported** |  |
+| `wrapper.app.pre_main.script` | Groovy script run in the application JVM before its main method | text | — | **unsupported** |  |
+| `wrapper.codebase` | Network launching: base URL the application's files are downloaded from | text | — | **unsupported** |  |
+| `wrapper.cache` | Network launching: directory the downloaded files are cached in | path | — | **unsupported** |  |
+| `wrapper.cache.local` | Network launching: copy local files into wrapper.cache too | boolean | — | **unsupported** |  |
+| `wrapper.resource.<n>` | Network launching: file downloaded from the code base before the application starts | text | — | **unsupported** |  |
+| `wrapper.wrapperJar` | Full path of the jar the wrapper runs from, when YAJSW is embedded in an application | path | — | **ignored** | nyajsw does not use YAJSW's jars |
+| `wrapper.appJar` | Full path of the jar the application JVM uses, when YAJSW is embedded in an application | path | — | **ignored** | nyajsw does not use YAJSW's jars |
 | `wrapper.groovy` | Groovy script run by the wrapper | text | — | **unsupported** |  |
 
 ## Lifecycle
 
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
-| `wrapper.control` | Coupling between the lifetimes of the wrapper and the application | one of `TIGHT`, `LOOSE`, `APPLICATION`, `WRAPPER` | `TIGHT` | **planned** (P3) | *Verify:* default |
-| `wrapper.on_exit.default` | Action when the application exits with a code that has no wrapper.on_exit.&lt;code&gt; | one of `RESTART`, `SHUTDOWN`, `STOP` | `RESTART` | **planned** (P3) | *Verify:* default |
-| `wrapper.on_exit.0` | Action when the application exits with code 0 | one of `RESTART`, `SHUTDOWN`, `STOP` | `SHUTDOWN` | **planned** (P3) | *Verify:* default |
+| `wrapper.control` | Coupling between the lifetimes of the wrapper and the application | one of `TIGHT`, `LOOSE`, `APPLICATION`, `WRAPPER` | `TIGHT` | **planned** (P3) |  |
+| `wrapper.on_exit.default` | Action when the application exits with a code that has no wrapper.on_exit.&lt;code&gt; | one of `RESTART`, `SHUTDOWN`, `STOP` | `SHUTDOWN` | **planned** (P3) |  |
+| `wrapper.on_exit.0` | Action when the application exits with code 0; when absent, wrapper.on_exit.default applies | one of `RESTART`, `SHUTDOWN`, `STOP` | — | **planned** (P3) |  |
 | `wrapper.on_exit.<code>` | Action when the application exits with this exit code | one of `RESTART`, `SHUTDOWN`, `STOP` | — | **planned** (P3) |  |
-| `wrapper.restart.delay` | Pause between the end of one invocation and the next start | seconds | — | **planned** (P3) | *Verify:* default |
+| `wrapper.restart.delay` | Pause between the end of one invocation and the next start | seconds | `5` | **planned** (P3) |  |
 | `wrapper.max_failed_invocations` | Failed invocations in a row after which the wrapper gives up | integer | `5` | **planned** (P3) |  |
-| `wrapper.successful_invocation_time` | Run time after which an invocation counts as successful | seconds | `300` | **planned** (P3) |  |
+| `wrapper.successful_invocation_time` | Run time after which an invocation counts as successful | seconds | `60` | **planned** (P3) |  |
+| `wrapper.startup.delay` | Pause before the application is started for the first time | seconds | `0` | **planned** (P3) |  |
 | `wrapper.startup.timeout` | Time the application has to become ready | seconds | `30` | **planned** (P3) |  |
-| `wrapper.shutdown.timeout` | Time the application has to stop gracefully before it is terminated | seconds | `30` | **planned** (P3) |  |
+| `wrapper.shutdown.timeout` | Time the application has to stop gracefully before it is terminated | seconds | `30` | **planned** (P3) | YAJSW documents no default and bounds the stop by this and wrapper.jvm_exit.timeout together<br>*Verify:* default |
+| `wrapper.jvm_exit.timeout` | Time added to wrapper.shutdown.timeout before the application is terminated | seconds | — | **planned** (P3) |  |
 | `wrapper.pidfile` | File the wrapper writes its process id to | path | — | **planned** (P3) |  |
+| `wrapper.lockfile` | File locked while the application runs, so that a second instance does not start | path | — | **unsupported** (P9) |  |
 | `wrapper.java.pidfile` | File the wrapper writes the application's process id to | path | — | **planned** (P3) |  |
-| `wrapper.ping.interval` | Heartbeat interval, mapped onto the agent liveness probe (D16) | seconds | — | **planned** (P7) | *Verify:* name |
-| `wrapper.ping.timeout` | Heartbeat timeout, mapped onto the agent liveness probe (D16) | seconds | — | **planned** (P7) |  |
-| `wrapper.restart.reload_configuration` | Reload the configuration file before each restart | boolean | — | **unsupported** (P9) | *Verify:* name |
+| `wrapper.ping.interval` | Heartbeat interval, mapped onto the agent liveness probe (D16) | seconds | `5` | **planned** (P7) |  |
+| `wrapper.ping.timeout` | Heartbeat timeout, mapped onto the agent liveness probe (D16) | seconds | `30` | **planned** (P7) |  |
+| `wrapper.restart.reload_configuration` | Reload the configuration file before each restart | boolean | — | **unsupported** (P9) | YAJSW default: false |
+| `wrapper.restart.reload_cache` | Network launching: refresh the cached files when the configuration is reloaded | boolean | — | **unsupported** |  |
+| `wrapper.restart.delay.script` | Groovy script that computes the restart delay | text | — | **unsupported** |  |
+| `wrapper.restart.delay.script.args` | Arguments of wrapper.restart.delay.script | text | — | **unsupported** |  |
 | `wrapper.stop.conf` | Configuration of a separate program that stops the application | path | — | **unsupported** (P9) |  |
-| `wrapper.exit_on_main_terminate` | In-JVM behaviour when the application's main method returns | text | — | **unsupported** | *Verify:* name |
-| `wrapper.exit_on_main_exception` | In-JVM behaviour when the application's main method throws | text | — | **unsupported** | *Verify:* name |
+| `wrapper.stopper` | Marks a configuration as the stop program named by wrapper.stop.conf | boolean | — | **unsupported** (P9) |  |
+| `wrapper.exit_on_main_terminate` | In-JVM behaviour when the application's main method returns | text | — | **unsupported** | YAJSW default: -1, the application keeps running while it has non-daemon threads |
+| `wrapper.exit_on_main_exception` | In-JVM behaviour when the application's main method throws | text | — | **unsupported** | YAJSW default: 999, the exit code used |
+| `wrapper.exit_code.stop` | Exit code reported when the application stopped as asked | integer | — | **unsupported** (P9) | YAJSW default: 0 |
+| `wrapper.exit_code.kill` | Exit code reported when the application had to be terminated | integer | — | **unsupported** (P9) | YAJSW default: 999 |
+| `wrapper.exit_code.fatal` | Exit code reported when the application cannot start or its main method throws | integer | — | **unsupported** (P9) | YAJSW default: 999 |
+| `wrapper.script.<state>` | Groovy script run when the application changes state, with its .args and .timeout | text | — | **unsupported** |  |
+| `wrapper.script.reload` | Reload changed Groovy scripts before running them | boolean | — | **unsupported** |  |
+| `wrapper.script.encoding` | Character encoding of the Groovy scripts | text | — | **unsupported** |  |
+| `wrapper.condition.script` | Groovy script that decides when the application is started or stopped | text | — | **unsupported, fatal when present** | Fatal because ignoring it would keep the application running whatever the script decides |
+| `wrapper.condition.script.args` | Arguments of wrapper.condition.script | text | — | **unsupported** |  |
+| `wrapper.condition.cycle` | Interval at which wrapper.condition.script runs | seconds | — | **unsupported** |  |
+| `wrapper.timer.<setting>` | Cron or interval timers that start, stop or restart the application | text | — | **unsupported** (P9) |  |
+| `wrapper.monitor.<setting>` | Monitors that compare application metrics with a threshold and act on them | text | — | **unsupported** |  |
 | `wrapper.filter.trigger.<n>` | Text in the application output that triggers an action | text | — | **unsupported** (P9) |  |
+| `wrapper.filter.trigger-regex.<n>` | Regular expression in the application output that triggers an action | text | — | **unsupported** (P9) |  |
 | `wrapper.filter.script.<n>` | Groovy script run when wrapper.filter.trigger.&lt;n&gt; matches | text | — | **unsupported** |  |
 | `wrapper.filter.script.<n>.args` | Arguments of wrapper.filter.script.&lt;n&gt; | text | — | **unsupported** |  |
-| `wrapper.filter.action.<n>` | Action when wrapper.filter.trigger.&lt;n&gt; matches | one of `RESTART`, `SHUTDOWN` | — | **planned** (P9)<br>nyajsw extension |  |
+| `wrapper.filter.script.<n>.timeout` | Time one run of wrapper.filter.script.&lt;n&gt; may take | seconds | — | **unsupported** |  |
+| `wrapper.filter.script.<n>.maxConcInvoc` | Runs of wrapper.filter.script.&lt;n&gt; allowed at the same time | integer | — | **unsupported** |  |
+| `wrapper.filter.action.<n>` | Action when wrapper.filter.trigger.&lt;n&gt; matches | one of `RESTART`, `SHUTDOWN`, `NONE` | `RESTART` | **planned** (P9) |  |
+| `wrapper.filter.missing.<setting>` | Filters that act when expected output stops appearing | text | — | **unsupported** (P9) |  |
+| `wrapper.filter.debug.default` | Log the matching of output filters | boolean | — | **unsupported** | *Verify:* meaning |
 | `wrapper.stop.strategy` | Ordered stop strategies tried before the application is terminated | list | agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate | **planned** (P3)<br>nyajsw extension | Strategies and their order: implementation plan, section 4.6 |
 | `wrapper.stop.command` | Command run by the command stop strategy | text | — | **planned** (P7)<br>nyajsw extension |  |
 
@@ -101,19 +138,25 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
 | `wrapper.logfile` | Wrapper log file; may contain the ROLLNUM and YYYYMMDD tokens | path | — | **planned** (P4) |  |
-| `wrapper.logfile.format` | Format tokens of log file lines | text | — | **planned** (P4) |  |
-| `wrapper.logfile.loglevel` | Lowest level written to the log file | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | — | **planned** (P4) | *Verify:* values |
-| `wrapper.logfile.maxsize` | Size at which the log file rolls | size | — | **planned** (P4) |  |
-| `wrapper.logfile.maxfiles` | Number of rolled log files kept | integer | — | **planned** (P4) |  |
-| `wrapper.logfile.rollmode` | When the log file rolls | one of `NONE`, `SIZE`, `DATE`, `SIZE_OR_DATE` | — | **planned** (P4) | *Verify:* values |
-| `wrapper.console.format` | Format tokens of console lines | text | — | **planned** (P4) |  |
-| `wrapper.console.loglevel` | Lowest level written to the console | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | — | **planned** (P4) | *Verify:* values |
+| `wrapper.logfile.format` | Format tokens of log file lines | text | `LPTM` | **planned** (P4) | Tokens: L level, P prefix, D thread, T time, Z milliseconds, M message |
+| `wrapper.logfile.loglevel` | Lowest level written to the log file | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | `INFO` | **planned** (P4) |  |
+| `wrapper.logfile.maxsize` | Size at which the log file rolls; 0 turns rolling by size off | size | `0` | **planned** (P4) |  |
+| `wrapper.logfile.maxfiles` | Number of rolled log files kept, per day under the DATE roll mode | integer | — | **planned** (P4) |  |
+| `wrapper.logfile.maxdays` | Days of log files kept under the DATE roll mode; -1 keeps all | integer | `-1` | **planned** (P4) |  |
+| `wrapper.logfile.rollmode` | When the log file rolls, besides rolling by size | one of `JVM`, `WRAPPER`, `DATE` | — | **planned** (P4) | *Verify:* values |
+| `wrapper.logfile.desc` | Roll by renaming only the newest file, which then gets the highest number | boolean | — | **unsupported** (P9) |  |
+| `wrapper.log.encoding` | Character encoding of the wrapper log file | text | — | **planned** (P4) | YAJSW defaults to the JVM's default charset |
+| `wrapper.console.format` | Format tokens of console lines | text | `PM` | **planned** (P4) | Same tokens as wrapper.logfile.format |
+| `wrapper.console.loglevel` | Lowest level written to the console | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | `INFO` | **planned** (P4) |  |
 | `wrapper.console.visible` | Show a console window for the service | boolean | — | **unsupported** (P9) |  |
 | `wrapper.console.title` | Title of the console window | text | — | **unsupported** (P9) |  |
-| `wrapper.console.pipestreams` | How the application's output streams are piped | boolean | — | **unsupported** | *Verify:* name |
+| `wrapper.console.minimized` | Start the visible console window minimized | boolean | — | **unsupported** (P9) |  |
+| `wrapper.console.pipestreams` | Pipe the application's standard streams to the wrapper instead of copying them | boolean | — | **ignored** | nyajsw always pipes them, as if true |
+| `wrapper.console.use_interpolated` | Whether Java options of the wrapper JVM are passed on to the application | boolean | — | **unsupported** |  |
+| `wrapper.app.status.log.lines` | Application output lines logged at the STATUS level | integer | — | **unsupported** |  |
 | `wrapper.debug` | Raise the wrapper log level to DEBUG | boolean | `false` | **planned** (P4) |  |
-| `wrapper.java.debug` | Verbose logging about the application JVM | boolean | `false` | **planned** (P4) | *Verify:* meaning |
-| `wrapper.syslog.<setting>` | Logging to syslog | text | — | **unsupported** | *Verify:* name |
+| `wrapper.debug.level` | Detail of the wrapper.debug output, from 0 (least) to 3 (all) | integer | `3` | **planned** (P4) |  |
+| `wrapper.syslog.<setting>` | Logging to syslog (facility, ident, loglevel) | text | — | **unsupported** |  |
 
 ## Windows service
 
@@ -127,8 +170,17 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.ntservice.account` | Account the service runs as; granted the right to log on as a service at install | text | — | **planned** (P5) | When absent the service runs as LocalSystem |
 | `wrapper.ntservice.password` | Password of wrapper.ntservice.account | text | — | **planned** (P5) | Secret: never logged or shown. |
 | `wrapper.ntservice.interactive` | Let the service interact with the desktop | boolean | — | **ignored** | Obsolete since Windows Vista isolated services in session 0 |
-| `wrapper.ntservice.failure_actions.<setting>` | SCM recovery actions | text | — | **unsupported** (P9) | *Verify:* name |
-| `wrapper.ntservice.java.additional.<n>` | JVM option for the wrapper JVM, written into the service binary path (D12) | text | — | **planned** (P5)<br>nyajsw extension |  |
+| `wrapper.ntservice.failure_actions.<setting>` | SCM recovery actions (reset_period, reboot_msg, command, actions, actions_delay) | text | — | **unsupported** (P9) |  |
+| `wrapper.ntservice.additional.<n>` | JVM option for the wrapper JVM, written into the service binary path (D12) | text | — | **planned** (P5) |  |
+| `wrapper.ntservice.java.command` | Java executable of the wrapper JVM that runs the service | path | javaw from the java.home of the JVM that installs the service (D12) | **planned** (P5) | YAJSW defaults to the application's Java command; nyajsw needs Java 21 here |
+| `wrapper.ntservice.java.customProcName` | Run the service from a renamed copy of the Java executable | text | — | **unsupported** (P9) |  |
+| `wrapper.ntservice.autoreport.startup` | Report the service as running as soon as the application starts | boolean | — | **unsupported** | Readiness probes decide when nyajsw reports RUNNING (wrapper.readiness.type); with false, YAJSW waits for the application to report through YAJSW's API |
+| `wrapper.ntservice.autoreport.waitready` | Show the service as waiting in the tray icon until the application reports | boolean | — | **unsupported** |  |
+| `wrapper.ntservice.reduce_signals` | Start the application JVM with -Xrs in service mode, so a user logging off does not stop it | boolean | `true` | **planned** (P6) |  |
+| `wrapper.ntservice.logon_active_session` | Start the application in the session of the logged-on user | boolean | — | **unsupported** | *Verify:* meaning |
+| `wrapper.ntservice.desktop` | Desktop the application is started on | text | — | **unsupported** | *Verify:* meaning |
+| `wrapper.save_interpolated` | Store the resolved ${...} values with the installed service | boolean | — | **ignored** | nyajsw resolves them again at every start, as if false (plan section 3.4) |
+| `wrapper.windows.cluster.<setting>` | Groovy script run when a Windows failover cluster group moves, to start the application only on the active node | text | — | **unsupported, fatal when present** (P9) | Fatal because ignoring it would start the application on every node |
 
 ## Readiness, liveness and agent
 
@@ -154,6 +206,9 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.liveness.failures` | Consecutive liveness failures before wrapper.liveness.action is taken | integer | `3` | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.liveness.action` | Action when the liveness probes keep failing | one of `RESTART`, `SHUTDOWN` | `RESTART` | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.agent.enabled` | Load the nyajsw agent into the application JVM | boolean | `true` | **planned** (P7)<br>nyajsw extension |  |
+| `wrapper.port` | Port of the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |
+| `wrapper.port.min` | Lowest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |
+| `wrapper.port.max` | Highest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |
 
 ## Out of scope
 
@@ -162,10 +217,17 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.daemon.dir` | POSIX daemon script directory | path | — | **unsupported** (P9) |  |
 | `wrapper.daemon.pid.dir` | POSIX daemon pid file directory | path | — | **unsupported** (P9) |  |
 | `wrapper.daemon.run_level_dir` | POSIX run-level directory | path | — | **unsupported** (P9) |  |
-| `wrapper.update_rc` | POSIX update-rc.d invocation | text | — | **unsupported** (P9) |  |
+| `wrapper.daemon.update_rc` | POSIX update-rc.d invocation | text | — | **unsupported** (P9) |  |
+| `wrapper.daemon.template` | Template of the POSIX daemon script | path | — | **unsupported** (P9) |  |
+| `wrapper.launchd.dir` | macOS launchd agent directory | path | — | **unsupported** |  |
+| `wrapper.plist.template` | Template of the macOS launchd property list | path | — | **unsupported** |  |
+| `wrapper.fork_hack` | POSIX workaround for starting the application process | boolean | — | **unsupported** |  |
+| `wrapper.posix_spawn` | Start the application with posix_spawn | boolean | — | **unsupported** |  |
+| `wrapper.posix_vfork` | Start the application with vfork | boolean | — | **unsupported** |  |
 | `wrapper.tray` | System tray icon | boolean | — | **unsupported** |  |
-| `wrapper.tray.port` | Port of the system tray icon | integer | — | **unsupported** |  |
+| `wrapper.tray.port` | Port of the system tray icon | integer | — | **unsupported** | *Verify:* name |
 | `wrapper.tray.icon` | Image of the system tray icon | path | — | **unsupported** |  |
+| `wrapper.tray.<setting>` | Other settings of the system tray icon: menu, dialogs, texts, look and feel | text | — | **unsupported** |  |
 | `wrapper.jmx` | JMX remote console | boolean | — | **unsupported** |  |
 | `wrapper.jmx.rmi.port` | RMI port of the JMX remote console | integer | — | **unsupported** |  |
 | `wrapper.jmx.rmi.user` | User of the JMX remote console | text | — | **unsupported** |  |
@@ -175,10 +237,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 Keys YAJSW does not know; they live in the same `wrapper.*` namespace:
 
-- `wrapper.filter.action.<n>`
 - `wrapper.stop.strategy`
 - `wrapper.stop.command`
-- `wrapper.ntservice.java.additional.<n>`
 - `wrapper.readiness.type`
 - `wrapper.readiness.interval`
 - `wrapper.readiness.tcp.host`
