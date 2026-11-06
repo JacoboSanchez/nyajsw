@@ -4,6 +4,7 @@ import static io.github.jacobosanchez.nyajsw.config.KeyOrigin.NYAJSW;
 import static io.github.jacobosanchez.nyajsw.config.KeyOrigin.YAJSW;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.IGNORED;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.PLANNED;
+import static io.github.jacobosanchez.nyajsw.config.KeyStatus.SUPPORTED;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.UNSUPPORTED;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.UNSUPPORTED_FATAL;
 import static org.testng.Assert.assertEquals;
@@ -179,7 +180,7 @@ public class ConfigKeysTest {
                 {"wrapper.agent.enabled", PLANNED, NYAJSW},
                 {"wrapper.filter.action.1", PLANNED, NYAJSW},
                 // Configuration file
-                {"wrapper.conf.encoding", PLANNED, YAJSW},
+                {"wrapper.conf.encoding", SUPPORTED, YAJSW},
         };
     }
 

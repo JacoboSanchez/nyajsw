@@ -308,6 +308,102 @@ public class FileConfigSourceTest {
         assertTrue(content.warnings().get(0).message().contains("#include.debug"));
     }
 
+    // ---- declared encoding (wrapper.conf.encoding) ----
+
+    @Test
+    public void declaredEncodingDecodesTheFileAndItsIncludesWithoutFallbackWarning() throws IOException {
+        Path extra = dir.resolve("extra.conf");
+        Files.write(extra, "e=\u00e9t\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "k=caf\u00e9\ninclude = extra.conf\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.ISO_8859_1)).read();
+
+        assertEquals(content.entries().stream().map(ConfigEntry::value).toList(), List.of("caf\u00e9", "\u00e9t\u00e9"));
+        assertTrue(content.warnings().isEmpty(), content.warnings().toString());
+    }
+
+    @Test
+    public void declaredEncodingIsStrict() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "k=caf\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main,
+                interpolator(Map.of(), Map.of()), FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_8))
+                .read());
+
+        assertEquals(e.getMessage(), main + ":1: byte that is not valid UTF-8, the encoding set by test.conf:7");
+    }
+
+    @Test
+    public void strictDecodingNamesTheLineOfTheFirstBadByte() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "a=1\nb=2\n# Gr\u00fc\u00dfe\nc=3\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main,
+                interpolator(Map.of(), Map.of()), FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_8))
+                .read());
+
+        assertEquals(e.location().orElseThrow(), new ConfigLocation(main.toString(), 3));
+    }
+
+    @Test
+    public void declaredUtf16SkipsItsByteOrderMark() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "\uFEFFk=v\n".getBytes(StandardCharsets.UTF_16LE));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_16LE)).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 1)));
+    }
+
+    @Test
+    public void utf8ByteOrderMarkUnderAnotherDeclaredEncodingIsAnError() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "\uFEFFk=v\n".getBytes(StandardCharsets.UTF_8));
+
+        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main,
+                interpolator(Map.of(), Map.of()), FileConfigSource.Layers.NONE, declared(StandardCharsets.ISO_8859_1))
+                .read());
+
+        assertTrue(e.getMessage().contains("UTF-8 byte order mark"), e.getMessage());
+    }
+
+    @Test
+    public void utf16RejectionPointsAtTheSystemProperty() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "\uFEFFk=v\n".getBytes(StandardCharsets.UTF_16LE));
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("-Dwrapper.conf.encoding=UTF-16"), e.getMessage());
+    }
+
+    @Test
+    public void declaredUtf16IsAccepted() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "k=v\n".getBytes(StandardCharsets.UTF_16LE));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_16LE)).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 1)));
+    }
+
+    @Test
+    public void declaredUtf8SkipsTheByteOrderMark() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, ("\uFEFFk=v\n").getBytes(StandardCharsets.UTF_8));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_8)).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 1)));
+    }
+
     // ---- variables in include paths ----
 
     @Test
@@ -638,6 +734,10 @@ public class FileConfigSourceTest {
         Files.createDirectories(file.getParent());
         Files.writeString(file, content, StandardCharsets.UTF_8);
         return file.toAbsolutePath().normalize();
+    }
+
+    private static FileConfigSource.Encoding declared(java.nio.charset.Charset charset) {
+        return new FileConfigSource.Encoding(charset, "test.conf:7");
     }
 
     private static Interpolator interpolator(Map<String, String> systemProperties, Map<String, String> environment) {
