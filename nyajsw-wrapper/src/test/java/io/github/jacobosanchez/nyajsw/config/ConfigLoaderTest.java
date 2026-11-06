@@ -13,6 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import org.testng.annotations.AfterMethod;
@@ -327,6 +328,44 @@ public class ConfigLoaderTest {
                 config.warnings().toString());
         assertTrue(config.warnings().stream().noneMatch(w -> w.toString().contains("TopSecret123")),
                 config.warnings().toString());
+    }
+
+    @Test
+    public void secretsFromTheEnvironmentOrSystemPropertiesAreMaskedInCopies() throws IOException {
+        Path file = write("wrapper.conf", "wrapper.java.additional.1=-Dpassword=${env:wrapper.app.password}\n"
+                + "wrapper.java.additional.2=-Ddb=${sys:db.password}\n"
+                + "wrapper.java.additional.3=-Dagain=${wrapper.java.additional.1}\n"
+                + "wrapper.java.additional.4=-Dfallback=${other.password}\n"
+                + "wrapper.java.maxmemory=${env:wrapper.app.password}\n");
+
+        LoadedConfig config = loader(Map.of("db.password", "DbSecret456"),
+                Map.of("wrapper.app.password", "TopSecret123", "other.password", "Other789")).load(file);
+        String dump = ConfigDump.render(ConfigKeys.registry(), config);
+        ConfigValidator.Result validation = new ConfigValidator(ConfigKeys.registry()).validate(config);
+
+        assertEquals(config.externalSecrets(),
+                Set.of(new Secret("TopSecret123"), new Secret("DbSecret456"), new Secret("Other789")));
+        assertFalse(config.externalSecrets().toString().contains("TopSecret123"), "Secret masks its toString");
+        assertTrue(dump.contains("wrapper.java.additional.1 = -Dpassword=****"), dump);
+        assertTrue(dump.contains("wrapper.java.additional.2 = -Ddb=****"), dump);
+        assertTrue(dump.contains("wrapper.java.additional.3 = -Dagain=-Dpassword=****"), dump);
+        assertTrue(dump.contains("wrapper.java.additional.4 = -Dfallback=****"), dump);
+        assertFalse(dump.contains("TopSecret123") || dump.contains("DbSecret456") || dump.contains("Other789"), dump);
+        assertTrue(validation.warnings().stream().anyMatch(w -> w.message().contains("'****'")),
+                validation.warnings().toString());
+        assertTrue(validation.warnings().stream().noneMatch(w -> w.toString().contains("TopSecret123")),
+                validation.warnings().toString());
+        assertFalse(config.toString().contains("TopSecret123"), config.toString());
+    }
+
+    @Test
+    public void environmentValuesUnderOrdinaryNamesAreNotTreatedAsSecrets() throws IOException {
+        Path file = write("wrapper.conf", "wrapper.java.additional.1=-Dhome=${env:APP_HOME}\n");
+
+        LoadedConfig config = loader(Map.of(), Map.of("APP_HOME", "C:/app")).load(file);
+
+        assertTrue(config.externalSecrets().isEmpty());
+        assertTrue(ConfigDump.render(ConfigKeys.registry(), config).contains("-Dhome=C:/app"));
     }
 
     @Test

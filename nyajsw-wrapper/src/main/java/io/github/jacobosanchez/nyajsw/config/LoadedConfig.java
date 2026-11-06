@@ -26,16 +26,21 @@ import java.util.Set;
  * @param file     the main configuration file, absolute
  * @param entries  the effective entries, one per key, in the order above, unmodifiable
  * @param layers   the layer of each entry's value, by key, unmodifiable
- * @param warnings everything worth telling the operator so far, in the order raised, unmodifiable
+ * @param warnings        everything worth telling the operator so far, in the order raised, unmodifiable
+ * @param externalSecrets secret values that entered the configuration through <code>${...}</code> from
+ *                        system properties or environment variables with secret names; they are no
+ *                        entries, but {@link SecretMasker} hides their copies too. {@link Secret}s,
+ *                        so they never show by accident.
  */
 public record LoadedConfig(Path file, List<ConfigEntry> entries, Map<String, ConfigLayer> layers,
-        List<ConfigWarning> warnings) {
+        List<ConfigWarning> warnings, Set<Secret> externalSecrets) {
 
     public LoadedConfig {
         Objects.requireNonNull(file, "file");
         entries = List.copyOf(entries);
         layers = Map.copyOf(layers);
         warnings = List.copyOf(warnings);
+        externalSecrets = Set.copyOf(externalSecrets);
         Set<String> keys = new HashSet<>();
         for (ConfigEntry entry : entries) {
             if (!keys.add(entry.key())) {
@@ -45,6 +50,12 @@ public record LoadedConfig(Path file, List<ConfigEntry> entries, Map<String, Con
         if (!keys.equals(layers.keySet())) {
             throw new IllegalArgumentException("entries and layers name different keys");
         }
+    }
+
+    /** A configuration with no secrets from outside it. */
+    public LoadedConfig(Path file, List<ConfigEntry> entries, Map<String, ConfigLayer> layers,
+            List<ConfigWarning> warnings) {
+        this(file, entries, layers, warnings, Set.of());
     }
 
     /** The effective entry for {@code key}, if any layer sets it. */
