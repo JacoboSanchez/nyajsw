@@ -26,6 +26,7 @@ import static io.github.jacobosanchez.nyajsw.config.Unverified.MEANING;
 import static io.github.jacobosanchez.nyajsw.config.Unverified.NAME;
 import static io.github.jacobosanchez.nyajsw.config.Unverified.VALUES;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -45,8 +46,8 @@ import java.util.List;
 public final class ConfigKeys {
 
     private static final String P9_BACKLOG = "P9";
-    private static final List<String> LOG_LEVELS = List.of("NONE", "FATAL", "ERROR", "STATUS", "INFO", "DEBUG");
-    private static final List<String> EXIT_ACTIONS = List.of("RESTART", "SHUTDOWN", "STOP");
+    private static final List<String> LOG_LEVELS = names(LogLevel.class);
+    private static final List<String> EXIT_ACTIONS = names(ExitAction.class);
 
     // ---- configuration file ----
 
@@ -223,7 +224,7 @@ public final class ConfigKeys {
     public static final KeySpec CONTROL = yajsw("wrapper.control", ENUM, LIFECYCLE)
             .status(PLANNED, "P3")
             .description("Coupling between the lifetimes of the wrapper and the application")
-            .values(List.of("TIGHT", "LOOSE", "APPLICATION", "WRAPPER"))
+            .values(names(ControlMode.class))
             .defaultValue("TIGHT")
             .toVerify(DEFAULT)
             .build();
@@ -344,7 +345,7 @@ public final class ConfigKeys {
     public static final KeySpec FILTER_ACTION = nyajsw("wrapper.filter.action.<n>", ENUM, LIFECYCLE)
             .status(PLANNED, P9_BACKLOG)
             .description("Action when wrapper.filter.trigger.<n> matches")
-            .values(List.of("RESTART", "SHUTDOWN"))
+            .values(names(FailureAction.class))
             .build();
 
     public static final KeySpec STOP_STRATEGY = nyajsw("wrapper.stop.strategy", LIST, LIFECYCLE)
@@ -390,7 +391,7 @@ public final class ConfigKeys {
     public static final KeySpec LOGFILE_ROLLMODE = yajsw("wrapper.logfile.rollmode", ENUM, LOGGING)
             .status(PLANNED, "P4")
             .description("When the log file rolls")
-            .values(List.of("NONE", "SIZE", "DATE", "SIZE_OR_DATE"))
+            .values(names(RollMode.class))
             .toVerify(VALUES)
             .build();
 
@@ -463,7 +464,7 @@ public final class ConfigKeys {
     public static final KeySpec NTSERVICE_STARTTYPE = yajsw("wrapper.ntservice.starttype", ENUM, SERVICE)
             .status(PLANNED, "P5")
             .description("Start type of the service")
-            .values(List.of("AUTO_START", "DEMAND_START", "DELAYED_AUTO_START", "DISABLED"))
+            .values(names(StartType.class))
             .alias("DELAY_START", "DELAYED_AUTO_START")
             .defaultValue("AUTO_START")
             .build();
@@ -590,7 +591,7 @@ public final class ConfigKeys {
     public static final KeySpec LIVENESS_TYPE = nyajsw("wrapper.liveness.type", LIST, PROBES)
             .status(PLANNED, "P7")
             .description("Liveness probes checked while the application runs")
-            .derivedDefault("agent when wrapper.agent.enabled is true, otherwise none (D16)")
+            .derivedDefault("agent when wrapper.agent.enabled is true (from P7), otherwise none (D16)")
             .build();
 
     public static final KeySpec LIVENESS_INTERVAL = nyajsw("wrapper.liveness.interval", DURATION, PROBES)
@@ -608,7 +609,7 @@ public final class ConfigKeys {
     public static final KeySpec LIVENESS_ACTION = nyajsw("wrapper.liveness.action", ENUM, PROBES)
             .status(PLANNED, "P7")
             .description("Action when the liveness probes keep failing")
-            .values(List.of("RESTART", "SHUTDOWN"))
+            .values(names(FailureAction.class))
             .defaultValue("RESTART")
             .build();
 
@@ -709,6 +710,11 @@ public final class ConfigKeys {
             JMX_RMI_PORT, JMX_RMI_USER, JMX_RMI_PASSWORD));
 
     private ConfigKeys() {
+    }
+
+    /** The configuration values of an enumeration key, declared once by its Java enum. */
+    private static List<String> names(Class<? extends Enum<?>> type) {
+        return Arrays.stream(type.getEnumConstants()).map(Enum::name).toList();
     }
 
     /** The registry of every key declared above, in documentation order. */

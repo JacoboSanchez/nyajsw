@@ -71,7 +71,7 @@ public final class ConfigValidator {
                     && !ValueParser.isUnset(spec, entry.value())) {
                 Optional<String> problem = valueProblem(spec, entry, masker);
                 if (problem.isPresent()) {
-                    if (spec.status() == KeyStatus.SUPPORTED) {
+                    if (spec.status().takesEffect()) {
                         errors.put(position, new ConfigException(entry.location(), problem.get()));
                     } else {
                         warnings.add(new ConfigWarning(entry.location(), problem.get()));

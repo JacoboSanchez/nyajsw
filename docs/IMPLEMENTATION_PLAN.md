@@ -167,12 +167,12 @@ older JVMs than the wrapper requires.
 |---|---|---|
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
 | `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode` |
-| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records), `ConfigException`, `ConfigWarning` |
+| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
 | `launch` | Build the application command line and run it. | `JavaCommandBuilder` (with a secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
-| `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitAction` (enum `RESTART`/`SHUTDOWN`/`STOP`), `ExitActionResolver`, `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
+| `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
-| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog`, `LogLevel`, `LogFormat`, `RollingFileHandler` |
+| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`), `LogFormat`, `RollingFileHandler` |
 | `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (factory), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) |
 | `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
@@ -342,8 +342,26 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   property warns, known key or not. `SecretMasker` hides secret
   values wherever they appear, including copies made by `${...}`, and `ConfigDump` is the only
   sanctioned rendering of values.
-* **Typed views**: `WrapperConfig` exposes `JavaConfig`, `ServiceConfig`, `LogConfig`,
-  `LifecycleConfig`, `ProbeConfig` records. Nothing outside `config` reads raw strings.
+* **Typed views** (P1.6b): `WrapperConfig.from(LoadedConfig)` validates and exposes `JavaConfig`,
+  `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` records. Nothing outside `config`
+  reads raw strings. A value that is unset or does not fit falls back to the constant default;
+  derived defaults are computed here (working directory = configuration directory, service name =
+  simple name of the main class, stop strategies and liveness from `wrapper.agent.enabled` once the
+  agent is implemented; while that key is only planned it has no effect, so the defaults are
+  `terminate` and no liveness probe, as P3.4 expects), except
+  the Java executable, whose default depends on the platform and is resolved in P2.2 (a bare name
+  such as `java` stays for a `PATH` lookup). Paths are absolute: the working directory against the
+  configuration directory, application-side paths (jar, library path, image, a command with a
+  directory, and classpath entries in P2.3) against the working directory, wrapper-side paths
+  (log file, pid files, temporary directory, probe files) against the configuration directory
+  (D13); classpath entries stay text for wildcard expansion. An empty text value counts as not set
+  (`ConfigValues.text`), so derived defaults apply; list families skip empty members. Account names
+  undo doubled backslashes like paths (`DOMAIN\\svc`). Exit codes: one action per code, the last
+  spelling in file order winning; codes 2^31..2^32-1 map to the negative `int` Java reports; code 0
+  only from `wrapper.on_exit.0`. Odd but harmless input (other spellings of 0, environment names
+  that differ only in case) always warns; a value problem found here (invalid path, code out of
+  range) is an error once the key takes effect (`KeyStatus.takesEffect`), a warning before. Passwords are
+  `Secret`s and the records' `toString()` hides values, so only `ConfigDump` shows them.
 * Relative paths resolve against the configuration file's directory unless the key says otherwise
   (D13).
 
@@ -505,13 +523,14 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       fatal key handling (default-layer entries skipped); value types (`ValueParser`); secret set
       by a system property warns; secret masking in dumps, including values copied by `${...}`
       (`SecretMasker`, `ConfigDump`).
-- [ ] P1.6b Typed `WrapperConfig` records (`JavaConfig`, `ServiceConfig`, `LogConfig`,
+- [x] P1.6b Typed `WrapperConfig` records (`JavaConfig`, `ServiceConfig`, `LogConfig`,
       `LifecycleConfig`, `ProbeConfig`) built from a validated `LoadedConfig`, with derived defaults
       and relative paths resolved against the configuration directory (D13). Decide per family
       what a repeated index means (lists keep both; exit codes and filter triggers need one value
       per number, joined through `KeyCollector.Member.numbers()`), and warn when a
       `wrapper.on_exit.<code>` member is 0 written differently (`00`, `-0`), since the exact
-      `wrapper.on_exit.0` carries the default.
+      `wrapper.on_exit.0` carries the default. (Filter triggers, which pair `trigger.<n>` with
+      `action.<n>` by number, are unsupported until P9 and get their typed view then.)
 - [ ] P1.7 `docs/COMPATIBILITY.md` generator + staleness test (`-Dnyajsw.docs.update=true`
       rewrites). The registry is already seeded from §7 (P1.2); this item only generates the
       document from it and retires the hand-written §7 tables.
@@ -525,7 +544,9 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       note that nyajsw's constant defaults are visible to `${...}`, which YAJSW's in-code defaults
       probably are not; confirm the accepted boolean spellings (P1.6a accepts `yes/no/on/off`) and
       the doubled-backslash rule for paths, and whether numbers may be written in hex (`0x10`,
-      rejected today); update §4.5.
+      rejected today), and whether YAJSW skips empty list members such as `wrapper.app.parameter.2=`
+      (P1.6b skips them), whether account names really need doubled backslashes (P1.6b undoes them),
+      and the path bases of D13; update §4.5.
 Done when: every fixture present in the repository loads; every §7 key has a registry entry and a
 test.
 
@@ -554,7 +575,7 @@ captured on Linux and Windows.
 Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake clock/process.
 - [ ] P3.1 `Supervisor` state machine and `State` transitions (table-driven tests), including
       "no exit actions while `STOPPING`".
-- [ ] P3.2 `ExitAction`/`ExitActionResolver` and `RestartPolicy` (`restart.delay`,
+- [ ] P3.2 `ExitActionResolver` (on `config.ExitAction` / `LifecycleConfig.exitAction`) and `RestartPolicy` (`restart.delay`,
       `max_failed_invocations`, `successful_invocation_time`), `wrapper.control`.
 - [ ] P3.3 `Probe` SPI, `ProbeContext`/`ProbeResult`, `ProbeRegistry`, `ProbeRunner` and
       `ProcessProbe`; `wrapper.startup.timeout` bounds readiness.
@@ -664,12 +685,19 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.2: `KeyPattern.commonExample` only finds overlaps with one segment per placeholder; free
   placeholders that span several segments in different shapes can still overlap undetected. No
   declared key is affected; revisit if a template with two free placeholders is added.
+- P1.6b: no range checks: `wrapper.java.maxmemory=-5`, `wrapper.readiness.tcp.port=70000` or
+  `wrapper.liveness.failures=0` are accepted. Add min/max to `KeySpec` (checked by `ValueParser`)
+  when the consuming phases implement those keys.
+- P1.6b: `ProbeConfig` is one flat record; P7 should split it into per-probe settings registered
+  with the probe types (AGENTS.md §4.4), and move `wrapper.ping.*` there from `LifecycleConfig`
+  (D16). P7 must also keep the agent's derived defaults off when `wrapper.image` runs a non-Java
+  executable.
+- P1.6b: what an empty `wrapper.app.env.X=` means (set to empty, or remove an inherited variable) is
+  open; decide in P2.4.
 - P1.6a: `SecretMasker` hides secrets by matching their text, so a short or common secret also masks
   unrelated text and the mask's position can hint at it (password `Java` shows as `C:\****\bin`).
   Tracking during interpolation which values were built from secret keys (or from names a secret
   referred to) would avoid both; do it if real configurations show the problem.
-- P1.4: `wrapper.app.env.PATH` and `wrapper.app.env.Path` are collected as two variables without a
-  warning, though Windows treats them as one; warn in P1.6b or P2.4 when building the environment.
 - P1.3: no bound on interpolation depth or expanded size; a very long reference chain overflows the
   stack and doubling chains grow exponentially. Low risk (files are written by administrators); add
   limits if real configurations show the need.
@@ -817,7 +845,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
 | D11 | groupId and base package `io.github.jacobosanchez.nyajsw` | Matches the GitHub owner; Maven Central-compatible | Proposed (§10 Q2) |
 | D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.java.additional.N` + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
-| D13 | Relative paths and default working directory resolve against the configuration file's directory | Services start in `System32`; configuration-relative is predictable | Proposed (verify YAJSW) |
+| D13 | The default working directory and relative wrapper-side paths (log file, pid files, temporary directory, probe files) resolve against the configuration file's directory; relative application-side paths (jar, library path, image, a Java command with a directory, classpath entries) resolve against the working directory, as the application sees them (P1.6b) | Services start in `System32`; configuration-relative is predictable for the wrapper, while the application's own paths must agree with what the child JVM resolves (usual YAJSW layout: `conf/wrapper.conf` with `wrapper.working.dir=..`) | Proposed (verify YAJSW, P1.9) |
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
 | D15 | Probe SPI, probe registry and stop-strategy registry are introduced in P3 with `process`/`terminate`; later probes and strategies are additions | Avoid rewriting the supervisor when P7 lands | Accepted |
 | D16 | Default liveness probe is `agent` when the agent is enabled (`wrapper.ping.*` semantics), none otherwise | YAJSW pings by default; keep behaviour parity without forcing the agent | Proposed |

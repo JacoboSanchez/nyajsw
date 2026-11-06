@@ -1,0 +1,146 @@
+package io.github.jacobosanchez.nyajsw.config;
+
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.CONTROL;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JAVA_PIDFILE;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.MAX_FAILED_INVOCATIONS;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT_0;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT_DEFAULT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PIDFILE;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_INTERVAL;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_TIMEOUT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.RESTART_DELAY;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.SHUTDOWN_TIMEOUT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STARTUP_TIMEOUT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STOP_COMMAND;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STOP_STRATEGY;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.SUCCESSFUL_INVOCATION_TIME;
+
+import java.math.BigInteger;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.TreeMap;
+
+/**
+ * Supervision as configured (plan §4.6).
+ *
+ * @param control                  {@code wrapper.control}
+ * @param exitActions              action per exit code, from {@code wrapper.on_exit.<code>} and
+ *                                 {@code wrapper.on_exit.0}, sorted by code; code 0 is always present
+ * @param defaultExitAction        {@code wrapper.on_exit.default}, for codes not in the map
+ * @param restartDelay             {@code wrapper.restart.delay}, if set
+ * @param maxFailedInvocations     {@code wrapper.max_failed_invocations}
+ * @param successfulInvocationTime {@code wrapper.successful_invocation_time}
+ * @param startupTimeout           {@code wrapper.startup.timeout}
+ * @param shutdownTimeout          {@code wrapper.shutdown.timeout}
+ * @param pidFile                  {@code wrapper.pidfile}, if set
+ * @param javaPidFile              {@code wrapper.java.pidfile}, if set
+ * @param stopStrategies           {@code wrapper.stop.strategy}; by default {@code agent,terminate} when
+ *                                 the agent is in effect ({@link ProbeConfig#agentInEffect}), else
+ *                                 {@code terminate}
+ * @param stopCommand              {@code wrapper.stop.command}, if set
+ * @param pingInterval             {@code wrapper.ping.interval}, if set
+ * @param pingTimeout              {@code wrapper.ping.timeout}, if set
+ */
+public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exitActions, ExitAction defaultExitAction,
+        Optional<Duration> restartDelay, int maxFailedInvocations, Duration successfulInvocationTime,
+        Duration startupTimeout, Duration shutdownTimeout, Optional<Path> pidFile, Optional<Path> javaPidFile,
+        List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
+        Optional<Duration> pingTimeout) {
+
+    public LifecycleConfig {
+        Objects.requireNonNull(control, "control");
+        exitActions = Collections.unmodifiableMap(new TreeMap<>(exitActions));
+        Objects.requireNonNull(defaultExitAction, "defaultExitAction");
+        Objects.requireNonNull(restartDelay, "restartDelay");
+        Objects.requireNonNull(successfulInvocationTime, "successfulInvocationTime");
+        Objects.requireNonNull(startupTimeout, "startupTimeout");
+        Objects.requireNonNull(shutdownTimeout, "shutdownTimeout");
+        Objects.requireNonNull(pidFile, "pidFile");
+        Objects.requireNonNull(javaPidFile, "javaPidFile");
+        stopStrategies = List.copyOf(stopStrategies);
+        Objects.requireNonNull(stopCommand, "stopCommand");
+        Objects.requireNonNull(pingInterval, "pingInterval");
+        Objects.requireNonNull(pingTimeout, "pingTimeout");
+    }
+
+    /**
+     * Hides values: free text such as parameters, commands or URLs can contain a secret copied in
+     * with <code>${...}</code>. {@link ConfigDump} is the sanctioned way to show values.
+     */
+    @Override
+    public String toString() {
+        return "LifecycleConfig[values hidden; see ConfigDump]";
+    }
+
+    /** The action for {@code exitCode}. */
+    public ExitAction exitAction(int exitCode) {
+        return exitActions.getOrDefault(exitCode, defaultExitAction);
+    }
+
+    static LifecycleConfig from(ConfigValues values, boolean agentInEffect) {
+        List<String> stopStrategies = values.list(STOP_STRATEGY);
+        return new LifecycleConfig(
+                values.required(values.enumeration(CONTROL, ControlMode.class), CONTROL),
+                exitActions(values),
+                values.required(values.enumeration(ON_EXIT_DEFAULT, ExitAction.class), ON_EXIT_DEFAULT),
+                values.duration(RESTART_DELAY),
+                values.required(values.integer(MAX_FAILED_INVOCATIONS), MAX_FAILED_INVOCATIONS),
+                values.required(values.duration(SUCCESSFUL_INVOCATION_TIME), SUCCESSFUL_INVOCATION_TIME),
+                values.required(values.duration(STARTUP_TIMEOUT), STARTUP_TIMEOUT),
+                values.required(values.duration(SHUTDOWN_TIMEOUT), SHUTDOWN_TIMEOUT),
+                values.path(PIDFILE),
+                values.path(JAVA_PIDFILE),
+                stopStrategies.isEmpty() ? defaultStopStrategies(agentInEffect) : stopStrategies,
+                values.text(STOP_COMMAND),
+                values.duration(PING_INTERVAL),
+                values.duration(PING_TIMEOUT));
+    }
+
+    /** The derived default of {@code wrapper.stop.strategy}, as its registry description states. */
+    static List<String> defaultStopStrategies(boolean agentInEffect) {
+        return agentInEffect ? List.of("agent", "terminate") : List.of("terminate");
+    }
+
+    /**
+     * Windows exit codes are unsigned 32-bit values that Java reports as {@code int}: 3221225477
+     * (0xC0000005) arrives as -1073741819, so codes from 2^31 to 2^32-1 are mapped the same way.
+     */
+    static BigInteger asExitCode(BigInteger number) {
+        boolean unsigned32 = number.signum() > 0 && number.bitLength() == 32;
+        return unsigned32 ? BigInteger.valueOf(number.intValue()) : number;
+    }
+
+    /**
+     * One action per exit code. A code written twice ({@code 7} and {@code 07}) keeps the last one in
+     * file order; the collector has warned. Code 0 comes from the exact {@code wrapper.on_exit.0}
+     * (which has a default), so another spelling of 0 is ignored with a warning.
+     */
+    private static Map<Integer, ExitAction> exitActions(ConfigValues values) {
+        Map<Integer, ExitAction> actions = new TreeMap<>();
+        for (KeyCollector.Member member : values.family(ON_EXIT)) {
+            BigInteger number = member.numbers().get(0);
+            if (number.signum() == 0) {
+                values.warn(member.entry().location(), member.key() + " means exit code 0, which "
+                        + ON_EXIT_0.name() + " sets; write that key instead. Ignored");
+                continue;
+            }
+            Optional<Integer> code = values.intNumber(ON_EXIT, member, asExitCode(number));
+            if (code.isEmpty() || ValueParser.isUnset(ON_EXIT, member.value())) {
+                continue;
+            }
+            try {
+                actions.put(code.get(), Enum.valueOf(ExitAction.class, ValueParser.parseEnum(ON_EXIT, member.value())));
+            } catch (IllegalArgumentException e) {
+                // Reported by ConfigValidator; the default action applies to this code.
+            }
+        }
+        actions.put(0, values.required(values.enumeration(ON_EXIT_0, ExitAction.class), ON_EXIT_0));
+        return actions;
+    }
+}
