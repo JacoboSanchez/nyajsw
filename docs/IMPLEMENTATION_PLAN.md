@@ -180,7 +180,7 @@ older JVMs than the wrapper requires.
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
-| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`), `LogFormat`, `RollingFileHandler` |
+| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (fixed layout until P4), `LogFormat`, `RollingFileHandler` |
 | `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (factory), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) |
 | `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
@@ -717,7 +717,16 @@ Done when: every fixture present in the repository loads; every key of the forme
 
 ### P2 — Application launcher
 Goal: build and run the application command line exactly as the configuration says.
-- [ ] P2.1 `WrapperLog` facade with `LogLevel` and a console sink (file handler comes in P4).
+- [x] P2.1 `WrapperLog` facade with `LogLevel` and a console sink (file handler comes in P4).
+      Instances are passed around, never looked up statically, and are immutable: P4.1 builds a
+      bootstrap log and then a new configured one, it does not reconfigure in place. Each sits on
+      an anonymous `java.util.logging` logger, so no global logging configuration (nor
+      `LogManager.reset()`) reaches it. Every sink has its own threshold (console now, the file's
+      in P4) and the logger passes what the most verbose one wants. `forSource("jvm 1")` gives a
+      view for captured application output (P2.4) on the same sinks. The console sink writes to
+      standard output (YAJSW's console), never closes it, and reports formatting failures to its
+      error manager instead of the caller; lines use YAJSW's default console format `PM` (source
+      padded, `|`, message) plus any stack trace until `wrapper.console.format` arrives (P4.2).
 - [ ] P2.2 `JavaCommandBuilder`: `wrapper.java.command` resolution (default: `java`/`javaw` of the
       wrapper's `java.home`; `wrapper.java.command.javaw`), `-Xms/-Xmx` from
       `wrapper.java.initmemory/maxmemory`, `wrapper.java.additional.N`, `-Djava.library.path` from
