@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.jacobosanchez.nyajsw</groupId>
+    <artifactId>nyajsw-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>nyajsw</name>
+    <description>A clean-room Java 21 service wrapper, configuration-compatible with YAJSW.</description>
+    <url>https://github.com/JacoboSanchez/nyajsw</url>
+
+    <licenses>
+        <license>
+            <name>Apache-2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm>
+        <url>https://github.com/JacoboSanchez/nyajsw</url>
+        <connection>scm:git:https://github.com/JacoboSanchez/nyajsw.git</connection>
+    </scm>
+
+    <modules>
+        <module>nyajsw-agent</module>
+        <module>nyajsw-wrapper</module>
+        <module>nyajsw-dist</module>
+    </modules>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <!-- Fixed timestamp for reproducible jars; bump on release. -->
+        <project.build.outputTimestamp>2026-11-06T00:00:00Z</project.build.outputTimestamp>
+
+        <!-- Wrapper and dist target Java 21; nyajsw-agent overrides this with 8 (plan D2). -->
+        <maven.compiler.release>21</maven.compiler.release>
+
+        <!-- Toolchain floors checked by the enforcer. -->
+        <nyajsw.java.minimum>21</nyajsw.java.minimum>
+        <nyajsw.maven.minimum>3.9</nyajsw.maven.minimum>
+
+        <!-- TestNG groups excluded by default; the windows-integration profile clears this. -->
+        <nyajsw.test.excludedGroups>windows-integration</nyajsw.test.excludedGroups>
+        <!-- Extended by the Mockito agent below; modules may append their own options. -->
+        <argLine/>
+
+        <!-- Dependency versions (plan D4/D5). -->
+        <jna.version>5.19.1</jna.version>
+        <testng.version>7.12.0</testng.version>
+        <mockito.version>5.24.0</mockito.version>
+
+        <!-- Plugin versions. -->
+        <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
+        <maven-resources-plugin.version>3.5.0</maven-resources-plugin.version>
+        <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
+        <!-- 3.5.x: the newest line that ships surefire-testng (3.6.x only runs TestNG via JUnit Platform). -->
+        <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
+        <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
+        <maven-install-plugin.version>3.2.0</maven-install-plugin.version>
+        <maven-deploy-plugin.version>3.2.0</maven-deploy-plugin.version>
+        <maven-enforcer-plugin.version>3.7.0</maven-enforcer-plugin.version>
+        <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.github.jacobosanchez.nyajsw</groupId>
+                <artifactId>nyajsw-agent</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.jacobosanchez.nyajsw</groupId>
+                <artifactId>nyajsw-wrapper</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna-platform</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testng</groupId>
+                <artifactId>testng</artifactId>
+                <version>${testng.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- Test-only dependencies shared by every module. The surefire argLine below references the
+         Mockito jar, so every module must have it on its test classpath. Test scope never reaches
+         the packaged artifacts, so the agent stays dependency-free at runtime. -->
+    <dependencies>
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>${maven-clean-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <version>${maven-resources-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compiler-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven-surefire-plugin.version}</version>
+                    <dependencies>
+                        <!-- Use the native TestNG provider explicitly rather than auto-detection. -->
+                        <dependency>
+                            <groupId>org.apache.maven.surefire</groupId>
+                            <artifactId>surefire-testng</artifactId>
+                            <version>${maven-surefire-plugin.version}</version>
+                        </dependency>
+                    </dependencies>
+                    <configuration>
+                        <excludedGroups>${nyajsw.test.excludedGroups}</excludedGroups>
+                        <!-- Load Mockito's inline mock maker as an agent at JVM start instead of
+                             attaching it dynamically, which JDK 21 warns about (JEP 451).
+                             -Xshare:off silences the CDS warning caused by the agent appending to
+                             the bootstrap class path. TestNG logs through SLF4J without a provider;
+                             slf4j.internal.verbosity hides the resulting "no providers" notice.
+                             The Mockito jar path is set by dependency:properties in the initialize
+                             phase, so run tests through a lifecycle phase (mvn test / verify), not by
+                             invoking surefire:test directly. -->
+                        <argLine>@{argLine} -Xshare:off -javaagent:${org.mockito:mockito-core:jar} -Dslf4j.internal.verbosity=ERROR</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>${maven-jar-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-install-plugin</artifactId>
+                    <version>${maven-install-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-deploy-plugin</artifactId>
+                    <version>${maven-deploy-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>${maven-enforcer-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>${maven-dependency-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-toolchain</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[${nyajsw.java.minimum},)</version>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[${nyajsw.maven.minimum},)</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- Exposes ${org.mockito:mockito-core:jar} (the jar's path) for the surefire argLine. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>dependency-paths</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <!-- Runs the tests that talk to the real Windows SCM. Needs an elevated Windows shell. -->
+            <id>windows-integration</id>
+            <properties>
+                <nyajsw.test.excludedGroups/>
+            </properties>
+        </profile>
+    </profiles>
+</project>
