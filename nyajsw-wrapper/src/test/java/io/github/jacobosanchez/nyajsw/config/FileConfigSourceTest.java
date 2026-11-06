@@ -95,7 +95,7 @@ public class FileConfigSourceTest {
 
     @Test
     public void rejectsNulBytesWithoutByteOrderMark() throws IOException {
-        Path file = dir.resolve("nul.conf");
+        Path file = dir.resolve("nul-bytes.conf");
         Files.write(file, "a\u0000=\u00001".getBytes(StandardCharsets.UTF_8));
 
         ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(file).read());
