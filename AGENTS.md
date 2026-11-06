@@ -170,7 +170,7 @@ Rules:
 
 ### 4.6 Configuration compatibility rules
 
-* Never rename or remove a YAJSW key. Accept documented aliases (e.g. `DELAYED_AUTO_START` and
+* Never rename or remove a YAJSW key. Accept well-known aliases (e.g. `DELAYED_AUTO_START` and
   `DELAY_START`).
 * **All keys are declared once** in the key registry (`config.ConfigKeys`): name or pattern, type,
   default, origin (`YAJSW` or `NYAJSW`), support status, one-line description. Parsing, validation,

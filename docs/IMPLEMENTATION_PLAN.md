@@ -53,7 +53,7 @@ can mean "the application actually answers", not just "a process exists".
 
 ### Non-goals (for now)
 
-* POSIX daemons (`wrapper.daemon.*`, `wrapper.update_rc`). The platform abstraction leaves the door
+* POSIX daemons (`wrapper.daemon.*`, `wrapper.launchd.dir`). The platform abstraction leaves the door
   open; nothing else is designed for it yet.
 * System tray, Groovy scripting/filters, JMX remote console, web console, running the application
   under a different user than the service (`wrapper.app.account`).
@@ -117,8 +117,14 @@ the key registry so divergences are visible.
 * No in-JVM bootstrap class (`wrapper.java.mainclass=…WrapperJVMMain`). nyajsw uses a tiny
   `-javaagent` instead (§4.7), which can be disabled; the application `main` is never wrapped.
 * Readiness is probe-based; `RUNNING` is reported to the SCM only when the configured probes pass.
-* Extensions (probes, stop strategies, wrapper-JVM options, filter actions; YAJSW already has keys
-  for the last two, P1.10) are new `wrapper.*`
+* The service JVM defaults to the installing JVM's `javaw.exe` (D12), not to the application's Java
+  command as YAJSW's `wrapper.ntservice.java.command` does, because the wrapper needs Java 21.
+* `${...}` is resolved again at every service start; YAJSW stores the values resolved at install
+  time (`wrapper.save_interpolated`, default `true`), so a variable that changed since then now
+  takes effect.
+* `wrapper.ntservice.autoreport.startup=false` (wait for the application to report through
+  YAJSW's API) is not honoured; readiness probes take that role.
+* Extensions (probes, stop strategies) are new `wrapper.*`
   keys tagged as nyajsw extensions in the matrix.
 
 ## 4. Architecture
@@ -168,13 +174,13 @@ older JVMs than the wrapper requires.
 | Package | Responsibility | Key types |
 |---|---|---|
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
-| `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode` |
+| `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode`, `ConsoleMode` (P2.5; the supervisor takes over in P3.6) |
 | `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `CompatibilityDocument`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
-| `launch` | Build the application command line and run it. | `JavaCommandBuilder` (with a secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
+| `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
-| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`), `LogFormat`, `RollingFileHandler` |
+| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (fixed layout until P4), `LogFormat`, `RollingFileHandler` |
 | `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (factory), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) |
 | `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
@@ -228,7 +234,7 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   `ServiceCommandLine` (D12):
 
   ```
-  "<java.home>\bin\javaw.exe" <wrapper.ntservice.java.additional.N …> -Djna.tmpdir=<wrapper.tmp.path> -cp "<java.class.path of the installing JVM>" io.github.jacobosanchez.nyajsw.cli.Main --service "<absolute wrapper.conf>"
+  "<java.home>\bin\javaw.exe" <wrapper.ntservice.additional.N …> -Djna.tmpdir=<wrapper.tmp.path> -cp "<java.class.path of the installing JVM>" io.github.jacobosanchez.nyajsw.cli.Main --service "<absolute wrapper.conf>"
   ```
 
   `java.home` and the default classpath (`java.class.path`) are those of the JVM running `-i`, so the
@@ -285,16 +291,22 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   another charset is an error). A system property wins (UTF-16 or EBCDIC can only be given that
   way; set empty, it forces the detection); otherwise a lenient probe of the file finds its own
   declaration (last one wins, no variables), which must be ASCII-compatible, and the file and its
-  includes are read again with it and must still declare the same charset. Backslashes are **literal** except that
-  a line ending in an odd number of `\` continues on the next line (as in YAJSW's Commons
-  Configuration parser); blank and comment lines inside a continued value are skipped, as there.
-  So `C:\app\` must be written `C:\app\\` or `C:/app/`; a continuation line that looks like a new
-  `wrapper.*` entry gets a warning. Doubled backslashes in path-typed keys are normalised by
-  `ValueParser`: every `\\` becomes `\`, except a leading `\\` followed by another character, which
-  is a literal UNC or `\\?\` prefix (`\\server\share\\` gives `\\server\share\`); four leading
-  backslashes are its escaped form. Entries keep file and line (`ConfigLocation`) for messages; problems that do
-  not stop loading are `ConfigWarning`s. Several statements above (backslash handling, treatment of
-  `include`, encoding default) are unconfirmed against YAJSW itself; see the D7 note and P1.9.
+  includes are read again with it and must still declare the same charset. A line ending in an
+  odd number of `\` continues on the next line (as in YAJSW's Commons Configuration parser); blank
+  and comment lines inside a continued value are skipped, as there. So `C:\app\` must be written
+  `C:\app\\` or `C:/app/`; a continuation line that looks like a new `wrapper.*` entry gets a
+  warning. In every value read from a file (and in `include =` paths) a backslash before `\`, `,`,
+  `"`, `'`, a space or one of `# = : !` stands for that character, as in YAJSW's Commons
+  Configuration, which the owner's Denodo files show (`-Djava.locale.providers=COMPAT\,SPI`,
+  `C:/Denodo/9/VDP9.4b\\conf`, P1.9); every other backslash is literal: `\a` as in YAJSW, but also
+  `\t`, `\n`, `\r`, `\f`, `\b` and `\u` + four hex digits, which YAJSW reads as control
+  characters and Unicode escapes, so Windows paths such as `C:\temp` keep their meaning. Values from system
+  properties and the environment are taken as they are, as in YAJSW; plain `#include` paths too,
+  since the Tanuki format has no escapes. Path-typed keys then go through `ValueParser`'s tolerance
+  for doubled backslashes (`\\` becomes `\`, except a leading `\\` followed by another character,
+  a literal UNC or `\\?\` prefix). Entries keep file and line (`ConfigLocation`) for messages;
+  problems that do not stop loading are `ConfigWarning`s. The treatment of `include` and the
+  encoding default are still unconfirmed against YAJSW itself; see the D7 note and P1.9.
 * **Interpolation** (`Interpolator`): `${name}` resolved against, in order, keys in the
   configuration itself (YAJSW lets any key act as a variable, e.g. `JAVA_HOME=…` then
   `${JAVA_HOME}`), wrapper JVM system properties, environment variables (case-insensitive on
@@ -306,7 +318,8 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   at the `env:` prefix); a reference that resolves to nothing and looks like code (parentheses,
   quotes, `;`, braces, brackets, or a leading `if`/`new`/`def` and a space) → error naming Groovy as
   unsupported, so names such as `${env:ProgramFiles(x86)}` still work; code around a nested
-  reference (`${util.f("${x}")}`) is caught too. Nested references (`${a${b}}`) resolve only the
+  reference (`${util.f("${x}")}`) is caught too, and so is YAJSW's `${keystore name}` (P1.10),
+  which would otherwise end up as a password. Nested references (`${a${b}}`) resolve only the
   inner one, with a warning, and there is no escape syntax for a literal `${` (both unverified
   against YAJSW, P1.9). Interpolation runs on the merged entries (one per key, after layering,
   P1.5). Warnings never echo values; errors show the offending expression only for non-secret keys,
@@ -323,15 +336,28 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   both as a list; P1.9). Order: file entries at the position of their winning definition, a
   system-property override in the place of the entry it overrides, other system properties next in
   name order, defaults last. Include paths resolve `${key}` with the same layer order.
-* **Indexed and dynamic keys** (`KeyCollector`): `prefix.N` collected in numeric order, gaps
-  allowed; the same index written twice (`.7`, `.07`) keeps both in file order with a warning; free
+* **Indexed and dynamic keys** (`KeyCollector`): `prefix.N` collected in index order, gaps
+  allowed; an index is a number or a name, possibly dotted (`.3`, `.lib`, `.2.1`), as YAJSW's
+  reference allows, and indices sort by `IndexOrder`: digit runs by value and before other text,
+  which compares by character, so `1 < 5 < ab5 < ab12 < lib` (the reference's own example) and
+  `2 < 2.1 < 2.10 < 3` (P1.11); the same index written twice (`.7`, `.07`) keeps both in file order
+  with a warning; free
   placeholders (`wrapper.app.env.<variable>`) keep file order; a key belongs to the family the
   registry resolves it to, so the exact `wrapper.on_exit.0` is not a `wrapper.on_exit.<code>` member;
   `wrapper.app.env.<KEY>`, `wrapper.on_exit.<code>`, `wrapper.filter.trigger.N` handled by
-  `KeySpec` patterns (`KeyPattern` templates: `<n>` matches an index, `<code>` a signed exit code,
-  any other `<label>` one or more non-empty segments; an exact name wins over a template, then more
-  literal characters win, then numeric placeholders over free ones; the registry rejects two equally
-  specific templates that can match the same key, and declarations another one shadows).
+  `KeySpec` patterns (`KeyPattern` templates: `<n>` matches an index (segments of letters, digits,
+  `_` and `-`), `<code>` a signed exit code, any other `<label>` one or more non-empty segments; an
+  exact name wins over a template, then more literal characters win, then index and exit-code
+  placeholders over free ones; the registry rejects two equally specific templates that can match
+  the same key, and declarations another one shadows). Because an index may be a name, a key such as
+  `wrapper.java.additional.1.stripquotes` would be a member of `wrapper.java.additional.<n>`; the
+  Tanuki keys of that shape (`*.stripquotes`, `wrapper.java.additional.auto_bits*`,
+  `wrapper.java.classpath.use_environment`/`missing_log_level`,
+  `wrapper.java.library.path.append_system_path`) are declared as unsupported so that their own,
+  more specific declaration wins; they carry the `YAJSW` origin (`KeyOrigin` has no Tanuki value)
+  and say "Tanuki" in their description. `IndexOrder` always puts a digit run before text; YAJSW's
+  own comparator may differ for indices with `-` or `.` before digits and may not equate `07` and
+  `7`, which matters for no real file seen so far.
 * **Key registry** (`ConfigKeys`): every key declared once with name/pattern, type (string, int,
   duration-seconds, size, enum, path, boolean, list), default (a constant, or a derived default
   that depends on the resolved configuration or the environment, e.g. the stop-strategy and liveness
@@ -389,18 +415,18 @@ with `RESTART_WAIT` between invocations and `FAILED` when the restart policy giv
 
 * **Exit handling**: `wrapper.on_exit.<code>` / `wrapper.on_exit.default` → `RESTART`,
   `SHUTDOWN` (stop application and wrapper/service) or `STOP` (stop the application, keep the
-  wrapper alive). The registry's current default is `RESTART` for non-zero and `SHUTDOWN` for `0`,
-  but YAJSW documents `wrapper.on_exit.default=SHUTDOWN` (it names `SHUTDOWN`/`RESTART` for the
-  default and also documents `STOP`), so an application that exits with an error is not restarted
-  unless the file asks for it. YAJSW's change log also says that after `STOP` whether the wrapper
-  keeps running depends on `wrapper.control`, unlike the `STOP` above. Settle both in P1.10.
+  wrapper alive). Default, as YAJSW documents it: `SHUTDOWN` (`wrapper.on_exit.default`), so an
+  application that exits with an error is not restarted unless the file asks for it; the default
+  covers every code, 0 included, unless `wrapper.on_exit.<code>` (or the exact
+  `wrapper.on_exit.0`) sets one. YAJSW's change log says that after `STOP` whether the wrapper
+  keeps running depends on `wrapper.control`, unlike the `STOP` above; P3.2 settles that.
   Exit actions are **not** evaluated while the supervisor is `STOPPING`: an application that exits
   because we asked it to is never restarted.
-* **Restart policy**: `wrapper.restart.delay` (YAJSW default 5 s), `wrapper.max_failed_invocations`
-  (default 5, minimum 1), `wrapper.successful_invocation_time` (YAJSW default 60 s; the registry
-  still says 300 s, P1.10). An invocation that exits (or fails
-  readiness) before the successful-invocation time counts as failed; the counter resets after a
-  successful one. Exceeding the limit → `FAILED` → the service reports `STOPPED` with
+* **Restart policy**: `wrapper.restart.delay` (default 5 s), `wrapper.max_failed_invocations`
+  (default 5, minimum 1), `wrapper.successful_invocation_time` (default 60 s), all as YAJSW
+  documents them; `wrapper.startup.delay` (default 0) delays the first start. An invocation that
+  exits (or fails readiness) before the successful-invocation time counts as failed; the counter
+  resets after a successful one. Exceeding the limit → `FAILED` → the service reports `STOPPED` with
   `ERROR_SERVICE_SPECIFIC_ERROR`. Note that SCM recovery (failure actions) ignores a service that
   reports `STOPPED` unless `SERVICE_CONFIG_FAILURE_ACTIONS_FLAG` is set; nyajsw sets that flag
   whenever failure actions are configured (P9) and the migration guide explains the interplay (R6).
@@ -416,8 +442,8 @@ with `RESTART_WAIT` between invocations and `FAILED` when the restart policy giv
   3. `console` (backlog) — `GenerateConsoleCtrlEvent` on the shared console, with the wrapper
      shielded by `SetConsoleCtrlHandler`.
   4. `terminate` — always last, after `wrapper.shutdown.timeout` (default 30 s; YAJSW documents no
-     default and bounds the stop by `wrapper.jvm_exit.timeout` plus `wrapper.shutdown.timeout`,
-     P1.10) is exhausted:
+     default and bounds the stop by `wrapper.jvm_exit.timeout` plus `wrapper.shutdown.timeout`;
+     P3.4 adds the former to the budget) is exhausted:
      kills the whole process tree (`TerminateJobObject` when a job object exists, otherwise
      `ProcessHandle.descendants()` + `destroyForcibly()`), because on Windows `Process.destroy()`
      is already `TerminateProcess` and leaves grandchildren (e.g. a wrapped `.bat`) alive.
@@ -491,14 +517,19 @@ output, configuration and a clock; probes are stateless or own their state expli
   `wrapper.console.loglevel` (YAJSW default `INFO` for both), `wrapper.logfile.format` (default
   `LPTM`, blank disables file logging), `wrapper.console.format` (default `PM`, blank disables
   console output). YAJSW describes rollmodes `JVM` (roll at wrapper start and before each restarted
-  JVM) and `DATE`, and names `WRAPPER` without describing it; the registry's `NONE`, `SIZE`,
-  `SIZE_OR_DATE` are not YAJSW values (P1.10). Default file: `wrapper.log` beside the wrapper
+  JVM) and `DATE`, and names `WRAPPER` without describing it; the registry declares these three
+  (`RollMode`). How they combine with `maxsize` is open (the reference says `JVM` files have no
+  size limit), and Tanuki values such as `SIZE` now warn as invalid; P4.3 settles both. Default
+  file: `wrapper.log` beside the wrapper
   (YAJSW 11.01+: its `log` folder).
 * Format tokens follow the Tanuki/YAJSW letter convention (`L` level, `P` prefix, `D` thread,
   `T` time, `Z` millisecond time, `M` message) with `wrapper` / `jvm N` prefixes so operators
   can tell wrapper lines from captured application output.
-* Application stdout/stderr are captured by `OutputPump` (charset: the child's console code page by
-  default, overridable) and logged at `INFO`; the same stream feeds the `log` probe and (backlog)
+* Application stdout/stderr are captured by `OutputPump` and logged at `INFO`; the command line
+  makes the application write them in UTF-8 (`-Dstdout.encoding`/`-Dsun.stdout.encoding` and the
+  `stderr` pair, read by Java 18+ and 8–17 respectively); a value written in the JVM options under
+  either name is used instead, and the chosen charset is given under both names after the JVM
+  options, so the application writes exactly what the wrapper decodes (P2.4); the same stream feeds the `log` probe and (backlog)
   `wrapper.filter.trigger.N`. The command line is logged through the masking form of
   `JavaCommandBuilder`, so secrets never reach the log.
 * `wrapper.debug=true` raises the wrapper log level to `DEBUG`. In service mode nothing is written to
@@ -561,7 +592,7 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       `LifecycleConfig`, `ProbeConfig`) built from a validated `LoadedConfig`, with derived defaults
       and relative paths resolved against the configuration directory (D13). Decide per family
       what a repeated index means (lists keep both; exit codes and filter triggers need one value
-      per number, joined through `KeyCollector.Member.numbers()`), and warn when a
+      per index, joined on the normalised index, P1.11), and warn when a
       `wrapper.on_exit.<code>` member is 0 written differently (`00`, `-0`), since the exact
       `wrapper.on_exit.0` carries the default. (Filter triggers, which pair `trigger.<n>` with
       `action.<n>` by number, are unsupported until P9 and get their typed view then.)
@@ -569,8 +600,11 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       (`CompatibilityDocTest`; `-Dnyajsw.docs.update=true` rewrites); the hand-written §7 tables are
       retired.
 - [x] P1.8 Fixtures: a YAJSW-style default template written from scratch, plus the owner's
-      anonymised real configurations as soon as they are provided (§10 Q1; not a blocker; **real
-      configurations still pending**). The template is
+      anonymised real configurations as soon as they are provided (§10 Q1). **The first real one**
+      is `fixtures/denodo-vdp` (the owner's Denodo Virtual DataPort 9.4 service, byte for byte; no
+      secrets), with a golden command-line test (`launch.DenodoFixtureTest`), and
+      `fixtures/denodo-scheduler` (the Scheduler 9.4 service, `launch.DenodoSchedulerFixtureTest`).
+      The template is
       `src/test/resources/conf/fixtures/yajsw-style/conf/wrapper.conf` (CRLF, doubled backslashes,
       an include, a continued value, forward-referenced variables, commented-out keys, trailing
       blanks, quotes and spaces in a JVM option, an account and a password, planned, ignored,
@@ -580,9 +614,12 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       on one without a manifest, so adding a real configuration means adding a directory with a
       manifest.
 - [~] P1.9 D7 follow-ups once real fixtures exist: honour `wrapper.conf.encoding` (**done**, see
-      §4.5 Parsing; the rest of this item waits for real files); settle backslash
-      escaping (including text values such as `wrapper.app.parameter.2=conf\\x.properties`, which
-      nyajsw keeps doubled while Commons Configuration probably reads one backslash), `include`
+      §4.5 Parsing); settle backslash escaping (**done** with the owner's Denodo files: YAJSW's
+      character escapes are undone in every file value, see §4.5; strictly they show what Denodo
+      writes for YAJSW 13.x, and `\,` only means a comma when YAJSW enables commons-configuration's
+      list delimiter, so the version in 13.18's `lib/` folder is still worth a look; the VDP file
+      also showed that a library path entry may list several paths,
+      `wrapper.java.library.path.2=${path}`, now split on `;`); `include`
       handling and case of environment names against a real file; check how
       YAJSW treats an index written twice (`.7` and `.07`; nyajsw keeps both with a warning, P1.4)
       and a key set twice (nyajsw: last value wins with a warning, P1.5; YAJSW's Commons
@@ -595,15 +632,16 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       and the path bases of D13; check files converted from Tanuki, where
       `wrapper.java.mainclass=org.tanukisoftware.wrapper.WrapperSimpleApp` takes the real main class
       from `wrapper.app.parameter.1` (nyajsw ignores `wrapper.java.mainclass`, which would then run
-      the wrong class; YAJSW's migration guide says that without `wrapper.java.app.mainclass` it
+      the wrong class, and `WrapperStartStopApp` files, whose second parameter is an argument
+      count the application would then receive; YAJSW's migration guide says that without `wrapper.java.app.mainclass` it
       takes the first application argument as the main class, so P2.2 should do the same); YAJSW
       14.01 parses with commons-configuration2 2.15.1 (13.18 is the reference, §10 Q9; its version
       is still to be read from its `lib/` folder), and its migration guide tells users to
-      double every backslash (or use `/`) and to escape commas as `\,`, which suggests
-      backslash-escaping and comma lists in every value, not only in paths (to be confirmed with
-      YAJSW-shaped fixtures: commons-configuration2 splits lists only when YAJSW enables it);
-      update §4.5.
-- [ ] P1.10 Apply the YAJSW reference check of 2026-11-06 (§11) to the registry and regenerate
+      double every backslash (or use `/`) and to escape commas as `\,`, as the Denodo file does;
+      what YAJSW does with an *unescaped* comma (split into a list, and then use which part?) is
+      still open, nyajsw keeps the comma; quoted values of path keys (`wrapper.java.command="C:\Program
+      Files\...\java.exe"`) are not unquoted, so `Path.of` rejects them with a warning.
+- [x] P1.10 Apply the YAJSW reference check of 2026-11-06 (§11) to the registry and regenerate
       `docs/COMPATIBILITY.md`. Defaults that differ from the registry: `wrapper.on_exit.default`
       `SHUTDOWN` (registry `RESTART`; §3.3 says defaults match YAJSW where known, so keeping
       `RESTART` needs a §3.4 entry; the exact `wrapper.on_exit.0` default, which YAJSW does not
@@ -669,27 +707,117 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       instead of passing the text on as a password. Also fix the swapped `APPLICATION`/`WRAPPER`
       Javadoc in `ControlMode` (§4.6). AGENTS.md §4.6 calls `DELAY_START` a documented alias;
       it is an accepted one (YAJSW does not document it).
+      **Done (registry):** the defaults, values, origins and marks above; `FilterAction` and the
+      YAJSW `RollMode` values; `wrapper.ntservice.additional.<n>` replaces the extension (never
+      released, so no alias); `wrapper.java.debug` dropped and `wrapper.debug.level` declared;
+      `wrapper.update_rc` renamed `wrapper.daemon.update_rc` as the reference spells it;
+      `wrapper.tray.port`, absent from the reference, marked `Unverified.NAME`; key templates
+      accept `-` (`trigger-regex`); the missing keys declared per D18 (the reference's own
+      colour-coded table of Tanuki keys tells which ones YAJSW supports); `wrapper.config.script.*`
+      fatal, since ignoring a decryptor would pass encrypted values on, and so are
+      `wrapper.condition.script` and `wrapper.windows.cluster.*` (ignoring them would run the
+      application where or when it must not); `wrapper.on_exit.0` lost its own default, so code 0
+      follows `wrapper.on_exit.default` as YAJSW documents; `wrapper.console.pipestreams` and
+      `wrapper.save_interpolated` are ignored with a note on how nyajsw behaves; the new
+      deliberate differences are in §3.4. **Done (interpolation):** an unresolved
+      `${keystore name}` is an error, like Groovy, and omits the name for secret keys.
+- [x] P1.11 String indices: YAJSW's reference allows `<n>` to be a number or a string, sorted
+      alphanumerically (`wrapper.java.classpath.lib=lib/*/*.jar`, `wrapper.filter.trigger.exception`
+      with `wrapper.filter.action.exception`). `KeyPattern` matches `<n>` as digits only, so such
+      keys are unknown and their values dropped with a warning. Accept string indices in
+      `KeyPattern`/`KeyCollector`, define the order of mixed numeric and string indices (check
+      the reference's example), and keep `<code>` numeric. Needed before P2.2/P2.3. **Done:** see
+      §4.5 "Indexed and dynamic keys"; `KeyCollector.Member.numbers()` now holds exit codes only.
 Done when: every fixture present in the repository loads; every key of the former §7 matrix
 (`ConfigKeysTest.seededKeys`) has a registry entry and a test.
 
 ### P2 — Application launcher
 Goal: build and run the application command line exactly as the configuration says.
-- [ ] P2.1 `WrapperLog` facade with `LogLevel` and a console sink (file handler comes in P4).
-- [ ] P2.2 `JavaCommandBuilder`: `wrapper.java.command` resolution (default: `java`/`javaw` of the
+- [x] P2.1 `WrapperLog` facade with `LogLevel` and a console sink (file handler comes in P4).
+      Instances are passed around, never looked up statically, and are immutable: P4.1 builds a
+      bootstrap log and then a new configured one, it does not reconfigure in place. Each sits on
+      an anonymous `java.util.logging` logger, so no global logging configuration (nor
+      `LogManager.reset()`) reaches it. Every sink has its own threshold (console now, the file's
+      in P4) and the logger passes what the most verbose one wants. `forSource("jvm 1")` gives a
+      view for captured application output (P2.4) on the same sinks. The console sink writes to
+      standard output (YAJSW's console), never closes it, and reports formatting failures to its
+      error manager instead of the caller; lines use YAJSW's default console format `PM` (source
+      padded, `|`, message) plus any stack trace until `wrapper.console.format` arrives (P4.2).
+- [x] P2.2 `JavaCommandBuilder`: `wrapper.java.command` resolution (default: `java`/`javaw` of the
       wrapper's `java.home`; `wrapper.java.command.javaw`), `-Xms/-Xmx` from
       `wrapper.java.initmemory/maxmemory`, `wrapper.java.additional.N`, `-Djava.library.path` from
       `wrapper.java.library.path.N`, main class vs `wrapper.java.app.jar`, `wrapper.app.parameter.N`;
       quoting policy for Windows (`ProcessBuilder` re-quotes arguments and rejects embedded quotes
       unless `jdk.lang.Process.allowAmbiguousCommands` is set — decide, document, test values such
       as `-Dx="a b"`); golden tests compare argument arrays, not joined strings; masking loggable form.
-- [ ] P2.3 `ClasspathExpander`: `wrapper.java.classpath.N` with `*`/`**` wildcards, directories,
-      relative to the working dir, deterministic order, de-duplication.
-- [ ] P2.4 `ApplicationProcess` + `OutputPump`: `ProcessBuilder` with `wrapper.app.env.*`,
+      **Done:** order executable, `-Xms`/`-Xmx` and `-Djava.library.path` (before the JVM options,
+      so a value written there wins, as YAJSW documents for `-Xmx`), JVM options (empty ones skipped
+      with a warning: `java.exe` would take them for the main class), `-classpath` + main class or
+      `-jar` + jar, program arguments; with a jar, a main class and a classpath are ignored with
+      warnings, and so is `javaw` with an explicit command or off Windows; without main class and
+      jar the first program argument is the main class (YAJSW; an empty one is an error); quoting
+      per D19. Secrets are also recognised without their quotes and with backslashes undone, so a
+      quoted password copied into an option stays masked. The P2 keys stay *planned* in the
+      registry until console mode runs the application (P2.5) and become *supported* then.
+      `JavaCommand.loggable()` (also its `toString()`) masks secrets through the `SecretMasker` that
+      `WrapperConfig.secrets()` now carries. Text values keep doubled backslashes until P1.9
+      settles escaping, so `-Dx=C:\\dir` reaches the JVM with both backslashes, which Windows
+      paths tolerate. `-Xrs` (P6.2) and the agent (P7.3) are added by later items.
+- [x] P2.3 `ClasspathExpander`: `wrapper.java.classpath.N` with `*`/`**` wildcards, directories,
+      relative to the working dir, deterministic order, de-duplication. **Done:** results are
+      absolute; `*` and `?` work within a segment and in directory segments (`lib/*/*.jar`), as in
+      YAJSW; a whole `**` segment (any depth) is a nyajsw extension, since YAJSW's reference says
+      recursive wildcards are not supported; wildcards match regular files only, sorted by relative
+      path (case-insensitively first, R7); `/` and `\` both separate segments; links are followed
+      (loops warn); a directory that cannot be read is skipped with a warning, and only an
+      unreadable base directory stops the launch; directories that cannot lead to a match are not
+      walked; under Windows rules names match ignoring case, a `\\?\` prefix is literal and a
+      drive-relative entry (`C:lib`) is skipped with a warning; `..` after a wildcard is refused
+      with a warning; a missing plain entry is kept and a wildcard that matches nothing is dropped,
+      both with a warning; the first occurrence of a file wins (by text: short names and links
+      are not resolved); messages show entries masked. On macOS, whose file system ignores case,
+      names still match case-sensitively.
+- [x] P2.4 `ApplicationProcess` + `OutputPump`: check that the Java executable exists before
+      starting (YAJSW does), `ProcessBuilder` with `wrapper.app.env.*`,
       `wrapper.working.dir`, `wrapper.tmp.path`, piped output with explicit charset, pid, exit code,
       destroy / process-tree termination helper.
-- [ ] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C waits up to
+      **Done:** the executable is checked when it has a directory (a bare name is left to the
+      `PATH`; `.exe` may be omitted on Windows), and so is the working directory; a value of
+      `wrapper.app.env.<variable>` replaces the inherited variable (every spelling of the name on
+      Windows, where Java's map is case-sensitive but Windows is not) and an empty one removes it,
+      like `set NAME=` in a command prompt; standard input is closed so the application sees its
+      end; stdout and stderr are logged at `INFO` as `jvm N`, decoded with the charset the command
+      line sets (UTF-8 unless the JVM options choose another, see §4.8), with the configuration's secrets
+      masked (an application may echo an option that holds one; a long line is never cut inside a
+      secret), in pieces of at most 16 Ki
+      characters so output without line breaks cannot fill memory, and drained for at most 2 s
+      after the exit, since a grandchild may hold the pipes (that is logged at `STATUS`); the exit
+      is logged once however often it is awaited; `terminateTree()` kills the process, then its
+      descendants, looking below each again (the job object of P6.4 closes the remaining gap), and
+      logs any it could not kill; launch errors are masked and carry no unmasked cause.
+      `wrapper.tmp.path` is the wrapper's own directory (`jna.tmpdir`, D12) and is not passed to the
+      application.
+- [x] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C waits up to
       `wrapper.shutdown.timeout` for the child, then terminates it (full semantics in P3.6).
-- [ ] P2.6 (optional) `wrapper.image` for non-Java executables through the same `ApplicationProcess`.
+      **Done:** `cli.Main` (the only `System.exit`) parses `-c`/`--console <conf>`, `--help`,
+      `--version`, and answers the service switches of §3.2 with "not implemented yet" (exit 1);
+      configuration errors are logged one per problem through a bootstrap console log (exit 2);
+      `ConsoleMode` logs the configuration, classpath and command-line warnings at `STATUS`,
+      starts `jvm 1` and returns its exit code; a launch error is one `FATAL` line (exit 1). A
+      shutdown hook calls `ConsoleMode.stop()`, which waits `wrapper.shutdown.timeout` and then
+      terminates the tree; the hook is removed after a normal end. The console threshold is
+      `wrapper.console.loglevel`, raised to `DEBUG` by `wrapper.debug`. The application keys of
+      P2.2–P2.4 and `wrapper.console.loglevel`, `wrapper.debug` and `wrapper.shutdown.timeout`,
+      which take effect now, are *supported* in the registry, so their invalid values are errors;
+      `wrapper.tmp.path` moves to P5, where it becomes `jna.tmpdir` (P5.3). The exit code after
+      Ctrl+C is still the JVM's own; P3.6 returns the application's. `run()` returns only after a
+      `stop()` in progress has finished, so its last line reaches the log. Limitation until the
+      stop strategies (P3.4, P7): the wait suits Ctrl+C in a shared console, where the application
+      is asked to stop too; when only the wrapper is stopped (SIGTERM, a closed console window,
+      where Windows kills after about 5 s) the application is not asked and is killed after the
+      timeout, and a second Ctrl+C does not shorten the wait.
+- ~~P2.6 (optional) `wrapper.image` for non-Java executables~~ — dropped: the owner runs only Java
+  applications (2026-11-06). `wrapper.image` stays declared, so a file that sets it gets a warning.
 Done when: golden command-line tests pass on fixtures; a test main class is launched and its output
 captured on Linux and Windows.
 
@@ -697,24 +825,25 @@ captured on Linux and Windows.
 Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake clock/process.
 - [ ] P3.1 `Supervisor` state machine and `State` transitions (table-driven tests), including
       "no exit actions while `STOPPING`".
-- [ ] P3.2 `ExitActionResolver` (on `config.ExitAction` / `LifecycleConfig.exitAction`) and `RestartPolicy` (`restart.delay`,
-      `max_failed_invocations`, `successful_invocation_time`), `wrapper.control`.
+- [ ] P3.2 `ExitActionResolver` (on `config.ExitAction` / `LifecycleConfig.exitAction`) and `RestartPolicy`
+      (`restart.delay`, `max_failed_invocations`, `successful_invocation_time`, `startup.delay`),
+      `wrapper.control`, and whether `STOP` keeps the wrapper alive under every `wrapper.control`.
 - [ ] P3.3 `Probe` SPI, `ProbeContext`/`ProbeResult`, `ProbeRegistry`, `ProbeRunner` and
       `ProcessProbe`; `wrapper.startup.timeout` bounds readiness.
 - [ ] P3.4 `StopStrategy` SPI, `StopStrategyRegistry`, `TerminateStopStrategy` (process tree),
-      `wrapper.stop.strategy` (default `terminate` for now), `wrapper.shutdown.timeout`.
+      `wrapper.stop.strategy` (default `terminate` for now), `wrapper.shutdown.timeout` plus
+      `wrapper.jvm_exit.timeout`.
 - [ ] P3.5 `PidFiles` (`wrapper.pidfile`, `wrapper.java.pidfile`).
 - [ ] P3.6 Console mode runs through the supervisor (restart loop, Ctrl+C semantics, exit code).
 Done when: all transitions, timeouts and counters are covered by deterministic tests.
 
 ### P4 — Logging
 Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
-- [ ] P4.1 YAJSW level names mapping, `wrapper.debug` / `wrapper.java.debug` (not a YAJSW key;
-      `wrapper.debug.level` is, P1.10), bootstrap log for
+- [ ] P4.1 YAJSW level names mapping, `wrapper.debug` / `wrapper.debug.level`, bootstrap log for
       pre-configuration failures.
 - [ ] P4.2 `LogFormat` tokens for console and file formats.
 - [ ] P4.3 `RollingFileHandler`: size and date rolling, `ROLLNUM`/`YYYYMMDD`, `maxsize`, `maxfiles`,
-      Windows rename retries.
+      Windows rename retries, `maxdays`, `wrapper.log.encoding`, roll modes and `maxsize` combined.
 - [ ] P4.4 Application output logged with `jvm N` prefix.
 Done when: rotation and formatting are tested against temp directories; no third-party logging dep.
 
@@ -729,8 +858,9 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       with pid), minimal access rights per command, wait-for-state helper, `Win32Errors` mapping.
 - [ ] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
       (default `java.class.path`; integration tests pass the real jars because surefire's
-      `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.java.additional.N`,
-      `-Djna.tmpdir`, quoting (D12).
+      `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.additional.N`,
+      `-Djna.tmpdir` from `wrapper.tmp.path`, quoting (D12); `wrapper.ntservice.java.command` (a
+      Java 21 only).
 - [ ] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes.
 - [ ] P5.4a (blocked on §10 Q8, D17) Migration entry point: `WrapperServiceBooter` alias class, mode
       detection when `--service` is absent, and the Java 21 binPath rewrite in a migration command.
@@ -749,7 +879,9 @@ Goal: the wrapper itself runs under the SCM.
       `INTERROGATE`; named callback thread; `STOPPED` reported last.
 - [ ] P6.2 `--service <conf>` command: dispatcher first, then configuration, file-only logging,
       supervisor wiring with `START_PENDING` until `ProbeRunner` readiness (`process` probe),
-      `ERROR_SERVICE_SPECIFIC_ERROR` on `FAILED`.
+      `ERROR_SERVICE_SPECIFIC_ERROR` on `FAILED`; `-Xrs` for the application JVM in service mode
+      while `wrapper.ntservice.reduce_signals` is true (it also keeps a future `console` stop
+      strategy from working, §4.6).
 - [ ] P6.3 Service-account hardening: working directory default, clear errors for unwritable
       log/pid paths, documentation of `jna.tmpdir` / `jnidispatch.dll` options.
 - [ ] P6.4 Job object (hand-written binding) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for
@@ -770,7 +902,9 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
       `NYAJSW_AGENT_TOKEN`, `STOP` → `System.exit(0)`; wrapper side `agentlink` (`AgentListener`,
       `AgentChannel`), `AgentProbe`, `AgentStopStrategy`; automatic `-javaagent` injection unless
       `wrapper.agent.enabled=false`; default stop strategy becomes `agent,terminate` and default
-      liveness `agent` when enabled; `wrapper.ping.*` mapping; round-trip test with both ends.
+      liveness `agent` when enabled; `wrapper.ping.*` mapping (both `wrapper.ping.*` and
+      `wrapper.liveness.*` have constant defaults, so the mapping must tell a value set in the file
+      from a default by its `ConfigLayer`); round-trip test with both ends.
 - [ ] P7.4 `docs/probes.md` user guide.
 Done when: each probe has unit tests; an end-to-end Windows test reaches `RUNNING` only after an
 HTTP probe passes and stops gracefully through the agent.
@@ -780,7 +914,8 @@ HTTP probe passes and stops gracefully through the agent.
       kept), `nyajsw-agent.jar`, `bin/*.bat` mirroring YAJSW script names, `conf/wrapper.conf`
       fully commented template, zip assembly.
 - [ ] P8.2 `docs/migration-from-yajsw.md`: what changes, how to read the warnings, differences (§3.4),
-      SCM recovery interplay (R6).
+      SCM recovery interplay (R6), one JVM option or argument per key (`-Xms1g -Xmx2g` in one value
+      is one argument, D19).
 - [ ] P8.3 Run the owner's real configuration(s) end to end on Windows; close gaps; matrix updated.
 - [ ] P8.4 *(recommended)* Release process: version tag, CI builds and attaches the zip to a GitHub
       release.
@@ -794,7 +929,8 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
   `wrapper.console.visible`.
 - `wrapper.filter.trigger.N` + YAJSW `wrapper.filter.action.N` (`RESTART`/`SHUTDOWN`/`NONE`, default
   `RESTART`; P1.10).
-- `wrapper.stop.conf` (stop program) as a `command` stop strategy; `console` stop strategy via
+- `wrapper.stop.conf` (stop program; the reference's examples also write `wrapper.stop`) as a
+  `command` stop strategy; `console` stop strategy via
   `GenerateConsoleCtrlEvent` with `SetConsoleCtrlHandler` shielding the wrapper.
 - SCM failure actions (`ChangeServiceConfig2` with `SERVICE_CONFIG_FAILURE_ACTIONS` **and**
   `SERVICE_CONFIG_FAILURE_ACTIONS_FLAG`) driven by `wrapper.ntservice.failure_actions.*` (confirm
@@ -809,13 +945,17 @@ Minor findings from pre-commit reviews that were consciously not fixed in the re
 entry names the commit/plan item it came from; remove entries when addressed.
 - P1.2: `KeyPattern.commonExample` only finds overlaps with one segment per placeholder; free
   placeholders that span several segments in different shapes can still overlap undetected. No
-  declared key is affected; revisit if a template with two free placeholders is added.
+  declared key is affected; revisit if a template with two free placeholders is added. Since P1.11
+  `<n>` also spans segments, so the same holds for index templates, and a free placeholder right
+  before `<n>` takes as many segments as it can (`wrapper.x.<name>.<n>` reads `wrapper.x.a.2.1` as
+  `a.2` and `1`); no declared template has that shape.
+- P1.11: with string indices a misspelt suffix (`wrapper.filter.script.2.agrs`) or a Tanuki key
+  under an index family that is not declared yet is a family member, not an unknown key, so it gets
+  no warning and its value is used. YAJSW, which reads families by prefix, probably does the same;
+  declare more Tanuki keys when real files show them.
 - P1.9: the default fallback for files that are not valid UTF-8 is a fixed windows-1252; using the
   JVM's `native.encoding` (the Windows ANSI code page, Java 17+) would read files from non-Western
   installations correctly without `wrapper.conf.encoding`. Decide with real files (Q1).
-- PR review: `WrapperConfig` keeps no `SecretMasker` or secret set, while its values (e.g. JVM
-  options) can hold copies of secrets. P2.2's masking form of the command line needs them: expose a
-  masker (or the secret values as `Secret`s) on `WrapperConfig` when the command line is built.
 - P1.6b: no range checks: `wrapper.java.maxmemory=-5`, `wrapper.readiness.tcp.port=70000` or
   `wrapper.liveness.failures=0` are accepted. Add min/max to `KeySpec` (checked by `ValueParser`)
   when the consuming phases implement those keys.
@@ -823,8 +963,6 @@ entry names the commit/plan item it came from; remove entries when addressed.
   with the probe types (AGENTS.md §4.4), and move `wrapper.ping.*` there from `LifecycleConfig`
   (D16). P7 must also keep the agent's derived defaults off when `wrapper.image` runs a non-Java
   executable.
-- P1.6b: what an empty `wrapper.app.env.X=` means (set to empty, or remove an inherited variable) is
-  open; decide in P2.4.
 - P1.6a: `SecretMasker` hides secrets by matching their text, so a short or common secret also masks
   unrelated text and the mask's position can hint at it (password `Java` shows as `C:\****\bin`).
   Tracking during interpolation which values were built from secret keys (or from names a secret
@@ -832,6 +970,16 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.3: no bound on interpolation depth or expanded size; a very long reference chain overflows the
   stack and doubling chains grow exponentially. Low risk (files are written by administrators); add
   limits if real configurations show the need.
+- P1.10: Groovy and keystore errors hide the expression only when the key that owns the value is
+  secret, not when it is reached from a secret key (`wrapper.ntservice.password=${pw}` with
+  `pw=${keystore svcpass}` can name `svcpass` when `pw` is first resolved through the password).
+  No value leaks, only the keystore entry name; check the reference chain as `cycle()` does if it
+  matters.
+- P2.5: when the configuration has errors only the errors are reported; the warnings gathered while
+  loading (a misspelt key, for example) would often explain them. `ConfigException` would have to
+  carry them.
+- P2.5: usage messages and "not implemented yet" go to standard output with everything else; standard
+  error would suit scripts better.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -877,7 +1025,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | R9 | Hosted Windows CI runner not elevated or flaky SCM | Verify in P0.3; integration tests retry transient `MARKED_FOR_DELETE`; unit coverage does not depend on them. |
 | R10 | Licensing contamination | Clean-room rule in AGENTS.md; only public key names reused; reviewers check for copied text. |
 | R11 | Unverified YAJSW defaults/key names (marked `Unverified` in the registry, "*Verify:*" in the matrix) | Defaults, values and names of registered keys were checked against the public reference on 2026-11-06, and missing YAJSW keys listed (P1.10); what it leaves open is confirmed against the owner's real files/`doc` folder before implementing each key; record the outcome in the registry. |
-| R12 | Windows argument quoting (`ProcessBuilder` re-quoting, embedded quotes) | Explicit policy and tests in P2.2; golden tests on argument arrays. |
+| R12 | Windows argument quoting (`ProcessBuilder` re-quoting, embedded quotes) | Policy D19 with tests (P2.2); golden tests on argument arrays. |
 
 ## 9. Decisions log (ADR-lite)
 
@@ -889,21 +1037,26 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
 | D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (P0.4: JNA and `jna-platform` 5.19.1, managed in the parent POM; added to `nyajsw-wrapper` in P5.2) |
 | D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Proposed (confirm in P4) |
-| D7 | Custom line parser (§4.5); literal backslashes except odd-trailing-`\` continuation, skipping blank/comment lines inside it; UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected unless declared through `-Dwrapper.conf.encoding`; `wrapper.conf.encoding` decoded strictly; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW defaults to the platform charset, i.e. the JVM default, UTF-8 on Java 18+ per JEP 400, else the ANSI code page), so non-ASCII text may now read differently, and on non-Western Windows (windows-1251, MS932, GBK) a file without `wrapper.conf.encoding` falls back to windows-1252 with a warning; a declared encoding is decoded strictly where YAJSW's reader probably replaced bad bytes silently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: verify the backslash and lower-cased-environment behaviour against a real file; `${...}` in include paths is supported since P1.3 and `wrapper.conf.encoding` since P1.9 |
+| D7 | Custom line parser (§4.5); odd-trailing-`\` continuation, skipping blank/comment lines inside it; in file values a backslash before `\ , " ' # = : !` or a space stands for that character (YAJSW's escapes, as the owner's Denodo files show; P1.9), every other backslash literal (YAJSW would read `\t`, `\n`, `\r`, `\f`, `\b`, `\uXXXX` as control characters and Unicode); UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected unless declared through `-Dwrapper.conf.encoding`; `wrapper.conf.encoding` decoded strictly; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW defaults to the platform charset, i.e. the JVM default, UTF-8 on Java 18+ per JEP 400, else the ANSI code page), so non-ASCII text may now read differently, and on non-Western Windows (windows-1251, MS932, GBK) a file without `wrapper.conf.encoding` falls back to windows-1252 with a warning; a declared encoding is decoded strictly where YAJSW's reader probably replaced bad bytes silently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: verify the backslash and lower-cased-environment behaviour against a real file; `${...}` in include paths is supported since P1.3 and `wrapper.conf.encoding` since P1.9 |
 | D8 | Single key registry drives parsing, validation, warnings and generated docs. Keys are `public static final KeySpec` constants in `ConfigKeys`, collected into one immutable `KeyRegistry`; derived defaults are declared there by description and computed by the typed view that owns the key (P1.6), or by the loader for `wrapper.conf.encoding`, because they depend on typed values (e.g. `wrapper.agent.enabled`) or the configuration file's location rather than on raw strings | One source of truth; no drift between code and docs; constants let code refer to keys without repeating names | Accepted (P1.2) |
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
 | D11 | groupId and base package `io.github.jacobosanchez.nyajsw` | Matches the GitHub owner; Maven Central-compatible | Proposed (§10 Q2) |
-| D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.java.additional.N` + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM (YAJSW's own `wrapper.ntservice.additional.N` and `wrapper.ntservice.java.command` overlap this, P1.10) | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
+| D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.additional.N` (YAJSW's key for these options) + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM, `wrapper.ntservice.java.command` (YAJSW: default the application's Java command) may replace the installing JVM's `javaw.exe` if it is a Java 21 | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
 | D13 | The default working directory and relative wrapper-side paths (log file, pid files, temporary directory, probe files) resolve against the configuration file's directory; relative application-side paths (jar, library path, image, a Java command with a directory, classpath entries) resolve against the working directory, as the application sees them (P1.6b) | Services start in `System32`; configuration-relative is predictable for the wrapper, while the application's own paths must agree with what the child JVM resolves (usual YAJSW layout: `conf/wrapper.conf` with `wrapper.working.dir=..`) | Proposed (verify YAJSW, P1.9) |
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
 | D15 | Probe SPI, probe registry and stop-strategy registry are introduced in P3 with `process`/`terminate`; later probes and strategies are additions | Avoid rewriting the supervisor when P7 lands | Accepted |
 | D16 | Default liveness probe is `agent` when the agent is enabled (`wrapper.ping.*` semantics), none otherwise | YAJSW pings by default; keep behaviour parity without forcing the agent | Proposed |
 | D17 | Migration path (design only, blocked on §10 Q8): ship a thin alias class named like YAJSW's service booter (`org.rzo.yajsw.boot.WrapperServiceBooter`, a deliberate exception to D11 because existing service registrations store that name) that detects service mode when `--service` is absent and delegates to the normal entry point; a migration command rewrites an existing service's binary path to a Java 21 `javaw.exe` and our classpath (D12), since a bare jar swap cannot work when the old registration names an older JVM; `-D` options on the wrapper command line (e.g. `-Dwrapper.tmp.path`, a `jna_tmpdir` property, `-Dpath`) feed the system-property layer of §4.6; we also set the real `jna.tmpdir` from `wrapper.tmp.path` (R3). Short CLI options already exist in §3 | Observed in Denodo Platform's public KB (not tested by us): its services are registered as `java.exe … WrapperServiceBooter <conf>`, installed with `-i <conf>`, and re-pointed with `sc config` plus `-D` flags for non-admin accounts. Whether the underscore-spelled `jna_tmpdir` is read by YAJSW or JNA is unknown | Proposed (P5.4a; confirm with §10 Q1 and Q8) |
+| D18 | The registry declares the YAJSW keys its public reference documents as supported by YAJSW, each with a nyajsw status; Tanuki keys that the reference lists as not (yet) supported by YAJSW (e.g. `wrapper.disable_restarts`, `wrapper.jvm.port`, `wrapper.ntservice.pausable`) stay undeclared and get the generic unknown-key warning (keys seeded earlier, such as `wrapper.syslog.*`, keep their entries). Defaults follow the reference where it states one (§3.3), including `wrapper.on_exit.default=SHUTDOWN` | A YAJSW file can only rely on keys YAJSW honours; declaring Tanuki-only keys would suggest a compatibility YAJSW never had. Following YAJSW's defaults keeps migrated services behaving as before | Accepted (P1.10) |
+| D19 | Arguments of the application are passed as an array. One pair of double quotes around a whole argument, or around everything after its first `=` (`-Dx="a b"`, `-XX:OnError="cmd /c x"`), is removed, as a shell would; any other double quote is a launch error naming the key family, with the argument masked | On POSIX every argument reaches the application unchanged, quotes included; on Windows `ProcessBuilder` wraps an argument with blanks in quotes, so `-Dx="a b"` would become `"-Dx="a b""` and break the command line, and an embedded quote is passed on unescaped (`jdk.lang.Process.allowAmbiguousCommands` defaults to true on JDK 21), which breaks it as well; checked by running `java.exe` through `ProcessBuilder` on JDK 21.0.13, which also handles trailing backslashes and empty arguments itself. Dropping a stray quote would change the value | Accepted (P2.2) |
 
 ## 10. Open questions for the project owner
 
-1. **Real configuration files.** Please add the current `wrapper.conf` (anonymised) as a fixture,
+1. **Real configuration files.** (*Partly answered 2026-11-06:* the Denodo VDP and Scheduler
+   `service.conf` files are the `denodo-vdp` and `denodo-scheduler` fixtures; the scheduler web
+   admin tool's file and YAJSW 13.18's `doc/` folder would still help.)
+   Please add the current `wrapper.conf` (anonymised) as a fixture,
    together with the `conf/wrapper.conf.default` template and `doc/` folder of the YAJSW version in
    use (reading key names and defaults is within the clean-room rule), and tell us the Java version
    the application runs on (*answered 2026-11-06: Java 21*; the YAJSW version, 13.18, is recorded

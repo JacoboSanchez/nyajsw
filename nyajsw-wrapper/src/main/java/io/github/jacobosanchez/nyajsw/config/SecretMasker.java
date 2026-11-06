@@ -37,17 +37,65 @@ public final class SecretMasker {
                                 .filter(entry -> registry.isSecret(entry.key()) && !entry.value().isEmpty())
                                 .map(ConfigEntry::value),
                         config.externalSecrets().stream().map(Secret::reveal))
+                .flatMap(SecretMasker::forms)
+                .filter(secret -> !secret.isEmpty())
                 .distinct()
                 .toList();
+    }
+
+    /**
+     * The texts a secret may appear as once the configuration is used: as written, without one pair of
+     * surrounding double quotes (the command line drops them, D19), and with doubled backslashes
+     * undone (path values).
+     */
+    private static Stream<String> forms(String secret) {
+        String unquoted = ValueParser.unquote(secret);
+        return Stream.of(secret, unquoted, ValueParser.normalisePath(secret), ValueParser.normalisePath(unquoted));
+    }
+
+    /** The length of the longest secret text, 0 when there are none. */
+    public int longestSecret() {
+        return secrets.stream().mapToInt(String::length).max().orElse(0);
+    }
+
+    /**
+     * A position at or before {@code preferred} where {@code text} can be cut without splitting an
+     * occurrence of a secret, so that each part can be masked on its own: the start of any occurrence
+     * that {@code preferred} falls inside.
+     */
+    public int safeCut(String text, int preferred) {
+        Objects.requireNonNull(text, "text");
+        int cut = Math.min(preferred, text.length());
+        boolean moved = true;
+        while (moved) {
+            moved = false;
+            for (String secret : secrets) {
+                int from = Math.max(0, cut - secret.length() + 1);
+                for (int at = text.indexOf(secret, from); at >= 0 && at < cut; at = text.indexOf(secret, at + 1)) {
+                    if (at + secret.length() > cut) {
+                        cut = at;
+                        moved = true;
+                    }
+                }
+            }
+        }
+        return cut;
     }
 
     /** {@code value} as it may be shown for {@code key}. */
     public String mask(String key, String value) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(value, "value");
-        if (registry.isSecret(key)) {
-            return MASK;
-        }
+        return registry.isSecret(key) ? MASK : maskText(value);
+    }
+
+    /**
+     * {@code text} with every occurrence of a secret hidden, for text built from configuration values
+     * but not belonging to one key, such as an argument of the application's command line.
+     */
+    public String maskText(String text) {
+        Objects.requireNonNull(text, "text");
+        String value = text;
         // Mark every character of every occurrence first, so overlapping secrets are hidden whole.
         boolean[] hidden = new boolean[value.length()];
         boolean any = false;

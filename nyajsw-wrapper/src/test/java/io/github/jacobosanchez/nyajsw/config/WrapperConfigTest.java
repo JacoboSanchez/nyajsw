@@ -128,12 +128,13 @@ public class WrapperConfigTest {
         assertEquals(config.service().password(), Optional.empty());
         LifecycleConfig lifecycle = config.lifecycle();
         assertEquals(lifecycle.control(), ControlMode.TIGHT);
-        assertEquals(lifecycle.defaultExitAction(), ExitAction.RESTART);
-        assertEquals(lifecycle.exitActions(), Map.of(0, ExitAction.SHUTDOWN));
+        assertEquals(lifecycle.defaultExitAction(), ExitAction.SHUTDOWN);
+        assertEquals(lifecycle.exitActions(), Map.of());
+        assertEquals(lifecycle.exitAction(0), ExitAction.SHUTDOWN);
         assertEquals(lifecycle.maxFailedInvocations(), 5);
-        assertEquals(lifecycle.successfulInvocationTime(), Duration.ofSeconds(300));
+        assertEquals(lifecycle.successfulInvocationTime(), Duration.ofSeconds(60));
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(30));
-        assertEquals(lifecycle.restartDelay(), Optional.empty());
+        assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
         // The agent is enabled by default but not implemented yet (P7), so the defaults do without it.
         assertEquals(lifecycle.stopStrategies(), List.of("terminate"));
         ProbeConfig probes = config.probes();
@@ -275,10 +276,88 @@ public class WrapperConfigTest {
         WrapperConfig config = load("wrapper.restart.delay=", "wrapper.ntservice.account=",
                 "wrapper.ntservice.password=", "wrapper.java.additional.1=", "wrapper.java.additional.2=-Dx");
 
-        assertEquals(config.lifecycle().restartDelay(), Optional.empty());
+        // Not set means the declared default, as if the line were absent.
+        assertEquals(config.lifecycle().restartDelay(), Duration.ofSeconds(5));
         assertEquals(config.service().account(), Optional.empty());
         assertEquals(config.service().password(), Optional.empty());
         assertEquals(config.java().jvmOptions(), List.of("-Dx"));
+    }
+
+    @Test
+    public void exitCodeZeroFollowsTheDefaultActionUnlessSetItself() throws IOException {
+        WrapperConfig restarting = load("wrapper.on_exit.default=RESTART");
+        WrapperConfig cleanExitEnds = load("wrapper.on_exit.default=RESTART", "wrapper.on_exit.0=SHUTDOWN");
+
+        assertEquals(restarting.lifecycle().exitAction(0), ExitAction.RESTART);
+        assertEquals(cleanExitEnds.lifecycle().exitAction(0), ExitAction.SHUTDOWN);
+        assertEquals(cleanExitEnds.lifecycle().exitAction(1), ExitAction.RESTART);
+    }
+
+    @Test
+    public void logFormatsDefaultWhenAbsentAndStayBlankWhenWrittenBlank() throws IOException {
+        LogConfig absent = load().log();
+        LogConfig blank = load("wrapper.logfile.format=", "wrapper.console.format=").log();
+
+        assertEquals(absent.logfileFormat(), Optional.of("LPTM"));
+        assertEquals(absent.consoleFormat(), Optional.of("PM"));
+        // YAJSW turns the output off for a blank format; P4 implements that, so it must stay visible here.
+        assertEquals(blank.logfileFormat(), Optional.empty());
+        assertEquals(blank.consoleFormat(), Optional.empty());
+    }
+
+    @Test
+    public void debugLevelDefaultsToFullDetail() throws IOException {
+        assertEquals(load().log().debugLevel(), 3);
+        assertEquals(load("wrapper.debug.level=1").log().debugLevel(), 1);
+    }
+
+    @Test
+    public void aLibraryPathEntryMayListSeveralPaths() throws IOException {
+        String separator = ";";
+        // A NUL is invalid in a path on every platform; the file cannot hold one, a system property can.
+        WrapperConfig config = loadWith(Map.of("wrapper.java.library.path.1", "a" + separator + "\"b c\"" + separator
+                + separator + "d" + separator + "bad\u0000path"), "wrapper.java.library.path.2=e");
+
+        assertEquals(config.java().libraryPath(), List.of(dir.resolve("a"), dir.resolve("b c"), dir.resolve("d"),
+                dir.resolve("e")));
+        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("one of the paths in"
+                + " wrapper.java.library.path.1 is skipped")), messages(config).toString());
+    }
+
+    @Test
+    public void uncPathsFromTheFileKeepTheirPrefix() throws IOException {
+        // Escaped as YAJSW files write it, and written raw, which YAJSW reads as a single backslash too.
+        WrapperConfig escaped = load("wrapper.java.app.jar=\\\\\\\\srv\\\\share\\\\app.jar");
+        WrapperConfig raw = load("wrapper.java.app.jar=\\\\srv\\share\\app.jar");
+
+        assertEquals(escaped.java().jar().orElseThrow().toString().replace('/', '\\'),
+                dir.resolve("\\\\srv\\share\\app.jar").normalize().toString().replace('/', '\\'));
+        assertTrue(raw.java().jar().orElseThrow().toString().replace('/', '\\').endsWith("\\srv\\share\\app.jar"),
+                raw.java().jar().toString());
+    }
+
+    @Test
+    public void aQuotedSingleLibraryPathIsUnquoted() throws IOException {
+        WrapperConfig config = load("wrapper.java.library.path.1=\"lib dir\"");
+
+        assertEquals(config.java().libraryPath(), List.of(dir.resolve("lib dir")));
+    }
+
+    @Test
+    public void aSingleInvalidLibraryPathIsStillAnError() {
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> loadWith(Map.of("wrapper.java.library.path.1", "bad\u0000path")));
+
+        assertTrue(e.getMessage().contains("invalid path"), e.getMessage());
+    }
+
+    @Test
+    public void environmentSetBySystemPropertiesComesLastSoItWinsOverOtherSpellings() throws IOException {
+        WrapperConfig config = loadWith(Map.of("wrapper.app.env.Path", "system"),
+                "wrapper.app.env.Path=file1", "wrapper.app.env.PATH=file2");
+
+        assertEquals(List.copyOf(config.java().environment().entrySet()),
+                List.of(Map.entry("PATH", "file2"), Map.entry("Path", "system")));
     }
 
     @Test

@@ -32,9 +32,9 @@ import java.util.TreeMap;
  *
  * @param control                  {@code wrapper.control}
  * @param exitActions              action per exit code, from {@code wrapper.on_exit.<code>} and
- *                                 {@code wrapper.on_exit.0}, sorted by code; code 0 is always present
+ *                                 {@code wrapper.on_exit.0}, sorted by code
  * @param defaultExitAction        {@code wrapper.on_exit.default}, for codes not in the map
- * @param restartDelay             {@code wrapper.restart.delay}, if set
+ * @param restartDelay             {@code wrapper.restart.delay}
  * @param maxFailedInvocations     {@code wrapper.max_failed_invocations}
  * @param successfulInvocationTime {@code wrapper.successful_invocation_time}
  * @param startupTimeout           {@code wrapper.startup.timeout}
@@ -49,7 +49,7 @@ import java.util.TreeMap;
  * @param pingTimeout              {@code wrapper.ping.timeout}, if set
  */
 public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exitActions, ExitAction defaultExitAction,
-        Optional<Duration> restartDelay, int maxFailedInvocations, Duration successfulInvocationTime,
+        Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime,
         Duration startupTimeout, Duration shutdownTimeout, Optional<Path> pidFile, Optional<Path> javaPidFile,
         List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
         Optional<Duration> pingTimeout) {
@@ -90,7 +90,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 values.required(values.enumeration(CONTROL, ControlMode.class), CONTROL),
                 exitActions(values),
                 values.required(values.enumeration(ON_EXIT_DEFAULT, ExitAction.class), ON_EXIT_DEFAULT),
-                values.duration(RESTART_DELAY),
+                values.required(values.duration(RESTART_DELAY), RESTART_DELAY),
                 values.required(values.integer(MAX_FAILED_INVOCATIONS), MAX_FAILED_INVOCATIONS),
                 values.required(values.duration(SUCCESSFUL_INVOCATION_TIME), SUCCESSFUL_INVOCATION_TIME),
                 values.required(values.duration(STARTUP_TIMEOUT), STARTUP_TIMEOUT),
@@ -121,10 +121,11 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
      * One action per exit code. Codes are normalised first ({@link #asExitCode}), then the last
      * spelling of a code in file order wins: for {@code 7} and {@code 07} the collector has warned;
      * spellings that only agree after normalising ({@code -1} and {@code 4294967295}) warn here.
-     * Code 0 comes from the exact {@code wrapper.on_exit.0} (which has a default), so another
-     * spelling of 0 is ignored with a warning. An invalid action (reported by the validator) leaves
-     * the code to the default action, and so does a later spelling set to nothing. "Later" is precedence
-     * order ({@link ConfigValues#familyInFileOrder}): a system property counts as the latest.
+     * Code 0 comes only from the exact {@code wrapper.on_exit.0}, so another spelling of 0 is ignored
+     * with a warning; without it, code 0 takes the default action like any other code. An invalid
+     * action (reported by the validator) leaves the code to the default action, and so does a later
+     * spelling set to nothing. "Later" is precedence order ({@link ConfigValues#familyInFileOrder}):
+     * a system property counts as the latest.
      */
     private static Map<Integer, ExitAction> exitActions(ConfigValues values) {
         Map<Integer, ExitAction> actions = new TreeMap<>();
@@ -156,7 +157,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 actions.remove(code.get()); // reported by ConfigValidator; the default action applies
             }
         }
-        actions.put(0, values.required(values.enumeration(ON_EXIT_0, ExitAction.class), ON_EXIT_0));
+        values.enumeration(ON_EXIT_0, ExitAction.class).ifPresent(action -> actions.put(0, action));
         return actions;
     }
 }
