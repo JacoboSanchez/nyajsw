@@ -2,8 +2,11 @@ package io.github.jacobosanchez.nyajsw.config;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CoderResult;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -54,7 +57,9 @@ import java.util.stream.Collectors;
  *       problems, and also a Groovy expression or a reference cycle in its path, only produce a
  *       warning. An include cycle is always an error. Other
  *       {@code #include.*} directives are ignored with a warning.</li>
- *   <li>Files are read as UTF-8; a leading byte order mark is skipped. A file without a byte order
+ *   <li>With a declared encoding ({@code wrapper.conf.encoding}, see the four-argument constructor)
+ *       every file is decoded strictly with it. Otherwise files are read as UTF-8; a leading byte
+ *       order mark is skipped. A file without a byte order
  *       mark that is not valid UTF-8 is read as windows-1252, the usual encoding of files edited
  *       with Notepad on Western-European Windows, with a warning. UTF-16 files (byte order mark
  *       {@code FF FE}/{@code FE FF}, or NUL bytes) are rejected with a hint to save them as
@@ -79,6 +84,8 @@ public final class FileConfigSource implements ConfigSource {
     private final Path file;
     private final Interpolator interpolator;
     private final Layers layers;
+    /** The declared encoding, or {@code null} for detection. */
+    private final Encoding encoding;
 
     /**
      * Reads {@code file}, resolving include paths against this process's system properties and
@@ -107,9 +114,39 @@ public final class FileConfigSource implements ConfigSource {
      * @param layers       the entries of the layers around the file, for variables in include paths
      */
     public FileConfigSource(Path file, Interpolator interpolator, Layers layers) {
+        this(file, interpolator, layers, null);
+    }
+
+    /**
+     * @param file         the configuration file; made absolute so messages and relative includes do
+     *                     not depend on the current directory
+     * @param interpolator resolves {@code ${...}} variables in include paths
+     * @param layers       the entries of the layers around the file, for variables in include paths
+     * @param encoding     the declared encoding of the file and its includes
+     *                     ({@code wrapper.conf.encoding}), or {@code null} for the default detection
+     *                     (UTF-8, windows-1252 fallback). A declared encoding is decoded strictly: a
+     *                     byte that does not fit is an error naming the line; a leading byte order
+     *                     mark of that encoding is skipped; UTF-16 is accepted only when declared.
+     */
+    public FileConfigSource(Path file, Interpolator interpolator, Layers layers, Encoding encoding) {
         this.file = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
         this.interpolator = Objects.requireNonNull(interpolator, "interpolator");
         this.layers = Objects.requireNonNull(layers, "layers");
+        this.encoding = encoding;
+    }
+
+    /**
+     * A declared encoding and where it was declared, for messages.
+     *
+     * @param charset    the charset
+     * @param declaredAt e.g. {@code system property wrapper.conf.encoding} or {@code wrapper.conf:3}
+     */
+    public record Encoding(Charset charset, String declaredAt) {
+
+        public Encoding {
+            Objects.requireNonNull(charset, "charset");
+            Objects.requireNonNull(declaredAt, "declaredAt");
+        }
     }
 
     /**
@@ -137,9 +174,21 @@ public final class FileConfigSource implements ConfigSource {
 
     @Override
     public SourceContent read() {
-        ReadState state = new ReadState(file.getParent(), interpolator, layers);
+        ReadState state = new ReadState(file.getParent(), interpolator, layers, encoding, false);
         state.readFile(file, null);
         return new SourceContent(state.entries, state.warnings);
+    }
+
+    /**
+     * Reads leniently to find out what the file declares, e.g. {@code wrapper.conf.encoding} before the
+     * real read: includes that cannot be read (because their path only decodes correctly under the
+     * declared encoding, say) are skipped silently, and warnings are dropped. Problems with the main
+     * file itself still throw.
+     */
+    List<ConfigEntry> probe() {
+        ReadState state = new ReadState(file.getParent(), interpolator, layers, encoding, true);
+        state.readFile(file, null);
+        return List.copyOf(state.entries);
     }
 
     /** State of one {@link #read()} call: results so far and the chain of files being included. */
@@ -148,6 +197,9 @@ public final class FileConfigSource implements ConfigSource {
         private final Path mainDirectory;
         private final Interpolator interpolator;
         private final Layers layers;
+        private final Encoding encoding;
+        /** Lenient read for {@link FileConfigSource#probe()}: include problems are skipped. */
+        private final boolean probe;
         private final List<ConfigEntry> entries = new ArrayList<>();
         private final List<ConfigWarning> warnings = new ArrayList<>();
         /** Real paths of the files being read, for cycle detection across symbolic links. */
@@ -155,10 +207,12 @@ public final class FileConfigSource implements ConfigSource {
         /** The same files as written in the configuration, for messages. */
         private final Deque<Path> shownChain = new ArrayDeque<>();
 
-        ReadState(Path mainDirectory, Interpolator interpolator, Layers layers) {
+        ReadState(Path mainDirectory, Interpolator interpolator, Layers layers, Encoding encoding, boolean probe) {
             this.mainDirectory = mainDirectory;
             this.interpolator = interpolator;
             this.layers = layers;
+            this.encoding = encoding;
+            this.probe = probe;
         }
 
         /**
@@ -286,6 +340,18 @@ public final class FileConfigSource implements ConfigSource {
          *                 {@code #include.required}) or only a warning (plain {@code #include})
          */
         private void include(Path includingFile, String rawPath, ConfigLocation location, boolean required) {
+            if (!probe) {
+                includeChecked(includingFile, rawPath, location, required);
+                return;
+            }
+            try {
+                includeChecked(includingFile, rawPath, location, required);
+            } catch (ConfigException e) {
+                // Probing only: the real read reports this problem, or finds the file under the right encoding.
+            }
+        }
+
+        private void includeChecked(Path includingFile, String rawPath, ConfigLocation location, boolean required) {
             String pathText = unquote(trim(rawPath));
             if (pathText.isEmpty()) {
                 skipOrFail(required, location, "include without a file name");
@@ -379,13 +445,19 @@ public final class FileConfigSource implements ConfigSource {
                 throw new ConfigException(openLocation, "cannot read " + path + ": " + e.getMessage(), e);
             }
             ConfigLocation fileLocation = ConfigLocation.of(path.toString());
+            if (encoding != null) {
+                return decodeDeclared(bytes, path);
+            }
             if (startsWith(bytes, 0xFF, 0xFE) || startsWith(bytes, 0xFE, 0xFF)) {
-                throw new ConfigException(fileLocation, "file is UTF-16 encoded; save it as UTF-8");
+                throw new ConfigException(fileLocation, "file is UTF-16 encoded; save it as UTF-8, or start the"
+                        + " wrapper with -D" + ConfigKeys.CONF_ENCODING.name() + "=UTF-16");
             }
             for (byte b : bytes) {
                 if (b == 0) {
                     throw new ConfigException(fileLocation,
-                            "file contains NUL bytes (UTF-16 without byte order mark?); save it as UTF-8");
+                            "file contains NUL bytes (UTF-16 without byte order mark?); save it as UTF-8, or"
+                                    + " start the wrapper with -D" + ConfigKeys.CONF_ENCODING.name()
+                                    + "=UTF-16LE");
                 }
             }
             boolean bom = startsWith(bytes, 0xEF, 0xBB, 0xBF);
@@ -405,6 +477,39 @@ public final class FileConfigSource implements ConfigSource {
                         + FALLBACK_CHARSET.name() + ". Save it as UTF-8 to remove this warning"));
                 return new String(bytes, FALLBACK_CHARSET);
             }
+        }
+
+        /**
+         * Strict decoding with the declared charset. A byte that does not fit is an error at its line
+         * (nyajsw never drops input silently, D7; YAJSW's reader probably replaced it). A leading
+         * byte order mark of the charset is skipped; a UTF-8 one under another charset is an error,
+         * since it would otherwise corrupt the first key without any warning.
+         */
+        private String decodeDeclared(byte[] bytes, Path path) {
+            Charset charset = encoding.charset();
+            String declared = charset.name() + ", the encoding set by " + encoding.declaredAt();
+            boolean utf8 = charset.equals(StandardCharsets.UTF_8);
+            if (!utf8 && startsWith(bytes, 0xEF, 0xBB, 0xBF)) {
+                throw new ConfigException(ConfigLocation.of(path.toString()),
+                        "file starts with a UTF-8 byte order mark but is to be read as " + declared);
+            }
+            CharsetDecoder decoder = charset.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT);
+            ByteBuffer in = ByteBuffer.wrap(bytes);
+            CharBuffer out = CharBuffer.allocate((int) (bytes.length * (double) decoder.maxCharsPerByte()) + 16);
+            CoderResult result = decoder.decode(in, out, true);
+            if (!result.isError()) {
+                result = decoder.flush(out);
+            }
+            out.flip();
+            if (result.isError()) {
+                long line = out.chars().filter(c -> c == '\n').count() + 1;
+                throw new ConfigException(new ConfigLocation(path.toString(), (int) Math.min(line, Integer.MAX_VALUE)),
+                        "byte that is not valid " + declared);
+            }
+            String text = out.toString();
+            return text.startsWith("\uFEFF") ? text.substring(1) : text;
         }
     }
 

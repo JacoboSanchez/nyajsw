@@ -11,6 +11,7 @@ import static io.github.jacobosanchez.nyajsw.config.KeySpec.nyajsw;
 import static io.github.jacobosanchez.nyajsw.config.KeySpec.yajsw;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.IGNORED;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.PLANNED;
+import static io.github.jacobosanchez.nyajsw.config.KeyStatus.SUPPORTED;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.UNSUPPORTED;
 import static io.github.jacobosanchez.nyajsw.config.KeyStatus.UNSUPPORTED_FATAL;
 import static io.github.jacobosanchez.nyajsw.config.KeyType.BOOLEAN;
@@ -52,9 +53,13 @@ public final class ConfigKeys {
     // ---- configuration file ----
 
     public static final KeySpec CONF_ENCODING = yajsw("wrapper.conf.encoding", STRING, CONFIGURATION)
-            .status(PLANNED, "P1")
+            .status(SUPPORTED)
             .description("Character encoding of the configuration file and its includes")
-            .notes("Until P1.9 files are read as UTF-8 with a windows-1252 fallback (D7)")
+            .derivedDefault("UTF-8, with a windows-1252 fallback and a warning for files that are not valid"
+                    + " UTF-8 (D7)")
+            .notes("A Java charset name, without variables. Set by a system property (required for UTF-16) or"
+                    + " in the file itself. Decoding is strict: a byte that does not fit is an error at its line."
+                    + " YAJSW defaults to the platform charset instead")
             .build();
 
     // ---- Java process ----

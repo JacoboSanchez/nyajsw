@@ -169,6 +169,151 @@ public class ConfigLoaderTest {
     }
 
     @Test
+    public void fileThatDeclaresItsEncodingIsReadAgainWithIt() throws IOException {
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, "wrapper.ntservice.displayname=Caf\u00e9\nwrapper.conf.encoding=ISO-8859-1\n"
+                .getBytes(StandardCharsets.ISO_8859_1));
+
+        LoadedConfig config = loader(Map.of(), Map.of()).load(file);
+
+        assertEquals(value(config, "wrapper.ntservice.displayname"), "Caf\u00e9");
+        assertTrue(config.warnings().isEmpty(), config.warnings().toString());
+    }
+
+    @Test
+    public void systemPropertyEncodingWinsAndAllowsUtf16() throws IOException {
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, "wrapper.conf.encoding=ISO-8859-1\nk=v\n".getBytes(StandardCharsets.UTF_16LE));
+
+        LoadedConfig config = loader(Map.of("wrapper.conf.encoding", "UTF-16LE"), Map.of()).load(file);
+
+        assertEquals(value(config, "k"), "v");
+    }
+
+    @Test
+    public void unknownEncodingIsAnErrorAtItsLine() throws IOException {
+        Path file = write("wrapper.conf", "a=1\nwrapper.conf.encoding=no-such-charset\n");
+
+        ConfigException e = expectThrows(ConfigException.class, () -> loader(Map.of(), Map.of()).load(file));
+
+        assertEquals(e.location().orElseThrow(), new ConfigLocation(file.toString(), 2));
+        assertTrue(e.getMessage().contains("unknown encoding 'no-such-charset'"), e.getMessage());
+    }
+
+    @Test
+    public void emptyEncodingKeepsTheDefaultDetection() throws IOException {
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, "wrapper.conf.encoding=\nk=caf\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        LoadedConfig config = loader(Map.of(), Map.of()).load(file);
+
+        assertEquals(value(config, "k"), "caf\u00e9");
+        assertTrue(config.warnings().get(0).message().contains("not valid UTF-8; read as windows-1252"),
+                config.warnings().toString());
+    }
+
+    @Test
+    public void includePathThatOnlyDecodesUnderTheDeclaredEncodingIsFound() throws IOException {
+        java.nio.charset.Charset cyrillic = java.nio.charset.Charset.forName("windows-1251");
+        Files.write(cyrillicFile(), "k=\u0434\u0430\n".getBytes(cyrillic));
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, ("wrapper.conf.encoding=windows-1251\ninclude = \u043d\u0430\u0441\u0442.conf\n"
+                + "#include \u043d\u0430\u0441\u0442.conf\n").getBytes(cyrillic));
+
+        LoadedConfig config = loader(Map.of(), Map.of()).load(file);
+
+        assertEquals(value(config, "k"), "\u0434\u0430");
+        assertEquals(config.warnings().stream().filter(w -> w.message().contains("set again")).count(), 1L,
+                config.warnings().toString());
+    }
+
+    @Test
+    public void declarationInAnIncludeAppliesAndTheLastDeclarationWins() throws IOException {
+        Files.write(dir.resolve("enc.conf"), "wrapper.conf.encoding=UTF-8\nwrapper.conf.encoding=ISO-8859-1\n"
+                .getBytes(StandardCharsets.US_ASCII));
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, "include = enc.conf\nk=caf\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        LoadedConfig config = loader(Map.of(), Map.of()).load(file);
+
+        assertEquals(value(config, "k"), "caf\u00e9");
+        assertTrue(config.warnings().stream().noneMatch(w -> w.message().contains("not valid UTF-8")),
+                config.warnings().toString());
+    }
+
+    @Test
+    public void systemPropertyBeatsAConflictingFileDeclaration() throws IOException {
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, "wrapper.conf.encoding=UTF-8\nk=caf\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        LoadedConfig config = loader(Map.of("wrapper.conf.encoding", "ISO-8859-1"), Map.of()).load(file);
+
+        assertEquals(value(config, "k"), "caf\u00e9");
+        assertEquals(value(config, "wrapper.conf.encoding"), "ISO-8859-1");
+    }
+
+    @Test
+    public void emptySystemPropertyForcesTheDefaultDetection() throws IOException {
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, "wrapper.conf.encoding=UTF-8\nk=caf\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        LoadedConfig config = loader(Map.of("wrapper.conf.encoding", ""), Map.of()).load(file);
+
+        assertEquals(value(config, "k"), "caf\u00e9");
+        assertTrue(config.warnings().get(0).message().contains("read as windows-1252"), config.warnings().toString());
+    }
+
+    @Test
+    public void encodingThatIsNotAsciiCompatibleCannotBeDeclaredInTheFile() throws IOException {
+        for (String name : List.of("UTF-16LE", "IBM037")) {
+            Path file = write("wrapper.conf", "wrapper.conf.encoding=" + name + "\nk=v\n");
+
+            ConfigException e = expectThrows(ConfigException.class, () -> loader(Map.of(), Map.of()).load(file));
+
+            assertTrue(e.getMessage().contains("cannot be declared inside the configuration file"), e.getMessage());
+            assertTrue(e.getMessage().contains("-Dwrapper.conf.encoding=" + name), e.getMessage());
+        }
+    }
+
+    @Test
+    public void declarationsThatDisagreeAfterTheRealReadAreAnError() throws IOException {
+        java.nio.charset.Charset cyrillic = java.nio.charset.Charset.forName("windows-1251");
+        Files.write(cyrillicFile(), "wrapper.conf.encoding=UTF-8\n".getBytes(cyrillic));
+        Path file = dir.resolve("wrapper.conf");
+        Files.write(file, "wrapper.conf.encoding=windows-1251\n#include \u043d\u0430\u0441\u0442.conf\n"
+                .getBytes(cyrillic));
+
+        ConfigException e = expectThrows(ConfigException.class, () -> loader(Map.of(), Map.of()).load(file));
+
+        assertTrue(e.getMessage().contains("make the declarations agree"), e.getMessage());
+    }
+
+    @Test
+    public void encodingNamesAcceptAliasesButNoVariables() throws IOException {
+        Path alias = dir.resolve("wrapper.conf");
+        Files.write(alias, "wrapper.conf.encoding= Cp1252 \nk=caf\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+        assertEquals(value(loader(Map.of(), Map.of()).load(alias), "k"), "caf\u00e9");
+
+        Path variable = write("wrapper.conf", "enc=UTF-8\nwrapper.conf.encoding=${enc}\n");
+        ConfigException e = expectThrows(ConfigException.class, () -> loader(Map.of(), Map.of()).load(variable));
+        assertTrue(e.getMessage().contains("variables are not resolved in wrapper.conf.encoding"), e.getMessage());
+
+        ConfigException unknown = expectThrows(ConfigException.class,
+                () -> loader(Map.of("wrapper.conf.encoding", "nope"), Map.of()).load(variable));
+        assertEquals(unknown.location().orElseThrow(), ConfigLocation.of("system property wrapper.conf.encoding"));
+    }
+
+    @Test
+    public void optionalIncludeWarningIsNotDuplicatedByTheProbe() throws IOException {
+        Path file = write("wrapper.conf", "wrapper.conf.encoding=UTF-8\n#include missing.conf\n");
+
+        LoadedConfig config = loader(Map.of(), Map.of()).load(file);
+
+        assertEquals(config.warnings().stream().filter(w -> w.message().startsWith("optional include skipped")).count(),
+                1L, config.warnings().toString());
+    }
+
+    @Test
     public void interpolationWarningsAreReported() throws IOException {
         Path file = write("wrapper.conf", "wrapper.working.dir=${nowhere}\n");
 
@@ -221,6 +366,16 @@ public class ConfigLoaderTest {
         LoadedConfig config = ConfigLoader.forCurrentProcess().load(file);
 
         assertEquals(value(config, "wrapper.app.parameter.1"), System.getProperty("java.version"));
+    }
+
+    /** A file with a Cyrillic name; skips the test where file names cannot hold it (ASCII POSIX locale). */
+    private Path cyrillicFile() {
+        try {
+            return dir.resolve("\u043d\u0430\u0441\u0442.conf");
+        } catch (java.nio.file.InvalidPathException e) {
+            throw new org.testng.SkipException("file names cannot hold Cyrillic here (sun.jnu.encoding="
+                    + System.getProperty("sun.jnu.encoding") + ")");
+        }
     }
 
     private static ConfigLoader loader(Map<String, String> systemProperties, Map<String, String> environment) {

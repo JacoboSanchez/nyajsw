@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 0 |
-| planned | 66 |
+| supported | 1 |
+| planned | 65 |
 | ignored | 2 |
 | unsupported | 39 |
 | unsupported, fatal when present | 2 |
@@ -31,7 +31,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
-| `wrapper.conf.encoding` | Character encoding of the configuration file and its includes | text | — | **planned** (P1) | Until P1.9 files are read as UTF-8 with a windows-1252 fallback (D7) |
+| `wrapper.conf.encoding` | Character encoding of the configuration file and its includes | text | UTF-8, with a windows-1252 fallback and a warning for files that are not valid UTF-8 (D7) | **supported** | A Java charset name, without variables. Set by a system property (required for UTF-16) or in the file itself. Decoding is strict: a byte that does not fit is an error at its line. YAJSW defaults to the platform charset instead |
 
 ## Java process
 
