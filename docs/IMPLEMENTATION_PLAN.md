@@ -312,7 +312,8 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   at the `env:` prefix); a reference that resolves to nothing and looks like code (parentheses,
   quotes, `;`, braces, brackets, or a leading `if`/`new`/`def` and a space) → error naming Groovy as
   unsupported, so names such as `${env:ProgramFiles(x86)}` still work; code around a nested
-  reference (`${util.f("${x}")}`) is caught too. Nested references (`${a${b}}`) resolve only the
+  reference (`${util.f("${x}")}`) is caught too, and so is YAJSW's `${keystore name}` (P1.10),
+  which would otherwise end up as a password. Nested references (`${a${b}}`) resolve only the
   inner one, with a warning, and there is no escape syntax for a literal `${` (both unverified
   against YAJSW, P1.9). Interpolation runs on the merged entries (one per key, after layering,
   P1.5). Warnings never echo values; errors show the offending expression only for non-secret keys,
@@ -611,7 +612,7 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       backslash-escaping and comma lists in every value, not only in paths (to be confirmed with
       YAJSW-shaped fixtures: commons-configuration2 splits lists only when YAJSW enables it);
       update §4.5.
-- [~] P1.10 Apply the YAJSW reference check of 2026-11-06 (§11) to the registry and regenerate
+- [x] P1.10 Apply the YAJSW reference check of 2026-11-06 (§11) to the registry and regenerate
       `docs/COMPATIBILITY.md`. Defaults that differ from the registry: `wrapper.on_exit.default`
       `SHUTDOWN` (registry `RESTART`; §3.3 says defaults match YAJSW where known, so keeping
       `RESTART` needs a §3.4 entry; the exact `wrapper.on_exit.0` default, which YAJSW does not
@@ -689,8 +690,8 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       application where or when it must not); `wrapper.on_exit.0` lost its own default, so code 0
       follows `wrapper.on_exit.default` as YAJSW documents; `wrapper.console.pipestreams` and
       `wrapper.save_interpolated` are ignored with a note on how nyajsw behaves; the new
-      deliberate differences are in §3.4. **Open:** `${keystore ...}` rejection in the
-      `Interpolator`.
+      deliberate differences are in §3.4. **Done (interpolation):** an unresolved
+      `${keystore name}` is an error, like Groovy, and omits the name for secret keys.
 - [ ] P1.11 String indices: YAJSW's reference allows `<n>` to be a number or a string, sorted
       alphanumerically (`wrapper.java.classpath.lib=lib/*/*.jar`, `wrapper.filter.trigger.exception`
       with `wrapper.filter.action.exception`). `KeyPattern` matches `<n>` as digits only, so such
@@ -866,6 +867,11 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.3: no bound on interpolation depth or expanded size; a very long reference chain overflows the
   stack and doubling chains grow exponentially. Low risk (files are written by administrators); add
   limits if real configurations show the need.
+- P1.10: Groovy and keystore errors hide the expression only when the key that owns the value is
+  secret, not when it is reached from a secret key (`wrapper.ntservice.password=${pw}` with
+  `pw=${keystore svcpass}` can name `svcpass` when `pw` is first resolved through the password).
+  No value leaks, only the keystore entry name; check the reference chain as `cycle()` does if it
+  matters.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.

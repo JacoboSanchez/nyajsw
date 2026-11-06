@@ -538,6 +538,16 @@ public class FileConfigSourceTest {
     }
 
     @Test
+    public void keystoreReferenceInIncludePathIsAnError() throws IOException {
+        Path main = write("main.conf", "include = ${keystore confdir}/x.conf\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("keystore references"), e.getMessage());
+    }
+
+    @Test
     public void includePathThatResolvesToNothingIsAnError() throws IOException {
         Path main = write("main.conf", "empty=\ninclude = ${empty}\n");
 
