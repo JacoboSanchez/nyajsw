@@ -6,6 +6,7 @@ import static org.testng.Assert.assertNotEquals;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.testng.annotations.DataProvider;
@@ -135,6 +136,35 @@ public class KeyPatternTest {
         IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> KeyPattern.of(template));
 
         assertTrue(e.getMessage().contains("'" + template + "'"), e.getMessage());
+    }
+
+    @Test
+    public void capturesReturnsPlaceholderValuesInTemplateOrder() {
+        assertEquals(KeyPattern.of("wrapper.java.additional.<n>").captures("wrapper.java.additional.12"),
+                Optional.of(List.of("12")));
+        assertEquals(KeyPattern.of("wrapper.filter.script.<n>.args").captures("wrapper.filter.script.3.args"),
+                Optional.of(List.of("3")));
+        assertEquals(KeyPattern.of("wrapper.app.env.<variable>").captures("wrapper.app.env.my.var"),
+                Optional.of(List.of("my.var")));
+        assertEquals(KeyPattern.of("wrapper.on_exit.<code>").captures("wrapper.on_exit.-1"),
+                Optional.of(List.of("-1")));
+        assertEquals(KeyPattern.of("wrapper.x.<a>.y.<n>").captures("wrapper.x.p.q.y.2"),
+                Optional.of(List.of("p.q", "2")));
+        assertEquals(KeyPattern.of("wrapper.java.command").captures("wrapper.java.command"),
+                Optional.of(List.of()));
+        assertEquals(KeyPattern.of("wrapper.java.command").captures("wrapper.java.commandx"), Optional.empty());
+        assertEquals(KeyPattern.of("wrapper.x.<n>").captures("wrapper.x.y"), Optional.empty());
+    }
+
+    @Test
+    public void labelsAndNumericPositions() {
+        KeyPattern pattern = KeyPattern.of("wrapper.x.<name>.<n>.<code>");
+
+        assertEquals(pattern.labels(), List.of("name", "n", "code"));
+        assertFalse(pattern.isNumeric(0));
+        assertTrue(pattern.isNumeric(1));
+        assertTrue(pattern.isNumeric(2));
+        assertTrue(KeyPattern.of("wrapper.x").labels().isEmpty());
     }
 
     @Test
