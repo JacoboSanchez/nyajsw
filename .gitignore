@@ -1,0 +1,29 @@
+# Maven build output (flat module layout: root and one level of modules)
+/target/
+/*/target/
+pom.xml.versionsBackup
+pom.xml.releaseBackup
+pom.xml.tag
+pom.xml.next
+release.properties
+buildNumber.properties
+dependency-reduced-pom.xml
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Leftovers of local runs (log fixtures under src/test/resources stay tracked)
+/log/
+/logs/
+hs_err_pid*.log
+replay_pid*.log

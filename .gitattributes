@@ -1,0 +1,14 @@
+# Normalise line endings in the repository (LF, AGENTS.md §4.4) whatever core.autocrlf says.
+* text=auto eol=lf
+
+# Windows batch files must keep CRLF on checkout to run reliably under cmd.exe.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Configuration fixtures are kept byte-exact: real wrapper.conf files use CRLF, BOMs and trailing
+# backslashes, and the parser must be tested against them as they are.
+nyajsw-wrapper/src/test/resources/conf/** -text
+
+*.jar binary
+*.dll binary
+*.zip binary

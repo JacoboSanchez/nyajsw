@@ -1,0 +1,30 @@
+# https://editorconfig.org — formatting basics from AGENTS.md §4.4
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 120
+
+[*.md]
+# Two trailing spaces are a Markdown line break; tables cannot be wrapped.
+trim_trailing_whitespace = false
+max_line_length = off
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.{bat,cmd}]
+# cmd.exe needs CRLF line endings for labels and multi-line blocks to work reliably.
+end_of_line = crlf
+
+[nyajsw-wrapper/src/test/resources/conf/**]
+# Configuration fixtures are byte-exact copies (CRLF, BOM, trailing backslashes); never rewrite them.
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = false

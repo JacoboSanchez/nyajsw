@@ -417,7 +417,8 @@ Goal: a building, testing, CI-verified empty project.
       Java 21 + Maven 3.9), versions in properties, one smoke TestNG test per module, Mockito wired
       with `-javaagent:<mockito-core>` in the surefire `argLine` to avoid the JDK 21 dynamic-agent
       warning, `MockitoAnnotations.openMocks` in `@BeforeMethod` (no `mockito-testng`).
-- [ ] P0.2 `.gitignore`, `.editorconfig`, short `README.md` linking to this plan and AGENTS.md.
+- [x] P0.2 `.gitignore`, `.editorconfig`, `.gitattributes` (LF, CRLF for `.bat`, byte-exact config
+      fixtures), short `README.md` linking to this plan and AGENTS.md.
 - [ ] P0.3 *(recommended)* GitHub Actions: `ubuntu-latest` runs `mvn -q verify`; `windows-latest`
       runs `mvn -q verify -Pwindows-integration` (hosted Windows runners are elevated — confirm in
       the first run). TestNG group `windows-integration` excluded unless the profile is active.
