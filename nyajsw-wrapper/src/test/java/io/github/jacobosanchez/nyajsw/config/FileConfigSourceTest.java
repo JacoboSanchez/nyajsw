@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.testng.SkipException;
@@ -307,14 +308,243 @@ public class FileConfigSourceTest {
         assertTrue(content.warnings().get(0).message().contains("#include.debug"));
     }
 
-    @Test
-    public void variableInIncludePathIsReportedAsUnsupported() throws IOException {
-        Path main = write("main.conf", "include = ${wrapper_home}/conf/extra.conf\n");
+    // ---- declared encoding (wrapper.conf.encoding) ----
 
-        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main).read());
+    @Test
+    public void declaredEncodingDecodesTheFileAndItsIncludesWithoutFallbackWarning() throws IOException {
+        Path extra = dir.resolve("extra.conf");
+        Files.write(extra, "e=\u00e9t\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "k=caf\u00e9\ninclude = extra.conf\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.ISO_8859_1)).read();
+
+        assertEquals(content.entries().stream().map(ConfigEntry::value).toList(), List.of("caf\u00e9", "\u00e9t\u00e9"));
+        assertTrue(content.warnings().isEmpty(), content.warnings().toString());
+    }
+
+    @Test
+    public void declaredEncodingIsStrict() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "k=caf\u00e9\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main,
+                interpolator(Map.of(), Map.of()), FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_8))
+                .read());
+
+        assertEquals(e.getMessage(), main + ":1: byte that is not valid UTF-8, the encoding set by test.conf:7");
+    }
+
+    @Test
+    public void strictDecodingNamesTheLineOfTheFirstBadByte() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "a=1\nb=2\n# Gr\u00fc\u00dfe\nc=3\n".getBytes(StandardCharsets.ISO_8859_1));
+
+        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main,
+                interpolator(Map.of(), Map.of()), FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_8))
+                .read());
+
+        assertEquals(e.location().orElseThrow(), new ConfigLocation(main.toString(), 3));
+    }
+
+    @Test
+    public void declaredUtf16SkipsItsByteOrderMark() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "\uFEFFk=v\n".getBytes(StandardCharsets.UTF_16LE));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_16LE)).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 1)));
+    }
+
+    @Test
+    public void utf8ByteOrderMarkUnderAnotherDeclaredEncodingIsAnError() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "\uFEFFk=v\n".getBytes(StandardCharsets.UTF_8));
+
+        ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main,
+                interpolator(Map.of(), Map.of()), FileConfigSource.Layers.NONE, declared(StandardCharsets.ISO_8859_1))
+                .read());
+
+        assertTrue(e.getMessage().contains("UTF-8 byte order mark"), e.getMessage());
+    }
+
+    @Test
+    public void utf16RejectionPointsAtTheSystemProperty() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "\uFEFFk=v\n".getBytes(StandardCharsets.UTF_16LE));
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("-Dwrapper.conf.encoding=UTF-16"), e.getMessage());
+    }
+
+    @Test
+    public void declaredUtf16IsAccepted() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, "k=v\n".getBytes(StandardCharsets.UTF_16LE));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_16LE)).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 1)));
+    }
+
+    @Test
+    public void declaredUtf8SkipsTheByteOrderMark() throws IOException {
+        Path main = dir.resolve("main.conf");
+        Files.write(main, ("\uFEFFk=v\n").getBytes(StandardCharsets.UTF_8));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()),
+                FileConfigSource.Layers.NONE, declared(StandardCharsets.UTF_8)).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 1)));
+    }
+
+    // ---- variables in include paths ----
+
+    @Test
+    public void includePathResolvesKeysDefinedEarlierRecursively() throws IOException {
+        Path extra = write("conf/extra.conf", "e=1\n");
+        Path main = write("main.conf", "app_home=" + slashes(dir) + "\nconf_dir=${app_home}/conf\n"
+                + "include = ${conf_dir}/extra.conf\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(2), entry("e", "1", extra, 1));
+        assertTrue(content.warnings().isEmpty(), content.warnings().toString());
+    }
+
+    @Test
+    public void includePathResolvesSystemPropertiesAndEnvironment() throws IOException {
+        Path extra = write("conf/extra.conf", "e=1\n");
+        Path main = write("main.conf", "#include.required ${sys:base}/${env:SUB}/extra.conf\n");
+
+        SourceContent content = new FileConfigSource(main,
+                interpolator(Map.of("base", slashes(dir)), Map.of("SUB", "conf"))).read();
+
+        assertEquals(content.entries(), List.of(entry("e", "1", extra, 1)));
+    }
+
+    @Test
+    public void includePathUsesTheLastDefinitionReadBeforeTheIncludeLine() throws IOException {
+        Path second = write("b/x.conf", "from=b\n");
+        write("a/x.conf", "from=a\n");
+        write("c/x.conf", "from=c\n");
+        Path main = write("main.conf", "sub=a\nsub=b\ninclude = ${sub}/x.conf\nsub=c\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(2), entry("from", "b", second, 1));
+    }
+
+    @Test
+    public void includedFileSeesKeysOfTheIncludingFile() throws IOException {
+        Path leaf = write("conf/leaf.conf", "l=1\n");
+        write("conf/middle.conf", "include = ${root}/conf/leaf.conf\n");
+        Path main = write("main.conf", "root=" + slashes(dir) + "\ninclude = conf/middle.conf\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(1), entry("l", "1", leaf, 1));
+    }
+
+    @Test
+    public void includePathPrefersTheLayerAboveThenTheFileThenTheLayerBelow() throws IOException {
+        write("above/x.conf", "from=above\n");
+        write("file/y.conf", "from=file\n");
+        write("below/z.conf", "from=below\n");
+        Path main = write("main.conf", "over=file\ninclude = ${over}/x.conf\n"
+                + "mid=file\ninclude = ${mid}/y.conf\ninclude = ${low}/z.conf\n");
+        ConfigLocation where = ConfigLocation.of("test");
+        FileConfigSource.Layers layers = new FileConfigSource.Layers(
+                Map.of("over", new ConfigEntry("over", "above", where)),
+                Map.of("mid", new ConfigEntry("mid", "below", where), "low", new ConfigEntry("low", "below", where)));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()), layers).read();
+
+        assertEquals(content.entries().stream().filter(e -> e.key().equals("from")).map(ConfigEntry::value).toList(),
+                List.of("above", "file", "below"));
+    }
+
+    @Test
+    public void unresolvedVariableInRequiredIncludeIsAnError() throws IOException {
+        Path main = write("main.conf", "include = ${wrapper_home}/conf/extra.conf\nwrapper_home=late\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
 
         assertEquals(e.location().orElseThrow(), new ConfigLocation(main.toString(), 1));
-        assertTrue(e.getMessage().contains("variables in include paths are not supported yet"), e.getMessage());
+        assertTrue(e.getMessage().contains("unresolved variable in include path ${wrapper_home}/conf/extra.conf"),
+                e.getMessage());
+    }
+
+    @Test
+    public void variableLeftUnresolvedInAReferencedKeyMakesTheIncludeFail() throws IOException {
+        Path main = write("main.conf", "base=${missing}\ninclude = ${base}/x.conf\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("unresolved variable in include path ${base}/x.conf"), e.getMessage());
+    }
+
+    @Test
+    public void optionalIncludeWithGroovyOrCycleInItsPathIsSkippedWithWarning() throws IOException {
+        Path main = write("main.conf", "a=${a}\n#include ${util.f('x')}\n#include ${a}/x.conf\nk=v\n");
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().get(1), entry("k", "v", main, 4));
+        assertEquals(content.warnings().stream().map(w -> w.location().line()).toList(), List.of(2, 3));
+        assertTrue(content.warnings().get(0).message().startsWith("optional include skipped, Groovy"),
+                content.warnings().toString());
+        assertTrue(content.warnings().get(1).message().contains("cycle"), content.warnings().toString());
+    }
+
+    @Test
+    public void includePathThatReadsASecretIsRefusedWithoutShowingIt() throws IOException {
+        write("TopSecret123.conf", "leak=1\n");
+        Path optional = write("optional.conf", "wrapper.ntservice.password=TopSecret123\n"
+                + "#include ${wrapper.ntservice.password}.conf\nk=v\n");
+
+        SourceContent content = new FileConfigSource(optional, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().stream().map(ConfigEntry::key).toList(),
+                List.of("wrapper.ntservice.password", "k"));
+        assertEquals(content.warnings().size(), 1);
+        assertEquals(content.warnings().get(0).message(),
+                "optional include skipped, include path refers to a secret key, which is not allowed");
+
+        Path required = write("required.conf", "pw_copy=${wrapper.app.password}\nwrapper.app.password=TopSecret123\n"
+                + "include = ${pw_copy}.conf\n");
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(required, interpolator(Map.of(), Map.of())).read());
+        assertFalse(e.getMessage().contains("TopSecret123"), e.getMessage());
+        assertTrue(e.getMessage().contains("refers to a secret key"), e.getMessage());
+    }
+
+    @Test
+    public void groovyInIncludePathIsAnError() throws IOException {
+        Path main = write("main.conf", "include = ${util.inquireCLI('path')}\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("Groovy"), e.getMessage());
+    }
+
+    @Test
+    public void includePathThatResolvesToNothingIsAnError() throws IOException {
+        Path main = write("main.conf", "empty=\ninclude = ${empty}\n");
+
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(main, interpolator(Map.of(), Map.of())).read());
+
+        assertTrue(e.getMessage().contains("include path is empty"), e.getMessage());
     }
 
     @Test
@@ -439,7 +669,7 @@ public class FileConfigSourceTest {
         Files.createDirectories(dir.resolve("folder"));
         Path main = write("main.conf", "#include\n#include ${home}/x.conf\n#include folder\nk=v\n");
 
-        SourceContent content = new FileConfigSource(main).read();
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of())).read();
 
         assertEquals(content.entries(), List.of(entry("k", "v", main, 4)));
         assertEquals(content.warnings().stream().map(w -> w.location().line()).toList(), List.of(1, 2, 3));
@@ -526,6 +756,19 @@ public class FileConfigSourceTest {
         Files.createDirectories(file.getParent());
         Files.writeString(file, content, StandardCharsets.UTF_8);
         return file.toAbsolutePath().normalize();
+    }
+
+    private static FileConfigSource.Encoding declared(java.nio.charset.Charset charset) {
+        return new FileConfigSource.Encoding(charset, "test.conf:7");
+    }
+
+    private static Interpolator interpolator(Map<String, String> systemProperties, Map<String, String> environment) {
+        return new Interpolator(systemProperties, environment, false, ConfigKeys.registry());
+    }
+
+    /** The path with forward slashes, which configuration values may contain on every OS. */
+    private static String slashes(Path path) {
+        return path.toString().replace('\\', '/');
     }
 
     private static Path fixture(String name) throws URISyntaxException {

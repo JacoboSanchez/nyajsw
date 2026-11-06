@@ -7,8 +7,11 @@ without edits, warning about anything it does not support, so a deployment migra
 wrapper rather than rewriting its configuration. On top of that it will add readiness and liveness
 probes, so "the service started" can mean "the application answers", not just "a process exists".
 
-> **Status: early development.** Only the build skeleton exists so far; nothing is usable yet.
-> Progress is tracked phase by phase in the [implementation plan](docs/IMPLEMENTATION_PLAN.md).
+> **Status: early development.** The configuration engine exists (loading, includes, variables,
+> validation, typed settings); nothing that runs an application or a service is usable yet.
+> Progress is tracked phase by phase in the [implementation plan](docs/IMPLEMENTATION_PLAN.md), and
+> every configuration key with its support status is listed in the generated
+> [compatibility matrix](docs/COMPATIBILITY.md).
 
 ## Building
 
