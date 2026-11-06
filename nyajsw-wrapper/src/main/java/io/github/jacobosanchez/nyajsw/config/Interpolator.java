@@ -28,7 +28,10 @@ import java.util.regex.Pattern;
  *       environment variable; their names are taken as they are, so
  *       <code>${env:ProgramFiles(x86)}</code> works.</li>
  *   <li>Values taken from configuration keys are resolved themselves, recursively; a reference cycle
- *       is an error. Values of system properties and environment variables are used as they are.</li>
+ *       is an error. That includes keys set by system properties, which {@link ConfigLoader} merges
+ *       as entries. Values read through the system-property and environment lookups
+ *       (<code>${sys:name}</code>, <code>${env:NAME}</code>, or a name no key has) are used as they
+ *       are.</li>
  *   <li>A reference that cannot be resolved is kept as written, with a warning. A <code>${</code>
  *       without a closing brace is kept as written, with a warning. Nested references are not
  *       supported: in <code>${a${b}}</code> only the inner reference is resolved and the outer
@@ -82,14 +85,24 @@ public final class Interpolator {
      * the {@code platform} abstraction once it exists (P5.1).
      */
     public static Interpolator forCurrentProcess() {
+        return new Interpolator(currentSystemProperties(), System.getenv(), currentEnvironmentIgnoresCase(),
+                ConfigKeys.registry());
+    }
+
+    /** A snapshot of this JVM's string-valued system properties. */
+    static Map<String, String> currentSystemProperties() {
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((name, value) -> {
             if (name instanceof String key && value instanceof String text) {
                 properties.put(key, text);
             }
         });
-        boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
-        return new Interpolator(properties, System.getenv(), windows, ConfigKeys.registry());
+        return properties;
+    }
+
+    /** Whether this process's environment variable names are case-insensitive (Windows). */
+    static boolean currentEnvironmentIgnoresCase() {
+        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
     }
 
     /**

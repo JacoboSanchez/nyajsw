@@ -135,6 +135,13 @@ public class KeySpecTest {
     }
 
     @Test
+    public void unsupportedKeysHaveNoConstantDefault() {
+        assertInvalid(base(KeyType.STRING).status(KeyStatus.UNSUPPORTED).defaultValue("x"), "constant default");
+        assertInvalid(base(KeyType.STRING).status(KeyStatus.UNSUPPORTED_FATAL).defaultValue("x"), "constant default");
+        base(KeyType.STRING).status(KeyStatus.UNSUPPORTED).derivedDefault("documented only").build();
+    }
+
+    @Test
     public void passwordKeysMustBeSecretAndSecretsHaveNoConstantDefault() {
         assertInvalid(KeySpec.yajsw("wrapper.x.Password", KeyType.STRING, KeyCategory.JAVA)
                 .status(KeyStatus.SUPPORTED).description("X"), "secret");

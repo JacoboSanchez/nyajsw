@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Matcher;
@@ -42,8 +43,11 @@ import java.util.stream.Collectors;
  *       against the directory of the including file; when nothing exists there but the path exists
  *       relative to the main configuration file, as YAJSW resolved it, that file is used with a
  *       warning. Surrounding double quotes are removed. {@code ${...}} variables in the path are
- *       resolved by the {@link Interpolator}, against the entries read before the include line (the
- *       last one wins for a repeated key), the system properties and the environment.
+ *       resolved by the {@link Interpolator} with the layer order of the whole configuration: a key
+ *       set by a higher layer ({@link Layers#above()}, e.g. a {@code -Dwrapper.*} system
+ *       property), else the last entry for it read before the include line, else a lower layer
+ *       ({@link Layers#below()}, the built-in defaults); then system properties and the
+ *       environment.
  *       {@code #include.required} and {@code include =} are <em>required</em>: a missing file or an
  *       unresolved variable in the path is an error naming file and line. A plain {@code #include} is
  *       optional, as in the Tanuki format it comes from (and YAJSW treats it as a comment): the same
@@ -74,6 +78,7 @@ public final class FileConfigSource implements ConfigSource {
 
     private final Path file;
     private final Interpolator interpolator;
+    private final Layers layers;
 
     /**
      * Reads {@code file}, resolving include paths against this process's system properties and
@@ -92,8 +97,37 @@ public final class FileConfigSource implements ConfigSource {
      * @param interpolator resolves {@code ${...}} variables in include paths
      */
     public FileConfigSource(Path file, Interpolator interpolator) {
+        this(file, interpolator, Layers.NONE);
+    }
+
+    /**
+     * @param file         the configuration file; made absolute so messages and relative includes do
+     *                     not depend on the current directory
+     * @param interpolator resolves {@code ${...}} variables in include paths
+     * @param layers       the entries of the layers around the file, for variables in include paths
+     */
+    public FileConfigSource(Path file, Interpolator interpolator, Layers layers) {
         this.file = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
         this.interpolator = Objects.requireNonNull(interpolator, "interpolator");
+        this.layers = Objects.requireNonNull(layers, "layers");
+    }
+
+    /**
+     * The configuration layers around the file, by key, so include paths resolve variables the way
+     * the merged configuration will (plan §4.5, layering).
+     *
+     * @param above entries that override the file, e.g. {@code -Dwrapper.*} system properties
+     * @param below entries the file overrides, e.g. built-in defaults
+     */
+    public record Layers(Map<String, ConfigEntry> above, Map<String, ConfigEntry> below) {
+
+        /** No other layers: include paths see only the file's own entries. */
+        public static final Layers NONE = new Layers(Map.of(), Map.of());
+
+        public Layers {
+            above = Map.copyOf(above);
+            below = Map.copyOf(below);
+        }
     }
 
     @Override
@@ -103,7 +137,7 @@ public final class FileConfigSource implements ConfigSource {
 
     @Override
     public SourceContent read() {
-        ReadState state = new ReadState(file.getParent(), interpolator);
+        ReadState state = new ReadState(file.getParent(), interpolator, layers);
         state.readFile(file, null);
         return new SourceContent(state.entries, state.warnings);
     }
@@ -113,6 +147,7 @@ public final class FileConfigSource implements ConfigSource {
 
         private final Path mainDirectory;
         private final Interpolator interpolator;
+        private final Layers layers;
         private final List<ConfigEntry> entries = new ArrayList<>();
         private final List<ConfigWarning> warnings = new ArrayList<>();
         /** Real paths of the files being read, for cycle detection across symbolic links. */
@@ -120,9 +155,10 @@ public final class FileConfigSource implements ConfigSource {
         /** The same files as written in the configuration, for messages. */
         private final Deque<Path> shownChain = new ArrayDeque<>();
 
-        ReadState(Path mainDirectory, Interpolator interpolator) {
+        ReadState(Path mainDirectory, Interpolator interpolator, Layers layers) {
             this.mainDirectory = mainDirectory;
             this.interpolator = interpolator;
+            this.layers = layers;
         }
 
         /**
@@ -258,7 +294,7 @@ public final class FileConfigSource implements ConfigSource {
             if (pathText.contains("${")) {
                 Interpolator.Resolution resolution;
                 try {
-                    resolution = interpolator.resolve(pathText, location, this::lastEntry);
+                    resolution = interpolator.resolve(pathText, location, this::layeredEntry);
                 } catch (ConfigException e) {
                     if (required) {
                         throw e;
@@ -301,6 +337,15 @@ public final class FileConfigSource implements ConfigSource {
                 return;
             }
             readFile(target, location);
+        }
+
+        /** The entry {@code key} has at this point, in layer order (see the class description). */
+        private Optional<ConfigEntry> layeredEntry(String key) {
+            ConfigEntry above = layers.above().get(key);
+            if (above != null) {
+                return Optional.of(above);
+            }
+            return lastEntry(key).or(() -> Optional.ofNullable(layers.below().get(key)));
         }
 
         /** The last entry read so far for {@code key}: later definitions override earlier ones. */
@@ -401,7 +446,7 @@ public final class FileConfigSource implements ConfigSource {
     }
 
     /** Removes whitespace and control characters at both ends. */
-    private static String trim(String text) {
+    static String trim(String text) {
         int start = 0;
         int end = text.length();
         while (start < end && isBlank(text.charAt(start))) {
