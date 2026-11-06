@@ -15,6 +15,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -40,11 +41,14 @@ import java.util.stream.Collectors;
  *       compared case-insensitively) insert another file at that point. A relative path is resolved
  *       against the directory of the including file; when nothing exists there but the path exists
  *       relative to the main configuration file, as YAJSW resolved it, that file is used with a
- *       warning. Surrounding double quotes are removed. {@code #include.required} and
- *       {@code include =} are <em>required</em>: a missing file or a {@code ${...}} variable in the
- *       path (not supported yet) is an error naming file and line. A plain {@code #include} is
+ *       warning. Surrounding double quotes are removed. {@code ${...}} variables in the path are
+ *       resolved by the {@link Interpolator}, against the entries read before the include line (the
+ *       last one wins for a repeated key), the system properties and the environment.
+ *       {@code #include.required} and {@code include =} are <em>required</em>: a missing file or an
+ *       unresolved variable in the path is an error naming file and line. A plain {@code #include} is
  *       optional, as in the Tanuki format it comes from (and YAJSW treats it as a comment): the same
- *       problems only produce a warning. An include cycle is always an error. Other
+ *       problems, and also a Groovy expression or a reference cycle in its path, only produce a
+ *       warning. An include cycle is always an error. Other
  *       {@code #include.*} directives are ignored with a warning.</li>
  *   <li>Files are read as UTF-8; a leading byte order mark is skipped. A file without a byte order
  *       mark that is not valid UTF-8 is read as windows-1252, the usual encoding of files edited
@@ -69,13 +73,27 @@ public final class FileConfigSource implements ConfigSource {
     private static final Pattern LOOKS_LIKE_WRAPPER_ENTRY = Pattern.compile("^wrapper\\.[^\\s=]*\\s*=.*");
 
     private final Path file;
+    private final Interpolator interpolator;
 
     /**
+     * Reads {@code file}, resolving include paths against this process's system properties and
+     * environment.
+     *
      * @param file the configuration file; made absolute so messages and relative includes do not
      *             depend on the current directory
      */
     public FileConfigSource(Path file) {
+        this(file, Interpolator.forCurrentProcess());
+    }
+
+    /**
+     * @param file         the configuration file; made absolute so messages and relative includes do
+     *                     not depend on the current directory
+     * @param interpolator resolves {@code ${...}} variables in include paths
+     */
+    public FileConfigSource(Path file, Interpolator interpolator) {
         this.file = Objects.requireNonNull(file, "file").toAbsolutePath().normalize();
+        this.interpolator = Objects.requireNonNull(interpolator, "interpolator");
     }
 
     @Override
@@ -85,7 +103,7 @@ public final class FileConfigSource implements ConfigSource {
 
     @Override
     public SourceContent read() {
-        ReadState state = new ReadState(file.getParent());
+        ReadState state = new ReadState(file.getParent(), interpolator);
         state.readFile(file, null);
         return new SourceContent(state.entries, state.warnings);
     }
@@ -94,6 +112,7 @@ public final class FileConfigSource implements ConfigSource {
     private static final class ReadState {
 
         private final Path mainDirectory;
+        private final Interpolator interpolator;
         private final List<ConfigEntry> entries = new ArrayList<>();
         private final List<ConfigWarning> warnings = new ArrayList<>();
         /** Real paths of the files being read, for cycle detection across symbolic links. */
@@ -101,8 +120,9 @@ public final class FileConfigSource implements ConfigSource {
         /** The same files as written in the configuration, for messages. */
         private final Deque<Path> shownChain = new ArrayDeque<>();
 
-        ReadState(Path mainDirectory) {
+        ReadState(Path mainDirectory, Interpolator interpolator) {
             this.mainDirectory = mainDirectory;
+            this.interpolator = interpolator;
         }
 
         /**
@@ -236,8 +256,28 @@ public final class FileConfigSource implements ConfigSource {
                 return;
             }
             if (pathText.contains("${")) {
-                skipOrFail(required, location, "variables in include paths are not supported yet: " + pathText);
-                return;
+                Interpolator.Resolution resolution;
+                try {
+                    resolution = interpolator.resolve(pathText, location, this::lastEntry);
+                } catch (ConfigException e) {
+                    if (required) {
+                        throw e;
+                    }
+                    // A plain #include only warns, whatever the problem (YAJSW reads it as a comment).
+                    warnings.add(new ConfigWarning(location, "optional include skipped, " + withoutLocation(e)));
+                    return;
+                }
+                warnings.addAll(resolution.warnings());
+                if (!resolution.complete()) {
+                    // Not naming the variables: some may come from the values of other (secret) keys.
+                    skipOrFail(required, location, "unresolved variable in include path " + pathText);
+                    return;
+                }
+                pathText = unquote(trim(resolution.value()));
+                if (pathText.isEmpty()) {
+                    skipOrFail(required, location, "include path is empty after resolving variables");
+                    return;
+                }
             }
             Path relative;
             try {
@@ -261,6 +301,22 @@ public final class FileConfigSource implements ConfigSource {
                 return;
             }
             readFile(target, location);
+        }
+
+        /** The last entry read so far for {@code key}: later definitions override earlier ones. */
+        private Optional<ConfigEntry> lastEntry(String key) {
+            for (int i = entries.size() - 1; i >= 0; i--) {
+                if (entries.get(i).key().equals(key)) {
+                    return Optional.of(entries.get(i));
+                }
+            }
+            return Optional.empty();
+        }
+
+        private static String withoutLocation(ConfigException e) {
+            String prefix = e.location().map(where -> where + ": ").orElse("");
+            String message = e.getMessage();
+            return message.startsWith(prefix) ? message.substring(prefix.length()) : message;
         }
 
         private void skipOrFail(boolean required, ConfigLocation location, String message) {

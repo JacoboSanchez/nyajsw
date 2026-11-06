@@ -264,9 +264,11 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   orchestrates): line-oriented, `key=value` (split at the first `=`), `#` and `!` comment lines,
   blank lines ignored, include directives `#include <path>`, `#include.required <path>` and
   `include = <path>` (key case-insensitive) relative to the including file, falling back with a
-  warning to the main file's directory (YAJSW's base) when nothing exists there. `include =` and
-  `#include.required` are required: a missing file or a `${...}` in the path → error naming file and
-  line. A plain `#include` is optional, as in the Tanuki format (YAJSW treats it as a comment), so
+  warning to the main file's directory (YAJSW's base) when nothing exists there. `${...}` in an
+  include path is resolved by the `Interpolator` against the entries read before the include line
+  (last definition wins), system properties and environment. `include =` and
+  `#include.required` are required: a missing file or an unresolved variable in the path → error
+  naming file and line. A plain `#include` is optional, as in the Tanuki format (YAJSW treats it as a comment), so
   the same problems only warn; an include cycle is always an error. Encoding: UTF-8,
   BOM skipped; BOM + invalid UTF-8 → error; no BOM and invalid UTF-8 → windows-1252 with a warning;
   UTF-16 (BOM or NUL bytes) → error asking for UTF-8 (D7). Backslashes are **literal** except that
@@ -280,9 +282,18 @@ interfaces at the OS boundary, immutable config records, one place per concern.
 * **Interpolation** (`Interpolator`): `${name}` resolved against, in order, keys in the
   configuration itself (YAJSW lets any key act as a variable, e.g. `JAVA_HOME=…` then
   `${JAVA_HOME}`), wrapper JVM system properties, environment variables (case-insensitive on
-  Windows); the explicit prefixes `${sys:name}` and `${env:NAME}` select one source. Unresolved →
-  left as-is plus a warning; cycles → error; `${` followed by code-like content (`if`, `new`, `(`)
-  → error naming Groovy as unsupported.
+  Windows, an exact name first); the explicit prefixes `${sys:name}` and `${env:NAME}` select one
+  source. Values taken from configuration keys are resolved recursively; system-property and
+  environment values are used as they are. Unresolved → left as-is plus a warning; a `${` without
+  `}` → kept with a warning; cycles → error (a self-reference such as `JAVA_HOME=${JAVA_HOME}` points
+  at the `env:` prefix); a reference that resolves to nothing and looks like code (parentheses,
+  quotes, `;`, braces, brackets, or a leading `if`/`new`/`def` and a space) → error naming Groovy as
+  unsupported, so names such as `${env:ProgramFiles(x86)}` still work; code around a nested
+  reference (`${util.f("${x}")}`) is caught too. Nested references (`${a${b}}`) resolve only the
+  inner one, with a warning, and there is no escape syntax for a literal `${` (both unverified
+  against YAJSW, P1.9). Interpolation runs on the merged entries (one per key, after layering,
+  P1.5). Warnings never echo values; errors show the offending expression only for non-secret keys,
+  and for secret keys omit the referenced names and the cycle chain too.
 * **Layering**: built-in defaults ← file (+includes) ← wrapper JVM system properties
   (`-Dwrapper.x=y` on the wrapper command line, as YAJSW allows).
 * **Indexed and dynamic keys**: `prefix.N` collected in numeric order, gaps allowed;
@@ -451,12 +462,16 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       default for a clean exit; YAJSW defaults the plan has not confirmed are left undeclared or
       marked `Unverified.DEFAULT` (R11). Secret detection also treats any key ending in `.password`
       as secret, known or not.
-- [ ] P1.3 `Interpolator`: config/system-property/environment resolution, `sys:`/`env:` prefixes,
+- [x] P1.3 `Interpolator`: config/system-property/environment resolution, `sys:`/`env:` prefixes,
       unresolved warnings, cycle detection, Groovy detection. Also interpolate include paths (YAJSW
-      does; P1.1 rejects `${` in include paths with an explicit error until then), which needs a
-      resolver hook in `FileConfigSource`.
+      does), through an `Interpolator` passed to `FileConfigSource` (defaulting to this process's
+      system properties and environment).
 - [ ] P1.4 Indexed (`.N`) and dynamic (`wrapper.app.env.*`, `wrapper.on_exit.*`) key collection.
-- [ ] P1.5 Layering/precedence (defaults, file, system properties) and `ConfigLoader` entry point.
+- [ ] P1.5 Layering/precedence (defaults, file, system properties) and `ConfigLoader` entry point;
+      merge to one entry per key before calling `Interpolator.interpolate`, with the same
+      "last definition wins" rule that include paths already use (P1.3), or change both together;
+      give `FileConfigSource` a lookup with the same layer order for include paths, so a
+      `-D` system property that overrides a key also applies to `${key}` in an include path.
 - [ ] P1.6 Typed `WrapperConfig` records + validation with aggregated `ConfigException`; unknown /
       unsupported / fatal key handling; secret masking in dumps.
 - [ ] P1.7 `docs/COMPATIBILITY.md` generator + staleness test (`-Dnyajsw.docs.update=true`
@@ -607,6 +622,14 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.2: `KeyPattern.commonExample` only finds overlaps with one segment per placeholder; free
   placeholders that span several segments in different shapes can still overlap undetected. No
   declared key is affected; revisit if a template with two free placeholders is added.
+- P1.3: include paths resolve `${key}` against file entries read so far, without the
+  system-property layer or built-in defaults; aligned in P1.5 (see that item).
+- P1.3: a non-secret key whose value refers to a secret one (`a=${wrapper.app.password}`) receives
+  the secret value; P1.6 must mask such derived values in dumps (e.g. by tracking secret taint during
+  interpolation), not only keys the registry marks as secret.
+- P1.3: no bound on interpolation depth or expanded size; a very long reference chain overflows the
+  stack and doubling chains grow exponentially. Low risk (files are written by administrators); add
+  limits if real configurations show the need.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -745,7 +768,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 | D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
 | D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (P0.4: JNA and `jna-platform` 5.19.1, managed in the parent POM; added to `nyajsw-wrapper` in P5.2) |
 | D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Proposed (confirm in P4) |
-| D7 | Custom line parser (§4.5); literal backslashes except odd-trailing-`\` continuation, skipping blank/comment lines inside it; UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW's setting unverified, see Q1), so non-ASCII text in UTF-8 files may now read differently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: honour `wrapper.conf.encoding`, allow `${...}` in include paths, and verify the backslash and lower-cased-environment behaviour against a real file |
+| D7 | Custom line parser (§4.5); literal backslashes except odd-trailing-`\` continuation, skipping blank/comment lines inside it; UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW's setting unverified, see Q1), so non-ASCII text in UTF-8 files may now read differently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: honour `wrapper.conf.encoding` and verify the backslash and lower-cased-environment behaviour against a real file; `${...}` in include paths is supported since P1.3 |
 | D8 | Single key registry drives parsing, validation, warnings and generated docs. Keys are `public static final KeySpec` constants in `ConfigKeys`, collected into one immutable `KeyRegistry`; derived defaults are declared there by description and computed by the typed view that owns the key (P1.6), because they depend on typed values (e.g. `wrapper.agent.enabled`) or the configuration file's location rather than on raw strings | One source of truth; no drift between code and docs; constants let code refer to keys without repeating names | Accepted (P1.2) |
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
