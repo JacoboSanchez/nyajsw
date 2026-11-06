@@ -69,10 +69,12 @@ can mean "the application actually answers", not just "a process exists".
   include directives in both spellings seen in YAJSW files, `#include <file>` and
   `include = <file>`. Details in §4.5.
 * Every key is classified in the **key registry** (§4.5) with one status: `SUPPORTED`, `PLANNED`,
-  `EXTENSION` (nyajsw-only), `IGNORED` (accepted, warned, no effect), `UNSUPPORTED` (warned) or
+  `IGNORED` (accepted, warned, no effect), `UNSUPPORTED` (warned) or
   `UNSUPPORTED_FATAL` (validation fails when the key is present, because ignoring it would change
   behaviour dangerously — e.g. `wrapper.app.account`, which would otherwise run the application
-  under the wrong account). Partial support is expressed in the key's notes. The registry generates
+  under the wrong account). Partial support is expressed in the key's notes. Whether a key is a nyajsw
+  extension is a separate attribute, its origin (`YAJSW`/`NYAJSW`), so an extension can be
+  `PLANNED` or `SUPPORTED` like any other key. The registry generates
   `docs/COMPATIBILITY.md`; §7 is the hand-written initial version used to seed it.
 * Enumerated values accept YAJSW spelling and well-known aliases
   (`DELAYED_AUTO_START`/`DELAY_START`, log levels `NONE FATAL ERROR STATUS INFO DEBUG`).
@@ -172,7 +174,7 @@ older JVMs than the wrapper requires.
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
 | `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog`, `LogLevel`, `LogFormat`, `RollingFileHandler` |
 | `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (factory), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) |
-| `platform.windows` | Windows implementations. | `ScmApi` (thin facade, one method per Win32 call we use), `JnaScmApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
+| `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
 | `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `PlatformException`, which `cli` maps to exit code 4. | `UnsupportedServiceController` |
 | `agent` (module `nyajsw-agent`) | Agent `premain` and the shared protocol. | `Agent`, `AgentProtocol` |
@@ -201,11 +203,12 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   `AssignProcessToJobObject`, `TerminateJobObject`); `SetConsoleTitle` and `SetConsoleCtrlHandler`
   (backlog items); LSA functions to grant "Log on as a service" (`LsaOpenPolicy`,
   `LsaAddAccountRights`, `LsaClose`, `LsaNtStatusToWinError`). Every structure gets a layout test
-  (`size()`, field order) and is used only through `ScmApi` / `ProcessTools`.
-* `ScmApi` is **our** interface with one method per Win32 call we use. `JnaScmApi` implements it,
-  and is the only class that reads the last error (`Native.getLastError()`), wrapping it into
-  `ServiceException` with the Win32 code and message. Tests mock `ScmApi`; JNA types never leave
-  `platform.windows`. (`W32ServiceManager`/`W32Service` from `jna-platform` are not used: they
+  (`size()`, field order) and is used only through the `ScmApi` / `ProcessApi` facades.
+* `ScmApi` (service control) and `ProcessApi` (job objects, `OpenProcess`, console functions) are
+  **our** interfaces with one method per Win32 call we use. `JnaScmApi` and `JnaProcessApi`
+  implement them and are the only classes that read the last error (`Native.getLastError()`),
+  wrapping it into `ServiceException` / `PlatformException` with the Win32 code and message. Tests
+  mock the facades; JNA types never leave `platform.windows`. (`W32ServiceManager`/`W32Service` from `jna-platform` are not used: they
   cannot create or delete services, throw their own exception type and are not mockable — D5.)
 * **Minimal access rights per command**: `-q` opens the SCM with `SC_MANAGER_CONNECT` and the
   service with `SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG`, so it works unelevated; install/remove
@@ -213,17 +216,20 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   `SERVICE_STOP | SERVICE_QUERY_STATUS`.
 * **Service registration**: `CreateService(SERVICE_WIN32_OWN_PROCESS, start type, dependencies as a
   double-NUL-terminated list, account, password)`, then `ChangeServiceConfig2` for the description,
-  delayed auto-start and the pre-shutdown timeout (set to `wrapper.shutdown.timeout`). When
-  `wrapper.ntservice.account` is set, the account is granted `SeServiceLogonRight` through the LSA
-  binding (as YAJSW/Tanuki do); without it the first start fails with 1069. Binary path, built by
+  delayed auto-start and the pre-shutdown timeout (`wrapper.shutdown.timeout` plus a margin for the
+  final `terminate` step and the `STOPPED` report, never below the Windows default of 180 s). When
+  `wrapper.ntservice.account` names a real account (not `LocalSystem`, `LocalService` or
+  `NetworkService`), it is granted `SeServiceLogonRight` through the LSA binding (as YAJSW/Tanuki
+  do); without it the first start fails with 1069. Binary path, built by
   `ServiceCommandLine` (D12):
 
   ```
   "<java.home>\bin\javaw.exe" <wrapper.ntservice.java.additional.N …> -Djna.tmpdir=<wrapper.tmp.path> -cp "<java.class.path of the installing JVM>" io.github.jacobosanchez.nyajsw.cli.Main --service "<absolute wrapper.conf>"
   ```
 
-  `java.home` and `java.class.path` are those of the JVM running `-i`, so the command works from an
-  unpacked build and from the distribution alike. `wrapper.java.command` governs only the
+  `java.home` and the default classpath (`java.class.path`) are those of the JVM running `-i`, so the
+  command works from an unpacked build and from the distribution alike; callers may pass an explicit
+  classpath. `wrapper.java.command` governs only the
   application JVM.
 * **Running as the service** (`--service`): `Main` calls `StartServiceCtrlDispatcher` before
   anything else, so the SCM's 30-second start window is never at risk. The table entry name may be
@@ -273,8 +279,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   `wrapper.app.env.<KEY>`, `wrapper.on_exit.<code>`, `wrapper.filter.trigger.N` handled by
   `KeySpec` patterns.
 * **Key registry** (`ConfigKeys`): every key declared once with name/pattern, type (string, int,
-  duration-seconds, size, enum, path, boolean, list), default, origin (`YAJSW`/`NYAJSW`),
-  `KeyStatus` (§3.1), secret flag, description, and the phase/notes. Used for: typed access,
+  duration-seconds, size, enum, path, boolean, list), default (a constant, or a derived default
+  computed from the resolved configuration, e.g. the stop-strategy and liveness defaults that depend
+  on `wrapper.agent.enabled`), origin (`YAJSW`/`NYAJSW`), `KeyStatus` (§3.1), secret flag,
+  description, and the phase/notes. Used for: typed access,
   validation with aggregated errors, unknown/unsupported warnings, secret masking, and **generating
   `docs/COMPATIBILITY.md`** (a test fails when the committed document is stale; running it with
   `-Dnyajsw.docs.update=true` rewrites the document).
@@ -450,7 +458,8 @@ Goal: build and run the application command line exactly as the configuration sa
 - [ ] P2.4 `ApplicationProcess` + `OutputPump`: `ProcessBuilder` with `wrapper.app.env.*`,
       `wrapper.working.dir`, `wrapper.tmp.path`, piped output with explicit charset, pid, exit code,
       destroy / process-tree termination helper.
-- [ ] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C → stop as in §4.6.
+- [ ] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C waits up to
+      `wrapper.shutdown.timeout` for the child, then terminates it (full semantics in P3.6).
 - [ ] P2.6 (optional) `wrapper.image` for non-Java executables through the same `ApplicationProcess`.
 Done when: golden command-line tests pass on fixtures; a test main class is launched and its output
 captured on Linux and Windows.
@@ -486,13 +495,16 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
 - [ ] P5.2 `ScmApi` facade + `JnaScmApi` (last-error handling in one place); hand-written
       `SERVICE_DELAYED_AUTO_START_INFO` / `SERVICE_PRESHUTDOWN_INFO` with layout tests;
       `WindowsServiceController` (install with start type, dependencies as `\0`-separated list with
-      a test, account, description, delayed start, pre-shutdown timeout; remove; start; stop; status
+      a test, account, description, delayed start, pre-shutdown timeout with margin; remove; start; stop; status
       with pid), minimal access rights per command, wait-for-state helper, `Win32Errors` mapping.
-- [ ] P5.3 `ServiceCommandLine`: binary path from `java.home`, `java.class.path`,
-      `wrapper.ntservice.java.additional.N`, `-Djna.tmpdir`, quoting (D12).
+- [ ] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
+      (default `java.class.path`; integration tests pass the real jars because surefire's
+      `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.java.additional.N`,
+      `-Djna.tmpdir`, quoting (D12).
 - [ ] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes.
-- [ ] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` is set
-      (hand-written LSA binding), with a clear error when it cannot be granted.
+- [ ] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` names a real
+      account (skipped for the built-in `LocalSystem`/`LocalService`/`NetworkService`); hand-written
+      LSA binding; clear error when it cannot be granted.
 - [ ] P5.6 `windows-integration` tests: install → query → remove a throwaway service (start/stop
       come with P6), cleanup in `@AfterMethod(alwaysRun = true)`.
 Done when: unit tests cover every `ScmApi` interaction with mocks; integration job green on Windows.
@@ -504,7 +516,8 @@ Goal: the wrapper itself runs under the SCM.
       checkpoint/wait-hint reporting, `STOP`, `SHUTDOWN`, `PRESHUTDOWN` (accepted by default),
       `INTERROGATE`; named callback thread; `STOPPED` reported last.
 - [ ] P6.2 `--service <conf>` command: dispatcher first, then configuration, file-only logging,
-      supervisor wiring, `ERROR_SERVICE_SPECIFIC_ERROR` on `FAILED`.
+      supervisor wiring with `START_PENDING` until `ProbeRunner` readiness (`process` probe),
+      `ERROR_SERVICE_SPECIFIC_ERROR` on `FAILED`.
 - [ ] P6.3 Service-account hardening: working directory default, clear errors for unwritable
       log/pid paths, documentation of `jna.tmpdir` / `jnidispatch.dll` options.
 - [ ] P6.4 Job object (hand-written binding) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for
@@ -515,9 +528,9 @@ Done when: a real service runs a test application from an unmodified YAJSW-style
 
 ### P7 — Probes and agent
 Goal: configurable readiness/liveness; graceful stop through the agent.
-- [ ] P7.1 `wrapper.readiness.*` / `wrapper.liveness.*` configuration and `ProbeRunner`
-      integration with the supervisor and the service host (`START_PENDING` until readiness,
-      liveness failures → action).
+- [ ] P7.1 `wrapper.readiness.*` / `wrapper.liveness.*` configuration (probe selection, intervals,
+      failure counts) and liveness failures → action. The `START_PENDING`-until-ready flow already
+      exists from P6 with the `process` probe.
 - [ ] P7.2 `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe` (tests with
       local `ServerSocket`/`HttpServer`, temp files, fake clock).
 - [ ] P7.3 `nyajsw-agent`: `premain`, `AgentProtocol`, loopback connection with token from
@@ -582,8 +595,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
 
 ## 7. Configuration compatibility matrix (initial, hand-written — superseded by the generated `docs/COMPATIBILITY.md` after P1.7)
 
-Status: **S** supported · **P** planned (phase) · **X** nyajsw extension · **I** ignored with
-warning · **U** unsupported with warning · **F** unsupported, fatal when present. "(verify)" marks a
+Status: **S** supported · **P** planned (phase) · **I** ignored with warning · **U** unsupported with
+warning · **F** unsupported, fatal when present. **X** marks a nyajsw extension (origin `NYAJSW`) and
+is combined with a status, e.g. `X P7`. "(verify)" marks a
 YAJSW key name or default that must be checked against the YAJSW reference before implementation.
 
 ### Java process
@@ -700,7 +714,7 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
 | D11 | groupId and base package `io.github.jacobosanchez.nyajsw` | Matches the GitHub owner; Maven Central-compatible | Proposed (§10 Q2) |
-| D12 | Service binary path = installing JVM's `javaw.exe` + `java.class.path` + `wrapper.ntservice.java.additional.N` + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
+| D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.java.additional.N` + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
 | D13 | Relative paths and default working directory resolve against the configuration file's directory | Services start in `System32`; configuration-relative is predictable | Proposed (verify YAJSW) |
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
 | D15 | Probe SPI, probe registry and stop-strategy registry are introduced in P3 with `process`/`terminate`; later probes and strategies are additions | Avoid rewriting the supervisor when P7 lands | Accepted |

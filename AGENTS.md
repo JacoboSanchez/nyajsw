@@ -23,7 +23,7 @@ Hard constraints:
 | Wrapped application | May run on an **older JVM** than the wrapper (`wrapper.java.command`). Anything injected into the application JVM (the agent module) targets **Java 8 bytecode** and has **zero dependencies**. |
 | License | Apache-2.0. YAJSW is LGPL and Tanuki JSW is proprietary/GPL: **never copy code, comments, or documentation text from them**. Only public configuration key names and their documented meaning are reused (that is the compatibility surface). |
 | Platform | Windows first. Everything OS-specific sits behind the `platform` abstraction so POSIX support can be added later without touching the core. |
-| Language | English everywhere: code, identifiers, comments, documentation, log messages, commit messages. |
+| Wording | English everywhere: code, identifiers, comments, documentation, log messages, commit messages. |
 
 ## 2. Repository layout (target)
 
@@ -58,7 +58,7 @@ mvn -q verify -Pwindows-integration
 it with:
 
 ```bash
-mvn -q -pl nyajsw-wrapper test -Dtest=CompatibilityDocTest -Dnyajsw.docs.update=true
+mvn -q -pl nyajsw-wrapper -am test -Dtest=CompatibilityDocTest -Dsurefire.failIfNoSpecifiedTests=false -Dnyajsw.docs.update=true
 ```
 
 Until Phase 0 lands there is no build; the commands above describe the target.
@@ -126,7 +126,7 @@ Rules:
 ### 4.4 Clean, maintainable, reusable code
 
 * Small classes with one responsibility. Interfaces at the boundaries that vary: `Platform`,
-  `ServiceController`, `ServiceHost`, `ScmApi`, `Probe`, `StopStrategy`, `ConfigSource`.
+  `ServiceController`, `ServiceHost`, `ScmApi`, `ProcessApi`, `Probe`, `StopStrategy`, `ConfigSource`.
 * Prefer **adding a class and registering it** over editing many existing files. Extension points
   are registries/factories, not `if/else` chains spread across the codebase.
 * **Search before you write.** If a helper exists, use it; if two call sites need the same logic,
@@ -157,7 +157,7 @@ Rules:
 
 * Unit tests must run on any OS without admin rights. Everything that touches Win32 is behind an
   interface (`platform.*`) and is tested with Mockito against **our own thin facade interfaces**
-  (e.g. `ScmApi`), not against JNA classes directly. Hand-written JNA structures get layout tests
+  (e.g. `ScmApi`, `ProcessApi`), not against JNA classes directly. Hand-written JNA structures get layout tests
   (`size()`, field order) that run everywhere.
 * Real-SCM tests live in TestNG group `windows-integration`. They install a throwaway service named
   `nyajsw-test-<random>` and must remove it in `@AfterMethod(alwaysRun = true)` even when the test
