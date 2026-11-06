@@ -422,7 +422,7 @@ Goal: a building, testing, CI-verified empty project.
 - [ ] P0.3 *(recommended)* GitHub Actions: `ubuntu-latest` runs `mvn -q verify`; `windows-latest`
       runs `mvn -q verify -Pwindows-integration` (hosted Windows runners are elevated — confirm in
       the first run). TestNG group `windows-integration` excluded unless the profile is active.
-- [ ] P0.4 Record chosen versions (JNA, TestNG, Mockito, plugins) in §9 D4/D5.
+- [x] P0.4 Record chosen versions (JNA, TestNG, Mockito, plugins) in §9 D4/D5 (build plugins in D3).
 Done when: `mvn -q verify` is green on Linux and Windows.
 
 ### P1 — Configuration engine
@@ -493,7 +493,7 @@ Done when: rotation and formatting are tested against temp directories; no third
 Goal: `-i -r -t -p -q` against the real SCM through JNA.
 - [ ] P5.1 `Platform` detection/factory; `platform.unsupported` fallback (`PlatformException` →
       exit code 4 in `cli`).
-- [ ] P5.2 `ScmApi` facade + `JnaScmApi` (last-error handling in one place); hand-written
+- [ ] P5.2 `ScmApi` facade + `JnaScmApi` (adds `jna`/`jna-platform` to `nyajsw-wrapper`; last-error handling in one place); hand-written
       `SERVICE_DELAYED_AUTO_START_INFO` / `SERVICE_PRESHUTDOWN_INFO` with layout tests;
       `WindowsServiceController` (install with start type, dependencies as `\0`-separated list with
       a test, account, description, delayed start, pre-shutdown timeout with margin; remove; start; stop; status
@@ -706,9 +706,9 @@ YAJSW key name or default that must be checked against the YAJSW reference befor
 |---|---|---|---|
 | D1 | Clean-room reimplementation, Apache-2.0; compatibility only at the configuration/CLI surface | YAJSW is LGPL and unmaintained; avoid license entanglement and legacy design | Accepted |
 | D2 | Wrapper requires Java 21; agent compiled to Java 8 bytecode with zero dependencies (tests on 21) | Wrapped applications may run old JVMs; agent is injected into them | Accepted |
-| D3 | Maven multi-module: `nyajsw-agent`, `nyajsw-wrapper`, `nyajsw-dist`; wrapper depends on agent for `AgentProtocol`, never the reverse | Separate compilation target for the agent; one definition of the protocol | Accepted |
-| D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings | Accepted (versions: TBD in P0.4) |
-| D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (version: TBD in P0.4) |
+| D3 | Maven multi-module: `nyajsw-agent`, `nyajsw-wrapper`, `nyajsw-dist`; wrapper depends on agent for `AgentProtocol`, never the reverse | Separate compilation target for the agent; one definition of the protocol | Accepted (P0.4 build plugins, parent POM properties: clean 3.5.0, resources 3.5.0, compiler 3.16.0, surefire 3.5.6, jar 3.5.1, install 3.2.0, deploy 3.2.0, enforcer 3.7.0, dependency 3.11.0) |
+| D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
+| D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (P0.4: JNA and `jna-platform` 5.19.1, managed in the parent POM; added to `nyajsw-wrapper` in P5.2) |
 | D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Proposed (confirm in P4) |
 | D7 | Custom line parser; literal backslashes except trailing-`\` continuation; UTF-8 with BOM tolerance; `#include` and `include =`; `${sys:}`/`${env:}` prefixes | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises | Proposed (confirm with real files in P1.1) |
 | D8 | Single key registry drives parsing, validation, warnings and generated docs | One source of truth; no drift between code and docs | Accepted |
