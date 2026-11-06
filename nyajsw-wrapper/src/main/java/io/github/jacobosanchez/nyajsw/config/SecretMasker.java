@@ -49,9 +49,7 @@ public final class SecretMasker {
      * undone (path values).
      */
     private static Stream<String> forms(String secret) {
-        String unquoted = secret.length() >= 2 && secret.startsWith("\"") && secret.endsWith("\"")
-                ? secret.substring(1, secret.length() - 1)
-                : secret;
+        String unquoted = ValueParser.unquote(secret);
         return Stream.of(secret, unquoted, ValueParser.normalisePath(secret), ValueParser.normalisePath(unquoted));
     }
 

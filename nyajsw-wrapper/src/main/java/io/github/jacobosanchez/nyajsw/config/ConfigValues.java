@@ -29,6 +29,8 @@ final class ConfigValues {
     private final KeyCollector collector;
     private final Path directory;
     private final SecretMasker masker;
+    /** Separates the paths a library path entry may list. */
+    private static final String LIST_SEPARATOR = ";";
     private final List<ConfigEntry> userEntries;
     private final List<ConfigWarning> warnings = new ArrayList<>();
     private final List<ConfigException> errors = new ArrayList<>();
@@ -148,12 +150,39 @@ final class ConfigValues {
                 .filter(value -> !value.isEmpty() && !ValueParser.isUnset(spec, value)).toList();
     }
 
-    /** The paths of a family, resolved against {@code base}; invalid ones are reported and left out. */
-    List<Path> familyPaths(KeySpec spec, Path base) {
+    /**
+     * The paths of a family, resolved against {@code base}, where a value may list several paths
+     * separated by {@code ;}, the Windows list separator, as a library path does when it copies
+     * <code>${path}</code> (a fixed separator, so the meaning does not depend on the host). Every path
+     * is taken without surrounding double quotes. A value that holds one path is checked like any
+     * path (an invalid one is a problem of the key); in a list, empty pieces are skipped and so, with
+     * a warning, is a piece that is not a valid path: one odd entry of the system {@code PATH} must
+     * not stop the application. A quoted entry that contains {@code ;} itself is split all the same.
+     */
+    List<Path> familyPathLists(KeySpec spec, Path base) {
         List<Path> paths = new ArrayList<>();
         for (KeyCollector.Member member : family(spec)) {
-            if (!ValueParser.isUnset(spec, member.value())) {
-                toPath(spec, member.entry(), ValueParser.normalisePath(member.value()), base).ifPresent(paths::add);
+            if (ValueParser.isUnset(spec, member.value())) {
+                continue;
+            }
+            String[] pieces = member.value().split(LIST_SEPARATOR, -1);
+            if (pieces.length == 1) {
+                String path = ValueParser.normalisePath(ValueParser.unquote(member.value()));
+                toPath(spec, member.entry(), path, base).ifPresent(paths::add);
+                continue;
+            }
+            for (String raw : pieces) {
+                String piece = ValueParser.unquote(raw.trim());
+                if (piece.isEmpty()) {
+                    continue;
+                }
+                Resolved resolved = resolve(ValueParser.normalisePath(piece), base);
+                if (resolved.path() != null) {
+                    paths.add(resolved.path());
+                } else {
+                    warn(member.entry().location(), "one of the paths in " + member.key() + " is skipped:"
+                            + " " + shown(member.key(), piece) + " " + resolved.reason());
+                }
             }
         }
         return paths;
@@ -230,22 +259,33 @@ final class ConfigValues {
     }
 
     private Optional<Path> toPath(KeySpec spec, ConfigEntry entry, String text, Path base) {
+        Resolved resolved = resolve(text, base);
+        if (resolved.path() != null) {
+            return Optional.of(resolved.path());
+        }
         String key = entry != null ? entry.key() : spec.name();
         ConfigLocation location = entry != null ? entry.location() : ConfigLocation.of("built-in default");
-        String reason;
+        String shown = registry.isSecret(key) ? "" : " " + shown(key, text);
+        problem(spec, location, "invalid path" + shown + " for " + key + ": " + resolved.reason() + "; ignored");
+        return Optional.empty();
+    }
+
+    /** {@code text} as an absolute path resolved against {@code base}, or why it is not one. */
+    private static Resolved resolve(String text, Path base) {
         try {
             Path path = Path.of(text);
             Path resolved = (path.isAbsolute() ? path : base.resolve(path)).normalize();
             if (resolved.isAbsolute()) {
-                return Optional.of(resolved);
+                return new Resolved(resolved, null);
             }
             // e.g. a drive-relative C:foo while the base is on another drive
-            reason = "cannot be made absolute against " + base;
+            return new Resolved(null, "cannot be made absolute against " + base);
         } catch (InvalidPathException e) {
-            reason = e.getReason();
+            return new Resolved(null, e.getReason());
         }
-        String shown = registry.isSecret(key) ? "" : " " + shown(key, text);
-        problem(spec, location, "invalid path" + shown + " for " + key + ": " + reason + "; ignored");
-        return Optional.empty();
+    }
+
+    /** A resolved path, or the reason there is none. */
+    private record Resolved(Path path, String reason) {
     }
 }
