@@ -55,7 +55,6 @@ public record KeySpec(
 
     private static final String PASSWORD_SUFFIX = ".password";
     private static final Pattern PHASE = Pattern.compile("P[0-9]+");
-    private static final Pattern SIZE_VALUE = Pattern.compile("[0-9]+[KkMmGg]?");
 
     public KeySpec {
         Objects.requireNonNull(pattern, "pattern");
@@ -188,13 +187,19 @@ public record KeySpec(
             return;
         }
         String value = constant.value();
-        boolean valid = switch (type) {
-            case ENUM -> values.contains(value);
-            case INTEGER, DURATION -> value.matches("-?[0-9]+");
-            case BOOLEAN -> value.equals("true") || value.equals("false");
-            case SIZE -> SIZE_VALUE.matcher(value).matches();
-            case STRING, PATH, LIST -> !value.isEmpty();
-        };
+        boolean valid;
+        if (type == KeyType.ENUM) {
+            valid = values.contains(value); // canonical spelling only
+        } else if (value.isEmpty()) {
+            valid = false; // an empty default would mean "not set"
+        } else {
+            try {
+                ValueParser.parseScalar(type, value);
+                valid = true;
+            } catch (IllegalArgumentException e) {
+                valid = false;
+            }
+        }
         if (!valid) {
             throw invalid(name, "default '" + value + "' is not a valid " + type.label());
         }

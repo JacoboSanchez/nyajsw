@@ -273,6 +273,16 @@ public class ConfigKeysTest {
     }
 
     @Test
+    public void everyConstantDefaultParsesLikeAConfiguredValue() {
+        for (KeySpec spec : REGISTRY.specs()) {
+            if (spec.defaultValue() instanceof KeyDefault.Constant constant) {
+                ValueParser.parse(spec, constant.value());
+                assertFalse(ValueParser.isUnset(spec, constant.value()), spec.name());
+            }
+        }
+    }
+
+    @Test
     public void startTypeAcceptsTheDelayStartAlias() {
         assertEquals(ConfigKeys.NTSERVICE_STARTTYPE.canonicalValue("DELAY_START"), Optional.of("DELAYED_AUTO_START"));
         assertEquals(ConfigKeys.NTSERVICE_STARTTYPE.canonicalValue("DELAYED_AUTO_START"),
