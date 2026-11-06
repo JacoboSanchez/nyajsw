@@ -95,6 +95,11 @@ public record KeySpec(
         if (secret && defaultValue instanceof KeyDefault.Constant) {
             throw invalid(name, "a secret key must not have a constant default");
         }
+        if ((status == KeyStatus.UNSUPPORTED || status == KeyStatus.UNSUPPORTED_FATAL)
+                && defaultValue instanceof KeyDefault.Constant) {
+            // Defaults become configuration entries; an unsupported key must never be "set" by us.
+            throw invalid(name, "an " + status.label() + " key must not have a constant default");
+        }
         checkValues(name, type, values, aliases);
         checkDefault(name, type, defaultValue, values);
     }

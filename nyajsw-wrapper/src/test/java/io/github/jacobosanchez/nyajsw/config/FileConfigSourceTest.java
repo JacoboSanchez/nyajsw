@@ -357,6 +357,24 @@ public class FileConfigSourceTest {
     }
 
     @Test
+    public void includePathPrefersTheLayerAboveThenTheFileThenTheLayerBelow() throws IOException {
+        write("above/x.conf", "from=above\n");
+        write("file/y.conf", "from=file\n");
+        write("below/z.conf", "from=below\n");
+        Path main = write("main.conf", "over=file\ninclude = ${over}/x.conf\n"
+                + "mid=file\ninclude = ${mid}/y.conf\ninclude = ${low}/z.conf\n");
+        ConfigLocation where = ConfigLocation.of("test");
+        FileConfigSource.Layers layers = new FileConfigSource.Layers(
+                Map.of("over", new ConfigEntry("over", "above", where)),
+                Map.of("mid", new ConfigEntry("mid", "below", where), "low", new ConfigEntry("low", "below", where)));
+
+        SourceContent content = new FileConfigSource(main, interpolator(Map.of(), Map.of()), layers).read();
+
+        assertEquals(content.entries().stream().filter(e -> e.key().equals("from")).map(ConfigEntry::value).toList(),
+                List.of("above", "file", "below"));
+    }
+
+    @Test
     public void unresolvedVariableInRequiredIncludeIsAnError() throws IOException {
         Path main = write("main.conf", "include = ${wrapper_home}/conf/extra.conf\nwrapper_home=late\n");
 
