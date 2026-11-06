@@ -128,12 +128,13 @@ public class WrapperConfigTest {
         assertEquals(config.service().password(), Optional.empty());
         LifecycleConfig lifecycle = config.lifecycle();
         assertEquals(lifecycle.control(), ControlMode.TIGHT);
-        assertEquals(lifecycle.defaultExitAction(), ExitAction.RESTART);
-        assertEquals(lifecycle.exitActions(), Map.of(0, ExitAction.SHUTDOWN));
+        assertEquals(lifecycle.defaultExitAction(), ExitAction.SHUTDOWN);
+        assertEquals(lifecycle.exitActions(), Map.of());
+        assertEquals(lifecycle.exitAction(0), ExitAction.SHUTDOWN);
         assertEquals(lifecycle.maxFailedInvocations(), 5);
-        assertEquals(lifecycle.successfulInvocationTime(), Duration.ofSeconds(300));
+        assertEquals(lifecycle.successfulInvocationTime(), Duration.ofSeconds(60));
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(30));
-        assertEquals(lifecycle.restartDelay(), Optional.empty());
+        assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
         // The agent is enabled by default but not implemented yet (P7), so the defaults do without it.
         assertEquals(lifecycle.stopStrategies(), List.of("terminate"));
         ProbeConfig probes = config.probes();
@@ -275,10 +276,39 @@ public class WrapperConfigTest {
         WrapperConfig config = load("wrapper.restart.delay=", "wrapper.ntservice.account=",
                 "wrapper.ntservice.password=", "wrapper.java.additional.1=", "wrapper.java.additional.2=-Dx");
 
-        assertEquals(config.lifecycle().restartDelay(), Optional.empty());
+        // Not set means the declared default, as if the line were absent.
+        assertEquals(config.lifecycle().restartDelay(), Duration.ofSeconds(5));
         assertEquals(config.service().account(), Optional.empty());
         assertEquals(config.service().password(), Optional.empty());
         assertEquals(config.java().jvmOptions(), List.of("-Dx"));
+    }
+
+    @Test
+    public void exitCodeZeroFollowsTheDefaultActionUnlessSetItself() throws IOException {
+        WrapperConfig restarting = load("wrapper.on_exit.default=RESTART");
+        WrapperConfig cleanExitEnds = load("wrapper.on_exit.default=RESTART", "wrapper.on_exit.0=SHUTDOWN");
+
+        assertEquals(restarting.lifecycle().exitAction(0), ExitAction.RESTART);
+        assertEquals(cleanExitEnds.lifecycle().exitAction(0), ExitAction.SHUTDOWN);
+        assertEquals(cleanExitEnds.lifecycle().exitAction(1), ExitAction.RESTART);
+    }
+
+    @Test
+    public void logFormatsDefaultWhenAbsentAndStayBlankWhenWrittenBlank() throws IOException {
+        LogConfig absent = load().log();
+        LogConfig blank = load("wrapper.logfile.format=", "wrapper.console.format=").log();
+
+        assertEquals(absent.logfileFormat(), Optional.of("LPTM"));
+        assertEquals(absent.consoleFormat(), Optional.of("PM"));
+        // YAJSW turns the output off for a blank format; P4 implements that, so it must stay visible here.
+        assertEquals(blank.logfileFormat(), Optional.empty());
+        assertEquals(blank.consoleFormat(), Optional.empty());
+    }
+
+    @Test
+    public void debugLevelDefaultsToFullDetail() throws IOException {
+        assertEquals(load().log().debugLevel(), 3);
+        assertEquals(load("wrapper.debug.level=1").log().debugLevel(), 1);
     }
 
     @Test

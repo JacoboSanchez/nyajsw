@@ -1,10 +1,10 @@
 package io.github.jacobosanchez.nyajsw.config;
 
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_ACCOUNT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_ADDITIONAL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DEPENDENCY;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DESCRIPTION;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DISPLAYNAME;
-import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_JAVA_ADDITIONAL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_NAME;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_PASSWORD;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_STARTTYPE;
@@ -25,7 +25,7 @@ import java.util.Optional;
  * @param account         {@code wrapper.ntservice.account}, doubled backslashes undone as in paths
  *                        ({@code DOMAIN\\svc} gives {@code DOMAIN\svc}); empty means LocalSystem
  * @param password        {@code wrapper.ntservice.password}, if set
- * @param wrapperJvmOptions {@code wrapper.ntservice.java.additional.<n>} in index order
+ * @param wrapperJvmOptions {@code wrapper.ntservice.additional.<n>} in index order
  */
 public record ServiceConfig(Optional<String> name, Optional<String> displayName, Optional<String> description,
         StartType startType, List<String> dependencies, Optional<String> account, Optional<Secret> password,
@@ -60,7 +60,7 @@ public record ServiceConfig(Optional<String> name, Optional<String> displayName,
                 values.familyValues(NTSERVICE_DEPENDENCY),
                 values.text(NTSERVICE_ACCOUNT).map(ValueParser::normalisePath),
                 values.text(NTSERVICE_PASSWORD).map(Secret::new),
-                values.familyValues(NTSERVICE_JAVA_ADDITIONAL));
+                values.familyValues(NTSERVICE_ADDITIONAL));
     }
 
     /** {@code com.example.Main} gives {@code Main}; a nested {@code Outer$Inner} gives {@code Inner}. */

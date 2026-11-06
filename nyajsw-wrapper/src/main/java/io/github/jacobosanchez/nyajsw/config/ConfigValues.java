@@ -56,7 +56,9 @@ final class ConfigValues {
 
     /**
      * A text value that means something only when it is not empty (a name, a command, a URL): an
-     * empty value counts as not set, so defaults and derived defaults apply.
+     * empty value gives an empty result, so a derived default computed by the caller applies. A
+     * constant default does not: the key was written, and for keys such as {@code
+     * wrapper.logfile.format} YAJSW reads a blank value as "off".
      */
     Optional<String> text(KeySpec spec) {
         return string(spec).filter(Predicate.not(String::isEmpty));

@@ -48,6 +48,16 @@ public class ConfigValidatorTest {
     }
 
     @Test
+    public void configurationScriptIsAnError() {
+        ConfigValidator.Result result = validator.validate(config(
+                "wrapper.config.script.decryptor", "scripts/decrypt.gv", ConfigLayer.FILE));
+
+        assertEquals(result.errors().size(), 1);
+        assertTrue(result.errors().get(0).getMessage().contains("wrapper.config.script.<name> (1 key) is not supported by"
+                + " nyajsw and cannot be ignored"), result.errors().get(0).getMessage());
+    }
+
+    @Test
     public void emptyFatalKeyOnlyWarns() {
         ConfigValidator.Result result = validator.validate(config(
                 "wrapper.app.account", "", ConfigLayer.FILE,
@@ -72,11 +82,11 @@ public class ConfigValidatorTest {
 
     @Test
     public void plannedKeyWithAnInvalidValueOnlyWarns() {
-        ConfigValidator.Result result = validator.validate(config("wrapper.logfile.rollmode", "WRAPPER", ConfigLayer.FILE));
+        ConfigValidator.Result result = validator.validate(config("wrapper.logfile.rollmode", "SIZE", ConfigLayer.FILE));
 
         assertTrue(result.errors().isEmpty(), result.errors().toString());
-        assertTrue(result.warnings().stream().anyMatch(w -> w.message().equals("invalid value 'WRAPPER' for"
-                + " wrapper.logfile.rollmode: expected one of NONE, SIZE, DATE, SIZE_OR_DATE")), result.warnings().toString());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.message().equals("invalid value 'SIZE' for"
+                + " wrapper.logfile.rollmode: expected one of JVM, WRAPPER, DATE")), result.warnings().toString());
     }
 
     @Test
