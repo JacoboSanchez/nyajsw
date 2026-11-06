@@ -17,7 +17,10 @@ public enum State {
      */
     IDLE,
 
-    /** An invocation has been launched and is not ready yet. */
+    /**
+     * An invocation is being launched or has not passed its readiness probes yet, which must happen
+     * within {@code wrapper.startup.timeout}.
+     */
     STARTING,
 
     /** The application is ready. */
@@ -27,8 +30,8 @@ public enum State {
     STOPPING,
 
     /**
-     * The application has ended, or could not be started, and the next invocation waits for {@code
-     * wrapper.restart.delay}.
+     * The next invocation waits for {@code wrapper.restart.delay}: the application has ended or could
+     * not be started, or it did not become ready and, terminated, is ending first.
      */
     RESTART_WAIT,
 
@@ -49,7 +52,7 @@ public enum State {
     public Set<State> successors() {
         return switch (this) {
             case IDLE -> EnumSet.of(STARTING, STOPPED, FAILED);
-            case STARTING -> EnumSet.of(RUNNING, RESTART_WAIT, FAILED);
+            case STARTING -> EnumSet.of(RUNNING, STOPPING, RESTART_WAIT, IDLE, STOPPED, FAILED);
             case RUNNING -> EnumSet.of(STOPPING, RESTART_WAIT, IDLE, STOPPED, FAILED);
             case STOPPING -> EnumSet.of(STOPPED, FAILED);
             case RESTART_WAIT -> EnumSet.of(STARTING, STOPPED, FAILED);

@@ -403,8 +403,8 @@ public final class ConfigKeys {
             .description("Failed invocations in a row after which the wrapper gives up")
             .defaultValue("5")
             .notes("N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures"
-                    + " (D20). An invocation fails when it cannot be started or ends within"
-                    + " wrapper.successful_invocation_time; a launch error is retried whatever wrapper.on_exit says."
+                    + " (D20). An invocation fails when it cannot be started, does not become ready within"
+                    + " wrapper.startup.timeout, or ends within wrapper.successful_invocation_time; a launch error is retried whatever wrapper.on_exit says."
                     + " Values below 1 count as 1")
             .build();
 
@@ -425,6 +425,7 @@ public final class ConfigKeys {
             .status(PLANNED, "P3")
             .description("Time the application has to become ready")
             .defaultValue("30")
+            .notes("0 means no limit, as in the Tanuki format")
             .build();
 
     public static final KeySpec SHUTDOWN_TIMEOUT = yajsw("wrapper.shutdown.timeout", DURATION, LIFECYCLE)

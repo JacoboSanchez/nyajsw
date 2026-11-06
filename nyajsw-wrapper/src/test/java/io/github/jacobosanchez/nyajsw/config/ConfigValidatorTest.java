@@ -190,7 +190,8 @@ public class ConfigValidatorTest {
         // The application keys are supported since console mode (P2.5), so they no longer warn.
         assertEquals(result.warnings().stream().map(ConfigWarning::message).toList(), List.of(
                 "wrapper.ntservice.starttype is not implemented yet in this version of nyajsw; it has no effect",
-                "wrapper.startup.timeout is not implemented yet in this version of nyajsw; it has no effect",
+                "wrapper.startup.timeout is not implemented yet in this version of nyajsw; it has no effect. 0 means"
+                        + " no limit, as in the Tanuki format",
                 "wrapper.tray is not supported by nyajsw; it has no effect"));
     }
 
