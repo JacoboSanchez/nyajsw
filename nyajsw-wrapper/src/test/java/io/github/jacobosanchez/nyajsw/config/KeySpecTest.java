@@ -109,7 +109,7 @@ public class KeySpecTest {
                 .build();
 
         assertTrue(spec.matches("wrapper.x.2"));
-        assertFalse(spec.matches("wrapper.x.y"));
+        assertFalse(spec.matches("wrapper.y.2"));
     }
 
     @Test

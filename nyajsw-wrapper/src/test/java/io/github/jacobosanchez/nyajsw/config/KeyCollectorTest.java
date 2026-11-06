@@ -29,6 +29,43 @@ public class KeyCollectorTest {
     }
 
     @Test
+    public void stringIndicesSortAfterNumbersAndByTheirNumbers() {
+        // The order of the YAJSW reference's own example: 1, 5, ab5, ab12.
+        KeyCollector.Collected collected = collector.collect(ConfigKeys.JAVA_CLASSPATH, entries(
+                "wrapper.java.classpath.ab12", "e.jar",
+                "wrapper.java.classpath.5", "c.jar",
+                "wrapper.java.classpath.ab5", "d.jar",
+                "wrapper.java.classpath.1", "a.jar",
+                "wrapper.java.classpath.lib", "lib/*/*.jar"));
+
+        assertEquals(collected.values(), List.of("a.jar", "c.jar", "d.jar", "e.jar", "lib/*/*.jar"));
+        assertTrue(collected.warnings().isEmpty());
+    }
+
+    @Test
+    public void dottedIndicesSortSegmentBySegment() {
+        KeyCollector.Collected collected = collector.collect(ConfigKeys.JAVA_ADDITIONAL, entries(
+                "wrapper.java.additional.3", "three",
+                "wrapper.java.additional.2.10", "two.ten",
+                "wrapper.java.additional.2.2", "two.two",
+                "wrapper.java.additional.2", "two"));
+
+        assertEquals(collected.values(), List.of("two", "two.two", "two.ten", "three"));
+    }
+
+    @Test
+    public void stringIndexWrittenTwiceIsWarnedAbout() {
+        KeyCollector.Collected collected = collector.collect(ConfigKeys.JAVA_ADDITIONAL, entries(
+                "wrapper.java.additional.opt7", "a",
+                "wrapper.java.additional.opt07", "b"));
+
+        assertEquals(collected.values(), List.of("a", "b"));
+        assertEquals(collected.warnings().size(), 1);
+        assertTrue(collected.warnings().get(0).message().startsWith("wrapper.java.additional.opt07 has the same index"
+                + " as wrapper.java.additional.opt7"), collected.warnings().toString());
+    }
+
+    @Test
     public void indexWrittenTwiceKeepsBothInInputOrderWithWarning() {
         KeyCollector.Collected collected = collector.collect(ConfigKeys.JAVA_CLASSPATH, entries(
                 "wrapper.java.classpath.07", "b.jar",
@@ -92,6 +129,14 @@ public class KeyCollectorTest {
 
         assertEquals(collected.values(), List.of("a", "b"));
         assertTrue(collected.warnings().isEmpty());
+        assertTrue(collected.members().get(0).numbers().isEmpty());
+    }
+
+    @Test
+    public void indexFamiliesHaveNoExitCodeNumbers() {
+        KeyCollector.Collected collected = collector.collect(ConfigKeys.JAVA_ADDITIONAL,
+                entries("wrapper.java.additional.7", "a"));
+
         assertTrue(collected.members().get(0).numbers().isEmpty());
     }
 

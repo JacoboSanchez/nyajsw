@@ -15,17 +15,19 @@ import java.util.regex.Pattern;
  *
  * <p>Placeholders are whole dot-separated segments written {@code <label>} with a lower-case label:
  * <ul>
- *   <li>{@code <n>} matches an index: one or more decimal digits, gaps allowed, as in YAJSW's
- *       {@code .N} keys;</li>
+ *   <li>{@code <n>} matches an index: a number or a name, possibly with dots ({@code 3}, {@code lib},
+ *       {@code 2.1}), as YAJSW's reference allows; members sort by {@link IndexOrder}, gaps allowed;</li>
  *   <li>{@code <code>} matches an exit code: a decimal integer, optionally negative;</li>
  *   <li>any other label matches one or more non-empty segments (so dots are allowed, empty segments
  *       are not) and only names what goes there.</li>
  * </ul>
+ * A free placeholder right before {@code <n>} takes as many segments as it can: against {@code
+ * wrapper.x.<name>.<n>}, {@code wrapper.x.a.2.1} gives {@code a.2} and {@code 1}.
  * Key names are compared case-sensitively, as YAJSW does.
  */
 public final class KeyPattern {
 
-    /** Label of the placeholder that matches a numeric index. */
+    /** Label of the placeholder that matches an index. */
     public static final String INDEX = "n";
 
     /** Label of the placeholder that matches an exit code. */
@@ -33,18 +35,25 @@ public final class KeyPattern {
 
     /**
      * Orders patterns from the most to the least specific: more literal characters first, then more
-     * numeric placeholders ({@code <n>}, {@code <code>}), which accept less than free ones. Patterns
+     * ordered placeholders ({@code <n>}, {@code <code>}), which rank above free ones. Patterns
      * equal under this order are equally specific; the registry rejects two such patterns that can
      * match the same key.
      */
     public static final Comparator<KeyPattern> MOST_SPECIFIC_FIRST =
             Comparator.comparingInt(KeyPattern::literalLength)
-                    .thenComparingInt(KeyPattern::numericPlaceholders)
+                    .thenComparingInt(KeyPattern::orderedPlaceholders)
                     .reversed();
 
     private static final Pattern PLACEHOLDER = Pattern.compile("<([a-z]+)>");
-    /** A literal segment; {@code -} occurs in YAJSW's {@code wrapper.filter.trigger-regex.<n>}. */
-    private static final Pattern SEGMENT = Pattern.compile("[A-Za-z0-9_-]+");
+    /** Literal-segment characters, {@code -} last so it stays literal in a class ({@code trigger-regex}). */
+    private static final String SEGMENT_CHARS = "A-Za-z0-9_-";
+    private static final Pattern SEGMENT = Pattern.compile("[" + SEGMENT_CHARS + "]+");
+    /**
+     * An index: segments of the literal-segment characters, so {@code 2.1} and {@code lib} too. No
+     * repeated group (see the free placeholder below); empty segments are excluded up front.
+     */
+    private static final String INDEX_REGEX =
+            "([" + SEGMENT_CHARS + "](?:[." + SEGMENT_CHARS + "]*[" + SEGMENT_CHARS + "])?)";
     /** Example value for any placeholder; it is accepted by every placeholder kind. */
     private static final String NUMERIC_EXAMPLE = "1";
 
@@ -54,18 +63,18 @@ public final class KeyPattern {
     /** {@code null} for an exact name. */
     private final Pattern regex;
     private final int literalLength;
-    private final int numericPlaceholders;
+    private final int orderedPlaceholders;
     private final String example;
     /** Placeholder labels in template order, e.g. {@code [n]}. */
     private final List<String> labels;
 
     private KeyPattern(String template, List<String> segments, Pattern regex, int literalLength,
-            int numericPlaceholders, String example, List<String> labels) {
+            int orderedPlaceholders, String example, List<String> labels) {
         this.template = template;
         this.segments = segments;
         this.regex = regex;
         this.literalLength = literalLength;
-        this.numericPlaceholders = numericPlaceholders;
+        this.orderedPlaceholders = orderedPlaceholders;
         this.example = example;
         this.labels = labels;
     }
@@ -84,7 +93,7 @@ public final class KeyPattern {
         StringBuilder regex = new StringBuilder();
         StringBuilder example = new StringBuilder();
         int literalLength = segments.size() - 1; // the dots
-        int numericPlaceholders = 0;
+        int orderedPlaceholders = 0;
         List<String> labels = new ArrayList<>();
         boolean exact = true;
         for (int i = 0; i < segments.size(); i++) {
@@ -100,16 +109,16 @@ public final class KeyPattern {
                 }
                 String label = placeholder.group(1);
                 switch (label) {
-                    case INDEX -> regex.append("([0-9]+)");
+                    case INDEX -> regex.append(INDEX_REGEX);
                     case EXIT_CODE -> regex.append("(-?[0-9]+)");
                     // No repeated group: that recurses once per segment in java.util.regex and can
                     // overflow the stack on absurd keys. Empty segments are excluded up front instead.
                     default -> regex.append("([^.](?:.*[^.])?)");
                 }
                 labels.add(label);
-                boolean numeric = isNumericLabel(label);
-                numericPlaceholders += numeric ? 1 : 0;
-                example.append(numeric ? NUMERIC_EXAMPLE : label);
+                boolean ordered = isOrderedLabel(label);
+                orderedPlaceholders += ordered ? 1 : 0;
+                example.append(ordered ? NUMERIC_EXAMPLE : label);
                 exact = false;
             } else if (SEGMENT.matcher(segment).matches()) {
                 regex.append(Pattern.quote(segment));
@@ -123,10 +132,10 @@ public final class KeyPattern {
         return exact
                 ? new KeyPattern(template, segments, null, template.length(), 0, template, List.of())
                 : new KeyPattern(template, segments, Pattern.compile(regex.toString()), literalLength,
-                        numericPlaceholders, example.toString(), List.copyOf(labels));
+                        orderedPlaceholders, example.toString(), List.copyOf(labels));
     }
 
-    private static boolean isNumericLabel(String label) {
+    private static boolean isOrderedLabel(String label) {
         return label.equals(INDEX) || label.equals(EXIT_CODE);
     }
 
@@ -163,9 +172,12 @@ public final class KeyPattern {
         return literalLength;
     }
 
-    /** Number of {@code <n>} and {@code <code>} placeholders. */
-    public int numericPlaceholders() {
-        return numericPlaceholders;
+    /**
+     * Number of {@code <n>} and {@code <code>} placeholders, whose values order the members of a
+     * family and identify them ({@code 7} and {@code 07} are the same member).
+     */
+    public int orderedPlaceholders() {
+        return orderedPlaceholders;
     }
 
     /**
@@ -196,13 +208,18 @@ public final class KeyPattern {
         return labels;
     }
 
-    /** Whether the placeholder at {@code position} (see {@link #labels()}) only matches integers. */
+    /** Whether the placeholder at {@code position} (see {@link #labels()}) is an exit code, an integer. */
     public boolean isNumeric(int position) {
-        return isNumericLabel(labels.get(position));
+        return labels.get(position).equals(EXIT_CODE);
+    }
+
+    /** Whether the placeholder at {@code position} (see {@link #labels()}) is an index ({@code <n>}). */
+    public boolean isIndex(int position) {
+        return labels.get(position).equals(INDEX);
     }
 
     /**
-     * A concrete key this template matches: numeric placeholders replaced by {@code 1}, other
+     * A concrete key this template matches: ordered placeholders replaced by {@code 1}, other
      * placeholders by their label (e.g. {@code wrapper.app.env.variable}).
      */
     public String example() {

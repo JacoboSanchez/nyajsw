@@ -140,6 +140,13 @@ public final class ConfigKeys {
             .description("Program argument passed to the application")
             .build();
 
+    public static final KeySpec APP_PARAMETER_STRIPQUOTES =
+            yajsw("wrapper.app.parameter.<n>.stripquotes", BOOLEAN, JAVA)
+                    .status(UNSUPPORTED)
+                    .description("Tanuki: remove quotes from wrapper.app.parameter.<n>")
+                    .notes("Declared so that it is not read as a program argument")
+                    .build();
+
     public static final KeySpec JAVA_CLASSPATH = yajsw("wrapper.java.classpath.<n>", PATH, JAVA)
             .status(PLANNED, "P2")
             .description("Classpath entry of the application; * and ** wildcards allowed")
@@ -150,10 +157,51 @@ public final class ConfigKeys {
             .description("Entry of the application's java.library.path")
             .build();
 
+    public static final KeySpec JAVA_CLASSPATH_USE_ENVIRONMENT =
+            yajsw("wrapper.java.classpath.use_environment", BOOLEAN, JAVA)
+                    .status(UNSUPPORTED)
+                    .description("Tanuki: append the CLASSPATH environment variable to the classpath")
+                    .notes("Declared so that it is not read as a classpath entry")
+                    .build();
+
+    public static final KeySpec JAVA_CLASSPATH_MISSING_LOG_LEVEL =
+            yajsw("wrapper.java.classpath.missing_log_level", STRING, JAVA)
+                    .status(UNSUPPORTED)
+                    .description("Tanuki: log level used when a classpath entry does not exist")
+                    .notes("Declared so that it is not read as a classpath entry")
+                    .build();
+
+    public static final KeySpec JAVA_LIBRARY_PATH_APPEND_SYSTEM_PATH =
+            yajsw("wrapper.java.library.path.append_system_path", BOOLEAN, JAVA)
+                    .status(UNSUPPORTED)
+                    .description("Tanuki: append the system PATH to java.library.path")
+                    .notes("Declared so that it is not read as a library path entry")
+                    .build();
+
     public static final KeySpec JAVA_ADDITIONAL = yajsw("wrapper.java.additional.<n>", STRING, JAVA)
             .status(PLANNED, "P2")
             .description("JVM option or -D system property of the application")
             .build();
+
+    public static final KeySpec JAVA_ADDITIONAL_AUTO_BITS = yajsw("wrapper.java.additional.auto_bits", BOOLEAN, JAVA)
+            .status(UNSUPPORTED)
+            .description("Tanuki: add -d32 or -d64 to the JVM options to match the wrapper")
+            .notes("Declared so that it is not read as a JVM option")
+            .build();
+
+    public static final KeySpec JAVA_ADDITIONAL_AUTO_BITS_PLATFORM =
+            yajsw("wrapper.java.additional.auto_bits.<platform>", BOOLEAN, JAVA)
+                    .status(UNSUPPORTED)
+                    .description("Tanuki: wrapper.java.additional.auto_bits for one platform")
+                    .notes("Declared so that it is not read as a JVM option")
+                    .build();
+
+    public static final KeySpec JAVA_ADDITIONAL_STRIPQUOTES =
+            yajsw("wrapper.java.additional.<n>.stripquotes", BOOLEAN, JAVA)
+                    .status(UNSUPPORTED)
+                    .description("Tanuki: remove quotes from wrapper.java.additional.<n>")
+                    .notes("Declared so that it is not read as a JVM option")
+                    .build();
 
     public static final KeySpec JAVA_INITMEMORY = yajsw("wrapper.java.initmemory", INTEGER, JAVA)
             .status(PLANNED, "P2")
@@ -1041,7 +1089,9 @@ public final class ConfigKeys {
             JAVA_COMMAND, JAVA_COMMAND_JAVAW, JAVA_COMMAND_MIN_VERSION, JAVA_COMMAND_MAX_VERSION,
             JAVA_COMMAND_JRE_ONLY, JAVA_COMMAND_JDK_ONLY, JAVA_COMMAND_PREFER_JRE, JAVA_COMMAND_PREFER_JDK,
             JAVA_CUSTOM_PROC_NAME, JAVA_APP_MAINCLASS, JAVA_APP_JAR, JAVA_MAINCLASS, APP_PARAMETER,
-            JAVA_CLASSPATH, JAVA_LIBRARY_PATH, JAVA_ADDITIONAL, JAVA_INITMEMORY, JAVA_MAXMEMORY,
+            APP_PARAMETER_STRIPQUOTES, JAVA_CLASSPATH, JAVA_CLASSPATH_USE_ENVIRONMENT, JAVA_CLASSPATH_MISSING_LOG_LEVEL,
+            JAVA_LIBRARY_PATH, JAVA_LIBRARY_PATH_APPEND_SYSTEM_PATH, JAVA_ADDITIONAL, JAVA_ADDITIONAL_AUTO_BITS,
+            JAVA_ADDITIONAL_AUTO_BITS_PLATFORM, JAVA_ADDITIONAL_STRIPQUOTES, JAVA_INITMEMORY, JAVA_MAXMEMORY,
             JAVA_INITMEMORY_RELATIVE, JAVA_INITIALMEMORY_RELATIVE, JAVA_MAXMEMORY_RELATIVE, APP_ENV, WORKING_DIR,
             TMP_PATH, CLEANUP_TMP, IMAGE, PRIORITY, AFFINITY, APP_ACCOUNT, APP_PASSWORD, JAVA_MONITOR,
             JAVA_DEBUG_PORT, JAVA_JMX, REGISTRY_JAVA_HOME, APP_PRE_SCRIPT, APP_PRE_MAIN_SCRIPT, CODEBASE, CACHE,
