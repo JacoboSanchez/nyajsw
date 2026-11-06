@@ -8,9 +8,9 @@ this file is about *how we work*. Read both before changing anything, and keep b
 
 **nyajsw** ("new YAJSW") is a clean-room, Java 21 service wrapper that runs a Java application as a
 Windows service. It replaces [YAJSW](https://yajsw.sourceforge.io/) (Yet Another Java Service
-Wrapper), which is no longer maintained, while staying **configuration-compatible** with existing
-`wrapper.conf` files so current deployments migrate by swapping the wrapper, not by rewriting their
-configuration.
+Wrapper), which the project owner is moving away from, while staying **configuration-compatible**
+with existing `wrapper.conf` files so current deployments migrate by swapping the wrapper, not by
+rewriting their configuration.
 
 Hard constraints:
 
@@ -21,7 +21,7 @@ Hard constraints:
 | Tests | TestNG only (no JUnit). Mockito for mocks. |
 | Native access | JNA + `jna-platform`. Use the generic Windows Service Control Manager (SCM) API in `advapi32` (`OpenSCManager`, `CreateService`, `StartService`, `ControlService`, `QueryServiceStatusEx`, `StartServiceCtrlDispatcher`, …). Hand-written bindings only for functions `jna-platform` lacks. |
 | Wrapped application | May run on an **older JVM** than the wrapper (`wrapper.java.command`). Anything injected into the application JVM (the agent module) targets **Java 8 bytecode** and has **zero dependencies**. |
-| License | Apache-2.0. YAJSW is LGPL and Tanuki JSW is proprietary/GPL: **never copy code, comments, or documentation text from them**. Only public configuration key names and their documented meaning are reused (that is the compatibility surface). |
+| License | Apache-2.0. YAJSW lists Apache-2.0 alongside LGPLv3 (since 12.00) and Tanuki JSW is proprietary/GPL: **never copy code, comments, or documentation text from them**. Only public configuration key names and their documented meaning are reused (that is the compatibility surface). The rule holds whatever licence YAJSW uses. |
 | Platform | Windows first. Everything OS-specific sits behind the `platform` abstraction so POSIX support can be added later without touching the core. |
 | Wording | English everywhere: code, identifiers, comments, documentation, log messages, commit messages. |
 

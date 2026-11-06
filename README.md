@@ -2,10 +2,11 @@
 
 **nyajsw** ("new YAJSW") is a clean-room Java 21 service wrapper that will run a Java application as
 a Windows service. It is meant to replace [YAJSW](https://yajsw.sourceforge.io/) (Yet Another Java
-Service Wrapper), which is no longer maintained. It is designed to read existing `wrapper.conf` files
-without edits, warning about anything it does not support, so a deployment migrates by swapping the
-wrapper rather than rewriting its configuration. On top of that it will add readiness and liveness
-probes, so "the service started" can mean "the application answers", not just "a process exists".
+Service Wrapper) for deployments that want to move off it. It is designed to read existing
+`wrapper.conf` files without edits, warning about anything it does not support, so a deployment
+migrates by swapping the wrapper rather than rewriting its configuration. On top of that it will add
+readiness and liveness probes, so "the service started" can mean "the application answers", not
+just "a process exists".
 
 > **Status: early development.** The configuration engine exists (loading, includes, variables,
 > validation, typed settings); nothing that runs an application or a service is usable yet.
