@@ -223,6 +223,44 @@ public class WrapperConfigTest {
     }
 
     @Test
+    public void exitCodeSpellingsThatAgreeOnlyAfterNormalisingFollowFileOrder() throws IOException {
+        WrapperConfig unsignedFirst = load("wrapper.on_exit.4294967295=STOP", "wrapper.on_exit.-1=SHUTDOWN");
+        WrapperConfig signedFirst = load("wrapper.on_exit.-1=SHUTDOWN", "wrapper.on_exit.4294967295=STOP");
+
+        assertEquals(unsignedFirst.lifecycle().exitAction(-1), ExitAction.SHUTDOWN);
+        assertEquals(signedFirst.lifecycle().exitAction(-1), ExitAction.STOP);
+        assertTrue(messages(unsignedFirst).contains("wrapper.on_exit.-1 and wrapper.on_exit.4294967295 mean the same"
+                + " exit code -1; the later one applies"), messages(unsignedFirst).toString());
+    }
+
+    @Test
+    public void systemPropertySpellingOfAnExitCodeWinsOverTheFile() throws IOException {
+        WrapperConfig config = loadWith(Map.of("wrapper.on_exit.4294967295", "RESTART"),
+                "wrapper.on_exit.4294967295=STOP", "wrapper.on_exit.-1=SHUTDOWN");
+        WrapperConfig padded = loadWith(Map.of("wrapper.on_exit.7", "RESTART"),
+                "wrapper.on_exit.7=STOP", "wrapper.on_exit.07=SHUTDOWN");
+
+        assertEquals(config.lifecycle().exitAction(-1), ExitAction.RESTART);
+        assertEquals(padded.lifecycle().exitAction(7), ExitAction.RESTART);
+        assertTrue(messages(padded).stream().noneMatch(m -> m.contains("mean the same exit code")),
+                messages(padded).toString());
+    }
+
+    @Test
+    public void laterEmptyExitActionLeavesTheCodeToTheDefault() throws IOException {
+        WrapperConfig config = load("wrapper.on_exit.default=SHUTDOWN", "wrapper.on_exit.7=STOP", "wrapper.on_exit.07=");
+
+        assertEquals(config.lifecycle().exitAction(7), ExitAction.SHUTDOWN);
+    }
+
+    @Test
+    public void laterInvalidExitActionLeavesTheCodeToTheDefault() throws IOException {
+        WrapperConfig config = load("wrapper.on_exit.default=SHUTDOWN", "wrapper.on_exit.7=STOP", "wrapper.on_exit.07=NOPE");
+
+        assertEquals(config.lifecycle().exitAction(7), ExitAction.SHUTDOWN);
+    }
+
+    @Test
     public void invalidValueOfAPlannedKeyFallsBackToTheDefaultWithWarning() throws IOException {
         WrapperConfig config = load("wrapper.startup.timeout=soon", "wrapper.control=SOMETIMES");
 

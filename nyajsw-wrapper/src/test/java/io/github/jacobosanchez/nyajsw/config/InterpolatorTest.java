@@ -339,6 +339,21 @@ public class InterpolatorTest {
     }
 
     @Test
+    public void resolveTellsWhetherASecretKeyWasRead() {
+        Map<String, ConfigEntry> config = Map.of(
+                "wrapper.ntservice.password", new ConfigEntry("wrapper.ntservice.password", "TopSecret123", location(1)),
+                "via", new ConfigEntry("via", "x${wrapper.ntservice.password}", location(2)),
+                "plain", new ConfigEntry("plain", "p", location(3)));
+
+        assertTrue(interpolator.resolve("${wrapper.ntservice.password}.conf", location(9),
+                key -> Optional.ofNullable(config.get(key))).usesSecret());
+        assertTrue(interpolator.resolve("${via}.conf", location(9),
+                key -> Optional.ofNullable(config.get(key))).usesSecret());
+        assertFalse(interpolator.resolve("${plain}/${java.home}.conf", location(9),
+                key -> Optional.ofNullable(config.get(key))).usesSecret());
+    }
+
+    @Test
     public void forCurrentProcessReadsThisJvm() {
         Interpolator current = Interpolator.forCurrentProcess();
 
