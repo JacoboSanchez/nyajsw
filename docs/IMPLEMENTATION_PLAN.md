@@ -410,7 +410,7 @@ Items marked *(recommended)* were not requested by the owner and may be dropped.
 
 ### P0 — Project skeleton
 Goal: a building, testing, CI-verified empty project.
-- [ ] P0.1 Parent `pom.xml` plus the three modules in one commit (a parent listing modules that do
+- [x] P0.1 Parent `pom.xml` plus the three modules in one commit (a parent listing modules that do
       not exist does not build): groupId `io.github.jacobosanchez.nyajsw`, `release` 21 for
       wrapper/dist, `release` 8 with `testRelease` 21 and `-Xlint:-options` for the agent, UTF-8,
       dependency and plugin management (compiler, surefire with the TestNG provider, enforcer for
