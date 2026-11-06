@@ -527,8 +527,9 @@ output, configuration and a clock; probes are stateless or own their state expli
   can tell wrapper lines from captured application output.
 * Application stdout/stderr are captured by `OutputPump` and logged at `INFO`; the command line
   makes the application write them in UTF-8 (`-Dstdout.encoding`/`-Dsun.stdout.encoding` and the
-  `stderr` pair, read by Java 18+ and 8–17 respectively), and a value written in the JVM options
-  wins and is used to decode (P2.4); the same stream feeds the `log` probe and (backlog)
+  `stderr` pair, read by Java 18+ and 8–17 respectively); a value written in the JVM options under
+  either name is used instead, and the chosen charset is given under both names after the JVM
+  options, so the application writes exactly what the wrapper decodes (P2.4); the same stream feeds the `log` probe and (backlog)
   `wrapper.filter.trigger.N`. The command line is logged through the masking form of
   `JavaCommandBuilder`, so secrets never reach the log.
 * `wrapper.debug=true` raises the wrapper log level to `DEBUG`. In service mode nothing is written to
