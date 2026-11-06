@@ -309,7 +309,7 @@ public class FileConfigSourceTest {
 
     @Test
     public void variableInIncludePathIsReportedAsUnsupported() throws IOException {
-        Path main = write("main.conf", "#include ${wrapper_home}/conf/extra.conf\n");
+        Path main = write("main.conf", "include = ${wrapper_home}/conf/extra.conf\n");
 
         ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main).read());
 
@@ -346,7 +346,7 @@ public class FileConfigSourceTest {
     @Test
     public void includeOfDirectoryIsAnError() throws IOException {
         Files.createDirectories(dir.resolve("folder"));
-        Path main = write("main.conf", "#include folder\n");
+        Path main = write("main.conf", "#include.required folder\n");
 
         ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main).read());
 
@@ -393,8 +393,8 @@ public class FileConfigSourceTest {
     }
 
     @Test
-    public void missingIncludeNamesFileAndLine() throws IOException {
-        Path main = write("main.conf", "k=v\n#include missing.conf\n");
+    public void missingRequiredIncludeNamesFileAndLine() throws IOException {
+        Path main = write("main.conf", "k=v\ninclude = missing.conf\n");
 
         ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main).read());
 
@@ -413,12 +413,55 @@ public class FileConfigSourceTest {
     }
 
     @Test
-    public void bareHashIncludeIsAnError() throws IOException {
-        Path main = write("main.conf", "#include\n");
+    public void bareRequiredIncludeIsAnError() throws IOException {
+        Path main = write("main.conf", "#include.required\n");
 
         ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(main).read());
 
         assertEquals(e.location().orElseThrow(), new ConfigLocation(main.toString(), 1));
+    }
+
+    @Test
+    public void plainHashIncludeOfMissingFileIsSkippedWithWarning() throws IOException {
+        Path main = write("main.conf", "#include ../conf/wrapper-license.conf\nk=v\n");
+
+        SourceContent content = new FileConfigSource(main).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 2)));
+        assertEquals(content.warnings().size(), 1);
+        ConfigWarning warning = content.warnings().get(0);
+        assertEquals(warning.location(), new ConfigLocation(main.toString(), 1));
+        assertTrue(warning.message().startsWith("optional include skipped, file not found: "), warning.message());
+    }
+
+    @Test
+    public void plainHashIncludeProblemsAreWarnings() throws IOException {
+        Files.createDirectories(dir.resolve("folder"));
+        Path main = write("main.conf", "#include\n#include ${home}/x.conf\n#include folder\nk=v\n");
+
+        SourceContent content = new FileConfigSource(main).read();
+
+        assertEquals(content.entries(), List.of(entry("k", "v", main, 4)));
+        assertEquals(content.warnings().stream().map(w -> w.location().line()).toList(), List.of(1, 2, 3));
+    }
+
+    @Test
+    public void plainHashIncludeCycleIsStillAnError() throws IOException {
+        Path a = write("a.conf", "#include a.conf\n");
+
+        expectThrows(ConfigException.class, () -> new FileConfigSource(a).read());
+    }
+
+    @Test
+    public void unsupportedDirectiveWarningDoesNotEchoValue() throws IOException {
+        Path main = write("main.conf", "#include.password=s3cret\n");
+
+        SourceContent content = new FileConfigSource(main).read();
+
+        assertEquals(content.warnings().size(), 1);
+        assertTrue(content.warnings().get(0).message().endsWith(": #include.password"),
+                content.warnings().get(0).message());
+        assertFalse(content.warnings().get(0).toString().contains("s3cret"));
     }
 
     @Test
@@ -448,6 +491,7 @@ public class FileConfigSourceTest {
         ConfigException e = expectThrows(ConfigException.class, () -> new FileConfigSource(missing).read());
 
         assertEquals(e.location().orElseThrow(), ConfigLocation.of(missing.toAbsolutePath().toString()));
+        assertEquals(e.getMessage(), missing.toAbsolutePath() + ": configuration file not found");
         assertEquals(new FileConfigSource(missing).description(), missing.toAbsolutePath().toString());
     }
 
