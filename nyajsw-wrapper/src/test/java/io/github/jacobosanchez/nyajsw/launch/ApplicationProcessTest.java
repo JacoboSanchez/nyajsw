@@ -50,15 +50,21 @@ public class ApplicationProcessTest {
     }
 
     @AfterMethod(alwaysRun = true)
-    public void tearDown() throws IOException {
+    public void tearDown() throws Exception {
         for (ApplicationProcess process : started) {
             if (process.isAlive()) {
                 process.terminateTree();
             }
+            process.waitFor(GENEROUS);
         }
         started.clear();
         for (long pid : grandchildren) {
-            ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+            Optional<ProcessHandle> handle = ProcessHandle.of(pid);
+            if (handle.isPresent()) {
+                handle.get().destroyForcibly();
+                // Windows keeps the working directory in use until the process is really gone.
+                handle.get().onExit().get(1, TimeUnit.MINUTES);
+            }
         }
         grandchildren.clear();
         log.close();
@@ -203,6 +209,20 @@ public class ApplicationProcessTest {
                 .orElseThrow();
         assertFalse(launching.contains("S3cr3t-pw"), launching);
         assertTrue(launching.contains("-Dpw=****"), launching);
+    }
+
+    @Test(timeOut = 120_000)
+    public void aSecretTheApplicationEchoesIsMaskedInTheLog() throws Exception {
+        // The JVM rejects the unknown -X option and prints it back on stderr.
+        WrapperConfig config = config("wrapper.ntservice.password=SuperSecret123",
+                "wrapper.java.additional.1=-X${wrapper.ntservice.password}", "wrapper.app.parameter.1=report",
+                "wrapper.app.parameter.2=0");
+
+        start(config, 1).waitFor(GENEROUS);
+
+        assertTrue(logLines().stream().noneMatch(line -> line.contains("SuperSecret123")), logLines().toString());
+        assertTrue(logLines().stream().anyMatch(line -> line.startsWith("jvm 1") && line.contains("-X****")),
+                logLines().toString());
     }
 
     @Test

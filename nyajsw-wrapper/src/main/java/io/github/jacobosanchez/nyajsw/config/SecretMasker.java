@@ -53,6 +53,35 @@ public final class SecretMasker {
         return Stream.of(secret, unquoted, ValueParser.normalisePath(secret), ValueParser.normalisePath(unquoted));
     }
 
+    /** The length of the longest secret text, 0 when there are none. */
+    public int longestSecret() {
+        return secrets.stream().mapToInt(String::length).max().orElse(0);
+    }
+
+    /**
+     * A position at or before {@code preferred} where {@code text} can be cut without splitting an
+     * occurrence of a secret, so that each part can be masked on its own: the start of any occurrence
+     * that {@code preferred} falls inside.
+     */
+    public int safeCut(String text, int preferred) {
+        Objects.requireNonNull(text, "text");
+        int cut = Math.min(preferred, text.length());
+        boolean moved = true;
+        while (moved) {
+            moved = false;
+            for (String secret : secrets) {
+                int from = Math.max(0, cut - secret.length() + 1);
+                for (int at = text.indexOf(secret, from); at >= 0 && at < cut; at = text.indexOf(secret, at + 1)) {
+                    if (at + secret.length() > cut) {
+                        cut = at;
+                        moved = true;
+                    }
+                }
+            }
+        }
+        return cut;
+    }
+
     /** {@code value} as it may be shown for {@code key}. */
     public String mask(String key, String value) {
         Objects.requireNonNull(key, "key");
