@@ -167,7 +167,7 @@ older JVMs than the wrapper requires.
 |---|---|---|
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
 | `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode` |
-| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader`, `ConfigSource` + `FileConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records), `ConfigException`, `ConfigWarning` |
+| `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader`, `ConfigSource` + `FileConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records), `ConfigException`, `ConfigWarning` |
 | `launch` | Build the application command line and run it. | `JavaCommandBuilder` (with a secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitAction` (enum `RESTART`/`SHUTDOWN`/`STOP`), `ExitActionResolver`, `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
@@ -296,7 +296,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   and for secret keys omit the referenced names and the cycle chain too.
 * **Layering**: built-in defaults ← file (+includes) ← wrapper JVM system properties
   (`-Dwrapper.x=y` on the wrapper command line, as YAJSW allows).
-* **Indexed and dynamic keys**: `prefix.N` collected in numeric order, gaps allowed;
+* **Indexed and dynamic keys** (`KeyCollector`): `prefix.N` collected in numeric order, gaps
+  allowed; the same index written twice (`.7`, `.07`) keeps both in file order with a warning; free
+  placeholders (`wrapper.app.env.<variable>`) keep file order; a key belongs to the family the
+  registry resolves it to, so the exact `wrapper.on_exit.0` is not a `wrapper.on_exit.<code>` member;
   `wrapper.app.env.<KEY>`, `wrapper.on_exit.<code>`, `wrapper.filter.trigger.N` handled by
   `KeySpec` patterns (`KeyPattern` templates: `<n>` matches an index, `<code>` a signed exit code,
   any other `<label>` one or more non-empty segments; an exact name wins over a template, then more
@@ -466,21 +469,30 @@ Goal: load any YAJSW `wrapper.conf` into a typed, validated model with warnings.
       unresolved warnings, cycle detection, Groovy detection. Also interpolate include paths (YAJSW
       does), through an `Interpolator` passed to `FileConfigSource` (defaulting to this process's
       system properties and environment).
-- [ ] P1.4 Indexed (`.N`) and dynamic (`wrapper.app.env.*`, `wrapper.on_exit.*`) key collection.
+- [x] P1.4 Indexed (`.N`) and dynamic (`wrapper.app.env.*`, `wrapper.on_exit.*`) key collection
+      (`KeyCollector`, with placeholder capture in `KeyPattern`).
 - [ ] P1.5 Layering/precedence (defaults, file, system properties) and `ConfigLoader` entry point;
       merge to one entry per key before calling `Interpolator.interpolate`, with the same
       "last definition wins" rule that include paths already use (P1.3), or change both together;
       give `FileConfigSource` a lookup with the same layer order for include paths, so a
-      `-D` system property that overrides a key also applies to `${key}` in an include path.
+      `-D` system property that overrides a key also applies to `${key}` in an include path;
+      define and document the order of the merged list (e.g. the position of the winning
+      definition), because `KeyCollector` keeps input order for free placeholders and repeated
+      indexes.
 - [ ] P1.6 Typed `WrapperConfig` records + validation with aggregated `ConfigException`; unknown /
-      unsupported / fatal key handling; secret masking in dumps.
+      unsupported / fatal key handling; secret masking in dumps. Decide per family what a repeated
+      index means (lists keep both; exit codes and filter triggers need one value per number, joined
+      through `KeyCollector.Member.numbers()`), and warn when a `wrapper.on_exit.<code>` member is 0
+      written differently (`00`, `-0`), since the exact `wrapper.on_exit.0` carries the default.
 - [ ] P1.7 `docs/COMPATIBILITY.md` generator + staleness test (`-Dnyajsw.docs.update=true`
       rewrites). The registry is already seeded from §7 (P1.2); this item only generates the
       document from it and retires the hand-written §7 tables.
 - [ ] P1.8 Fixtures: a YAJSW-style default template written from scratch, plus the owner's
       anonymised real configurations as soon as they are provided (§10 Q1; not a blocker).
 - [ ] P1.9 D7 follow-ups once real fixtures exist: honour `wrapper.conf.encoding`; settle backslash
-      escaping, `include` handling and case of environment names against a real file; update §4.5.
+      escaping, `include` handling and case of environment names against a real file; check how
+      YAJSW treats an index written twice (`.7` and `.07`; nyajsw keeps both with a warning, P1.4)
+      and duplicate keys; update §4.5.
 Done when: every fixture present in the repository loads; every §7 key has a registry entry and a
 test.
 
@@ -616,12 +628,11 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
-- P1.2: `KeyPattern` cannot yet return the placeholder values of a concrete key (index of
-  `wrapper.java.additional.3`, variable name of `wrapper.app.env.PATH`); add a capture method in P1.4,
-  which needs it, rather than parsing names a second time.
 - P1.2: `KeyPattern.commonExample` only finds overlaps with one segment per placeholder; free
   placeholders that span several segments in different shapes can still overlap undetected. No
   declared key is affected; revisit if a template with two free placeholders is added.
+- P1.4: `wrapper.app.env.PATH` and `wrapper.app.env.Path` are collected as two variables without a
+  warning, though Windows treats them as one; warn in P1.6 or P2.4 when building the environment.
 - P1.3: include paths resolve `${key}` against file entries read so far, without the
   system-property layer or built-in defaults; aligned in P1.5 (see that item).
 - P1.3: a non-secret key whose value refers to a secret one (`a=${wrapper.app.password}`) receives

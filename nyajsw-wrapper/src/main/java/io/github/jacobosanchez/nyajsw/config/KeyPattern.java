@@ -55,15 +55,18 @@ public final class KeyPattern {
     private final int literalLength;
     private final int numericPlaceholders;
     private final String example;
+    /** Placeholder labels in template order, e.g. {@code [n]}. */
+    private final List<String> labels;
 
     private KeyPattern(String template, List<String> segments, Pattern regex, int literalLength,
-            int numericPlaceholders, String example) {
+            int numericPlaceholders, String example, List<String> labels) {
         this.template = template;
         this.segments = segments;
         this.regex = regex;
         this.literalLength = literalLength;
         this.numericPlaceholders = numericPlaceholders;
         this.example = example;
+        this.labels = labels;
     }
 
     /**
@@ -81,6 +84,7 @@ public final class KeyPattern {
         StringBuilder example = new StringBuilder();
         int literalLength = segments.size() - 1; // the dots
         int numericPlaceholders = 0;
+        List<String> labels = new ArrayList<>();
         boolean exact = true;
         for (int i = 0; i < segments.size(); i++) {
             String segment = segments.get(i);
@@ -95,11 +99,14 @@ public final class KeyPattern {
                 }
                 String label = placeholder.group(1);
                 switch (label) {
-                    case INDEX -> regex.append("[0-9]+");
-                    case EXIT_CODE -> regex.append("-?[0-9]+");
-                    default -> regex.append("[^.]+(?:\\.[^.]+)*");
+                    case INDEX -> regex.append("([0-9]+)");
+                    case EXIT_CODE -> regex.append("(-?[0-9]+)");
+                    // No repeated group: that recurses once per segment in java.util.regex and can
+                    // overflow the stack on absurd keys. Empty segments are excluded up front instead.
+                    default -> regex.append("([^.](?:.*[^.])?)");
                 }
-                boolean numeric = label.equals(INDEX) || label.equals(EXIT_CODE);
+                labels.add(label);
+                boolean numeric = isNumericLabel(label);
                 numericPlaceholders += numeric ? 1 : 0;
                 example.append(numeric ? NUMERIC_EXAMPLE : label);
                 exact = false;
@@ -113,9 +120,13 @@ public final class KeyPattern {
             }
         }
         return exact
-                ? new KeyPattern(template, segments, null, template.length(), 0, template)
+                ? new KeyPattern(template, segments, null, template.length(), 0, template, List.of())
                 : new KeyPattern(template, segments, Pattern.compile(regex.toString()), literalLength,
-                        numericPlaceholders, example.toString());
+                        numericPlaceholders, example.toString(), List.copyOf(labels));
+    }
+
+    private static boolean isNumericLabel(String label) {
+        return label.equals(INDEX) || label.equals(EXIT_CODE);
     }
 
     private static IllegalArgumentException invalid(String template, String reason) {
@@ -135,7 +146,12 @@ public final class KeyPattern {
     /** Whether {@code key} is this key or a member of this family of keys. */
     public boolean matches(String key) {
         Objects.requireNonNull(key, "key");
-        return regex == null ? template.equals(key) : regex.matcher(key).matches();
+        return regex == null ? template.equals(key) : hasNoEmptySegment(key) && regex.matcher(key).matches();
+    }
+
+    /** Templates have no empty segments and placeholders match non-empty ones, so such keys never match. */
+    private static boolean hasNoEmptySegment(String key) {
+        return !key.contains("..") && !key.startsWith(".") && !key.endsWith(".");
     }
 
     /**
@@ -149,6 +165,39 @@ public final class KeyPattern {
     /** Number of {@code <n>} and {@code <code>} placeholders. */
     public int numericPlaceholders() {
         return numericPlaceholders;
+    }
+
+    /**
+     * What the placeholders stand for in a concrete key, in template order: {@code ["3"]} for
+     * {@code wrapper.java.additional.3} against {@code wrapper.java.additional.<n>},
+     * {@code ["PATH"]} for {@code wrapper.app.env.PATH}. An exact name gives an empty list.
+     *
+     * @return the placeholder values, or empty when {@code key} does not match
+     */
+    public Optional<List<String>> captures(String key) {
+        Objects.requireNonNull(key, "key");
+        if (regex == null) {
+            return template.equals(key) ? Optional.of(List.of()) : Optional.empty();
+        }
+        Matcher matcher = regex.matcher(key);
+        if (!hasNoEmptySegment(key) || !matcher.matches()) {
+            return Optional.empty();
+        }
+        List<String> values = new ArrayList<>(matcher.groupCount());
+        for (int group = 1; group <= matcher.groupCount(); group++) {
+            values.add(matcher.group(group));
+        }
+        return Optional.of(List.copyOf(values));
+    }
+
+    /** The placeholder labels in template order, e.g. {@code [n]}; empty for an exact name. */
+    public List<String> labels() {
+        return labels;
+    }
+
+    /** Whether the placeholder at {@code position} (see {@link #labels()}) only matches integers. */
+    public boolean isNumeric(int position) {
+        return isNumericLabel(labels.get(position));
     }
 
     /**

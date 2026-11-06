@@ -110,6 +110,15 @@ public class KeyRegistryTest {
     }
 
     @Test
+    public void keysWithThousandsOfSegmentsDoNotOverflowTheStack() {
+        KeySpec env = spec("wrapper.app.env.<variable>");
+        KeyRegistry registry = new KeyRegistry(List.of(env));
+
+        assertEquals(registry.lookup("wrapper.app.env." + "a.".repeat(20_000) + "a"), Optional.of(env));
+        assertEquals(registry.lookup("wrapper.app.env." + "a.".repeat(20_000)), Optional.empty());
+    }
+
+    @Test
     public void secretsByDeclarationAndByPasswordName() {
         KeyRegistry registry = new KeyRegistry(List.of(SECRET, EXACT));
 
