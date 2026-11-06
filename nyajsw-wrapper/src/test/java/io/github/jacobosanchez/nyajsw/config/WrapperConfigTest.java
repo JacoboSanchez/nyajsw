@@ -352,6 +352,15 @@ public class WrapperConfigTest {
     }
 
     @Test
+    public void environmentSetBySystemPropertiesComesLastSoItWinsOverOtherSpellings() throws IOException {
+        WrapperConfig config = loadWith(Map.of("wrapper.app.env.Path", "system"),
+                "wrapper.app.env.Path=file1", "wrapper.app.env.PATH=file2");
+
+        assertEquals(List.copyOf(config.java().environment().entrySet()),
+                List.of(Map.entry("PATH", "file2"), Map.entry("Path", "system")));
+    }
+
+    @Test
     public void environmentNamesDifferingOnlyInCaseWarn() throws IOException {
         WrapperConfig config = load("wrapper.app.env.Path=a", "wrapper.app.env.PATH=b");
 
