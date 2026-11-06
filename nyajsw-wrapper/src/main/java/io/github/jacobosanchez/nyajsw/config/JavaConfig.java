@@ -47,7 +47,9 @@ import java.util.Optional;
  * @param jvmOptions     {@code wrapper.java.additional.<n>} in index order
  * @param initMemoryMb   {@code wrapper.java.initmemory}, if set
  * @param maxMemoryMb    {@code wrapper.java.maxmemory}, if set
- * @param environment    {@code wrapper.app.env.<variable>} in file order, by variable name
+ * @param environment    {@code wrapper.app.env.<variable>} by variable name, in precedence order (file
+ *                       order, then those set by system properties), so that applying them in turn
+ *                       lets a system property win where Windows sees one variable in two spellings
  * @param workingDir     {@code wrapper.working.dir}, by default the configuration file's directory
  * @param tmpPath        {@code wrapper.tmp.path}, if set
  * @param image          {@code wrapper.image}, if set
@@ -114,7 +116,7 @@ public record JavaConfig(Optional<String> command, boolean javaw, Optional<Strin
     private static Map<String, String> environment(ConfigValues values) {
         Map<String, String> environment = new LinkedHashMap<>();
         Map<String, KeyCollector.Member> byFoldedName = new LinkedHashMap<>();
-        for (KeyCollector.Member member : values.family(APP_ENV)) {
+        for (KeyCollector.Member member : values.familyInFileOrder(APP_ENV)) {
             String name = member.lastPlaceholder();
             KeyCollector.Member earlier = byFoldedName.putIfAbsent(name.toUpperCase(Locale.ROOT), member);
             if (earlier != null) {

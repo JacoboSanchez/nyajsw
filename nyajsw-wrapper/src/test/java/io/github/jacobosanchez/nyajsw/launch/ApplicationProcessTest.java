@@ -237,6 +237,19 @@ public class ApplicationProcessTest {
     }
 
     @Test
+    public void aSystemPropertyWinsOverAFileSpellingOfTheSameWindowsVariable() throws Exception {
+        Path file = Files.writeString(dir.resolve("env.conf"), "wrapper.app.env.Path=file1\nwrapper.app.env.PATH=file2\n",
+                StandardCharsets.UTF_8);
+        WrapperConfig config = WrapperConfig.from(new ConfigLoader(Map.of("wrapper.app.env.Path", "system"), Map.of(),
+                false, ConfigKeys.registry()).load(file));
+        Map<String, String> inherited = new java.util.HashMap<>(Map.of("path", "inherited"));
+
+        ApplicationProcess.applyEnvironment(inherited, config.java().environment(), true);
+
+        assertEquals(inherited, Map.of("Path", "system"));
+    }
+
+    @Test
     public void environmentNamesAreExactUnderPosixRules() {
         Map<String, String> inherited = new java.util.HashMap<>(Map.of("Path", "old", "HOME", "/root"));
 
