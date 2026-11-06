@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 1 |
-| planned | 71 |
+| supported | 16 |
+| planned | 56 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -38,8 +38,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
-| `wrapper.java.command` | Java executable that runs the application | path | java from the wrapper JVM's java.home, or javaw when wrapper.java.command.javaw is true | **planned** (P2) |  |
-| `wrapper.java.command.javaw` | Use javaw instead of java for the default Java executable | boolean | `false` | **planned** (P2) | *Verify:* default |
+| `wrapper.java.command` | Java executable that runs the application | path | java from the wrapper JVM's java.home, or javaw when wrapper.java.command.javaw is true | **supported** |  |
+| `wrapper.java.command.javaw` | Use javaw instead of java for the default Java executable | boolean | `false` | **supported** | *Verify:* default |
 | `wrapper.java.command.minVersion` | Lowest Java version accepted when searching for a JVM | text | — | **unsupported** (P9) |  |
 | `wrapper.java.command.maxVersion` | Highest Java version accepted when searching for a JVM | text | — | **unsupported** (P9) |  |
 | `wrapper.java.command.jreOnly` | Accept only a JRE when searching for a JVM | boolean | — | **unsupported** (P9) |  |
@@ -47,28 +47,28 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.java.command.preferJre` | Prefer a JRE when searching for a JVM | boolean | — | **unsupported** (P9) |  |
 | `wrapper.java.command.preferJdk` | Prefer a JDK when searching for a JVM | boolean | — | **unsupported** (P9) |  |
 | `wrapper.java.customProcName` | Run the application from a renamed copy of the Java executable | text | — | **unsupported** (P9) |  |
-| `wrapper.java.app.mainclass` | Main class of the application | text | — | **planned** (P2) |  |
-| `wrapper.java.app.jar` | Executable jar of the application, instead of a main class | path | — | **planned** (P2) |  |
+| `wrapper.java.app.mainclass` | Main class of the application | text | — | **supported** |  |
+| `wrapper.java.app.jar` | Executable jar of the application, instead of a main class | path | — | **supported** |  |
 | `wrapper.java.mainclass` | YAJSW's in-JVM bootstrap class | text | — | **ignored** | nyajsw starts the application main class directly; the optional agent replaces the bootstrap |
-| `wrapper.app.parameter.<n>` | Program argument passed to the application | text | — | **planned** (P2) |  |
+| `wrapper.app.parameter.<n>` | Program argument passed to the application | text | — | **supported** |  |
 | `wrapper.app.parameter.<n>.stripquotes` | Tanuki: remove quotes from wrapper.app.parameter.&lt;n&gt; | boolean | — | **unsupported** | Declared so that it is not read as a program argument |
-| `wrapper.java.classpath.<n>` | Classpath entry of the application; * and ? wildcards as in YAJSW | path | — | **planned** (P2) | A whole ** segment matches any depth, a nyajsw extension; matches are sorted by path |
+| `wrapper.java.classpath.<n>` | Classpath entry of the application; * and ? wildcards as in YAJSW | path | — | **supported** | A whole ** segment matches any depth, a nyajsw extension; matches are sorted by path |
 | `wrapper.java.classpath.use_environment` | Tanuki: append the CLASSPATH environment variable to the classpath | boolean | — | **unsupported** | Declared so that it is not read as a classpath entry |
 | `wrapper.java.classpath.missing_log_level` | Tanuki: log level used when a classpath entry does not exist | text | — | **unsupported** | Declared so that it is not read as a classpath entry |
-| `wrapper.java.library.path.<n>` | Entry of the application's java.library.path | path | — | **planned** (P2) |  |
+| `wrapper.java.library.path.<n>` | Entry of the application's java.library.path | path | — | **supported** |  |
 | `wrapper.java.library.path.append_system_path` | Tanuki: append the system PATH to java.library.path | boolean | — | **unsupported** | Declared so that it is not read as a library path entry |
-| `wrapper.java.additional.<n>` | JVM option or -D system property of the application | text | — | **planned** (P2) |  |
+| `wrapper.java.additional.<n>` | JVM option or -D system property of the application | text | — | **supported** |  |
 | `wrapper.java.additional.auto_bits` | Tanuki: add -d32 or -d64 to the JVM options to match the wrapper | boolean | — | **unsupported** | Declared so that it is not read as a JVM option |
 | `wrapper.java.additional.auto_bits.<platform>` | Tanuki: wrapper.java.additional.auto_bits for one platform | boolean | — | **unsupported** | Declared so that it is not read as a JVM option |
 | `wrapper.java.additional.<n>.stripquotes` | Tanuki: remove quotes from wrapper.java.additional.&lt;n&gt; | boolean | — | **unsupported** | Declared so that it is not read as a JVM option |
-| `wrapper.java.initmemory` | Initial heap of the application in MB (-Xms) | integer | — | **planned** (P2) |  |
-| `wrapper.java.maxmemory` | Maximum heap of the application in MB (-Xmx) | integer | — | **planned** (P2) |  |
+| `wrapper.java.initmemory` | Initial heap of the application in MB (-Xms) | integer | — | **supported** |  |
+| `wrapper.java.maxmemory` | Maximum heap of the application in MB (-Xmx) | integer | — | **supported** |  |
 | `wrapper.java.initmemory.relative` | Initial heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |
 | `wrapper.java.initialmemory.relative` | Initial heap as a percentage of physical memory | integer | — | **unsupported** (P9) | The spelling of the YAJSW reference; wrapper.java.initmemory.relative is the other one |
 | `wrapper.java.maxmemory.relative` | Maximum heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |
-| `wrapper.app.env.<variable>` | Environment variable set for the application | text | — | **planned** (P2) | An empty value removes the inherited variable; on Windows every spelling of the name is replaced |
-| `wrapper.working.dir` | Working directory of the application | path | the directory of the configuration file (D13) | **planned** (P2) | *Verify:* default |
-| `wrapper.tmp.path` | Temporary directory of the wrapper, also used as jna.tmpdir | path | — | **planned** (P2) | Not passed to the application<br>*Verify:* default |
+| `wrapper.app.env.<variable>` | Environment variable set for the application | text | — | **supported** | An empty value removes the inherited variable; on Windows every spelling of the name is replaced |
+| `wrapper.working.dir` | Working directory of the application | path | the directory of the configuration file (D13) | **supported** | *Verify:* default |
+| `wrapper.tmp.path` | Temporary directory of the wrapper, also used as jna.tmpdir | path | — | **planned** (P5) | Not passed to the application<br>*Verify:* default |
 | `wrapper.cleanup_tmp` | Delete the wrapper's leftover output-buffer files from the temporary directory at start | boolean | — | **unsupported** | YAJSW default: true |
 | `wrapper.image` | Non-Java executable to run instead of a JVM | path | — | **planned** (P2) | Optional plan item P2.6 |
 | `wrapper.priority` | Process priority of the application | text | — | **unsupported** (P9) |  |
@@ -102,7 +102,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.successful_invocation_time` | Run time after which an invocation counts as successful | seconds | `60` | **planned** (P3) |  |
 | `wrapper.startup.delay` | Pause before the application is started for the first time | seconds | `0` | **planned** (P3) |  |
 | `wrapper.startup.timeout` | Time the application has to become ready | seconds | `30` | **planned** (P3) |  |
-| `wrapper.shutdown.timeout` | Time the application has to stop gracefully before it is terminated | seconds | `30` | **planned** (P3) | YAJSW documents no default and bounds the stop by this and wrapper.jvm_exit.timeout together<br>*Verify:* default |
+| `wrapper.shutdown.timeout` | Time the application has to stop gracefully before it is terminated | seconds | `30` | **supported** | YAJSW documents no default and bounds the stop by this and wrapper.jvm_exit.timeout together. In console mode it is the time the application has after Ctrl+C, which it receives too<br>*Verify:* default |
 | `wrapper.jvm_exit.timeout` | Time added to wrapper.shutdown.timeout before the application is terminated | seconds | — | **planned** (P3) |  |
 | `wrapper.pidfile` | File the wrapper writes its process id to | path | — | **planned** (P3) |  |
 | `wrapper.lockfile` | File locked while the application runs, so that a second instance does not start | path | — | **unsupported** (P9) |  |
@@ -154,14 +154,14 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.logfile.desc` | Roll by renaming only the newest file, which then gets the highest number | boolean | — | **unsupported** (P9) |  |
 | `wrapper.log.encoding` | Character encoding of the wrapper log file | text | — | **planned** (P4) | YAJSW defaults to the JVM's default charset |
 | `wrapper.console.format` | Format tokens of console lines | text | `PM` | **planned** (P4) | Same tokens as wrapper.logfile.format |
-| `wrapper.console.loglevel` | Lowest level written to the console | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | `INFO` | **planned** (P4) |  |
+| `wrapper.console.loglevel` | Lowest level written to the console | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | `INFO` | **supported** |  |
 | `wrapper.console.visible` | Show a console window for the service | boolean | — | **unsupported** (P9) |  |
 | `wrapper.console.title` | Title of the console window | text | — | **unsupported** (P9) |  |
 | `wrapper.console.minimized` | Start the visible console window minimized | boolean | — | **unsupported** (P9) |  |
 | `wrapper.console.pipestreams` | Pipe the application's standard streams to the wrapper instead of copying them | boolean | — | **ignored** | nyajsw always pipes them, as if true |
 | `wrapper.console.use_interpolated` | Whether Java options of the wrapper JVM are passed on to the application | boolean | — | **unsupported** |  |
 | `wrapper.app.status.log.lines` | Application output lines logged at the STATUS level | integer | — | **unsupported** |  |
-| `wrapper.debug` | Raise the wrapper log level to DEBUG | boolean | `false` | **planned** (P4) |  |
+| `wrapper.debug` | Raise the wrapper log level to DEBUG | boolean | `false` | **supported** |  |
 | `wrapper.debug.level` | Detail of the wrapper.debug output, from 0 (least) to 3 (all) | integer | `3` | **planned** (P4) |  |
 | `wrapper.syslog.<setting>` | Logging to syslog (facility, ident, loglevel) | text | — | **unsupported** |  |
 

@@ -23,7 +23,7 @@ public class ConfigValidatorTest {
     @Test
     public void plannedIgnoredAndUnsupportedKeysWarnOncePerDeclaration() {
         ConfigValidator.Result result = validator.validate(config(
-                "wrapper.java.command", "java", ConfigLayer.FILE,
+                "wrapper.pidfile", "wrapper.pid", ConfigLayer.FILE,
                 "wrapper.java.mainclass", "org.rzo.yajsw.app.WrapperJVMMain", ConfigLayer.FILE,
                 "wrapper.java.monitor.deadlock", "true", ConfigLayer.FILE,
                 "wrapper.java.monitor.heap", "true", ConfigLayer.FILE));
@@ -31,7 +31,7 @@ public class ConfigValidatorTest {
         assertTrue(result.errors().isEmpty(), result.errors().toString());
         List<String> messages = result.warnings().stream().map(ConfigWarning::message).toList();
         assertEquals(messages, List.of(
-                "wrapper.java.command is not implemented yet in this version of nyajsw; it has no effect",
+                "wrapper.pidfile is not implemented yet in this version of nyajsw; it has no effect",
                 "wrapper.java.mainclass is ignored by nyajsw. " + ConfigKeys.JAVA_MAINCLASS.notes(),
                 "wrapper.java.monitor.<setting> (2 keys) is not supported by nyajsw; it has no effect"));
         assertEquals(result.warnings().get(2).location(), new ConfigLocation("wrapper.conf", 3));
@@ -187,9 +187,8 @@ public class ConfigValidatorTest {
                 "wrapper.tray", "true", ConfigLayer.FILE));
 
         result.throwIfErrors();
+        // The application keys are supported since console mode (P2.5), so they no longer warn.
         assertEquals(result.warnings().stream().map(ConfigWarning::message).toList(), List.of(
-                "wrapper.java.app.mainclass is not implemented yet in this version of nyajsw; it has no effect",
-                "wrapper.java.additional.<n> (2 keys) is not implemented yet in this version of nyajsw; it has no effect",
                 "wrapper.ntservice.starttype is not implemented yet in this version of nyajsw; it has no effect",
                 "wrapper.startup.timeout is not implemented yet in this version of nyajsw; it has no effect",
                 "wrapper.tray is not supported by nyajsw; it has no effect"));

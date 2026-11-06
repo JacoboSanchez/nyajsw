@@ -72,13 +72,13 @@ public final class ConfigKeys {
     // ---- Java process ----
 
     public static final KeySpec JAVA_COMMAND = yajsw("wrapper.java.command", PATH, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Java executable that runs the application")
             .derivedDefault("java from the wrapper JVM's java.home, or javaw when wrapper.java.command.javaw is true")
             .build();
 
     public static final KeySpec JAVA_COMMAND_JAVAW = yajsw("wrapper.java.command.javaw", BOOLEAN, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Use javaw instead of java for the default Java executable")
             .defaultValue("false")
             .toVerify(DEFAULT)
@@ -120,12 +120,12 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec JAVA_APP_MAINCLASS = yajsw("wrapper.java.app.mainclass", STRING, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Main class of the application")
             .build();
 
     public static final KeySpec JAVA_APP_JAR = yajsw("wrapper.java.app.jar", PATH, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Executable jar of the application, instead of a main class")
             .build();
 
@@ -136,7 +136,7 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec APP_PARAMETER = yajsw("wrapper.app.parameter.<n>", STRING, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Program argument passed to the application")
             .build();
 
@@ -148,13 +148,13 @@ public final class ConfigKeys {
                     .build();
 
     public static final KeySpec JAVA_CLASSPATH = yajsw("wrapper.java.classpath.<n>", PATH, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Classpath entry of the application; * and ? wildcards as in YAJSW")
             .notes("A whole ** segment matches any depth, a nyajsw extension; matches are sorted by path")
             .build();
 
     public static final KeySpec JAVA_LIBRARY_PATH = yajsw("wrapper.java.library.path.<n>", PATH, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Entry of the application's java.library.path")
             .build();
 
@@ -180,7 +180,7 @@ public final class ConfigKeys {
                     .build();
 
     public static final KeySpec JAVA_ADDITIONAL = yajsw("wrapper.java.additional.<n>", STRING, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("JVM option or -D system property of the application")
             .build();
 
@@ -205,12 +205,12 @@ public final class ConfigKeys {
                     .build();
 
     public static final KeySpec JAVA_INITMEMORY = yajsw("wrapper.java.initmemory", INTEGER, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Initial heap of the application in MB (-Xms)")
             .build();
 
     public static final KeySpec JAVA_MAXMEMORY = yajsw("wrapper.java.maxmemory", INTEGER, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Maximum heap of the application in MB (-Xmx)")
             .build();
 
@@ -232,20 +232,20 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec APP_ENV = yajsw("wrapper.app.env.<variable>", STRING, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Environment variable set for the application")
             .notes("An empty value removes the inherited variable; on Windows every spelling of the name is replaced")
             .build();
 
     public static final KeySpec WORKING_DIR = yajsw("wrapper.working.dir", PATH, JAVA)
-            .status(PLANNED, "P2")
+            .status(SUPPORTED)
             .description("Working directory of the application")
             .derivedDefault("the directory of the configuration file (D13)")
             .toVerify(DEFAULT)
             .build();
 
     public static final KeySpec TMP_PATH = yajsw("wrapper.tmp.path", PATH, JAVA)
-            .status(PLANNED, "P2")
+            .status(PLANNED, "P5")
             .description("Temporary directory of the wrapper, also used as jna.tmpdir")
             .notes("Not passed to the application")
             .toVerify(DEFAULT) // the reference says /tmp, YAJSW's change log jna.tmpdir under its tmp folder
@@ -415,10 +415,11 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec SHUTDOWN_TIMEOUT = yajsw("wrapper.shutdown.timeout", DURATION, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Time the application has to stop gracefully before it is terminated")
             .defaultValue("30")
-            .notes("YAJSW documents no default and bounds the stop by this and wrapper.jvm_exit.timeout together")
+            .notes("YAJSW documents no default and bounds the stop by this and wrapper.jvm_exit.timeout together."
+                    + " In console mode it is the time the application has after Ctrl+C, which it receives too")
             .toVerify(DEFAULT)
             .build();
 
@@ -683,7 +684,7 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec CONSOLE_LOGLEVEL = yajsw("wrapper.console.loglevel", ENUM, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Lowest level written to the console")
             .values(LOG_LEVELS)
             .defaultValue("INFO")
@@ -722,7 +723,7 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec DEBUG = yajsw("wrapper.debug", BOOLEAN, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Raise the wrapper log level to DEBUG")
             .defaultValue("false")
             .build();

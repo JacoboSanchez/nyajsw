@@ -174,7 +174,7 @@ older JVMs than the wrapper requires.
 | Package | Responsibility | Key types |
 |---|---|---|
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
-| `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode` |
+| `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit`. | `Main`, `Command`, `ExitCode`, `ConsoleMode` (P2.5; the supervisor takes over in P3.6) |
 | `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `CompatibilityDocument`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
 | `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess`, `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
@@ -786,8 +786,25 @@ Goal: build and run the application command line exactly as the configuration sa
       logs any it could not kill; launch errors are masked and carry no unmasked cause.
       `wrapper.tmp.path` is the wrapper's own directory (`jna.tmpdir`, D12) and is not passed to the
       application.
-- [ ] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C waits up to
+- [x] P2.5 Console mode `-c` for a single run (no restart loop yet); Ctrl+C waits up to
       `wrapper.shutdown.timeout` for the child, then terminates it (full semantics in P3.6).
+      **Done:** `cli.Main` (the only `System.exit`) parses `-c`/`--console <conf>`, `--help`,
+      `--version`, and answers the service switches of §3.2 with "not implemented yet" (exit 1);
+      configuration errors are logged one per problem through a bootstrap console log (exit 2);
+      `ConsoleMode` logs the configuration, classpath and command-line warnings at `STATUS`,
+      starts `jvm 1` and returns its exit code; a launch error is one `FATAL` line (exit 1). A
+      shutdown hook calls `ConsoleMode.stop()`, which waits `wrapper.shutdown.timeout` and then
+      terminates the tree; the hook is removed after a normal end. The console threshold is
+      `wrapper.console.loglevel`, raised to `DEBUG` by `wrapper.debug`. The application keys of
+      P2.2–P2.4 and `wrapper.console.loglevel`, `wrapper.debug` and `wrapper.shutdown.timeout`,
+      which take effect now, are *supported* in the registry, so their invalid values are errors;
+      `wrapper.tmp.path` moves to P5, where it becomes `jna.tmpdir` (P5.3). The exit code after
+      Ctrl+C is still the JVM's own; P3.6 returns the application's. `run()` returns only after a
+      `stop()` in progress has finished, so its last line reaches the log. Limitation until the
+      stop strategies (P3.4, P7): the wait suits Ctrl+C in a shared console, where the application
+      is asked to stop too; when only the wrapper is stopped (SIGTERM, a closed console window,
+      where Windows kills after about 5 s) the application is not asked and is killed after the
+      timeout, and a second Ctrl+C does not shorten the wait.
 - [ ] P2.6 (optional) `wrapper.image` for non-Java executables through the same `ApplicationProcess`.
 Done when: golden command-line tests pass on fixtures; a test main class is launched and its output
 captured on Linux and Windows.
@@ -830,7 +847,8 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
 - [ ] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
       (default `java.class.path`; integration tests pass the real jars because surefire's
       `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.additional.N`,
-      `-Djna.tmpdir`, quoting (D12); `wrapper.ntservice.java.command` (a Java 21 only).
+      `-Djna.tmpdir` from `wrapper.tmp.path`, quoting (D12); `wrapper.ntservice.java.command` (a
+      Java 21 only).
 - [ ] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes.
 - [ ] P5.4a (blocked on §10 Q8, D17) Migration entry point: `WrapperServiceBooter` alias class, mode
       detection when `--service` is absent, and the Java 21 binPath rewrite in a migration command.
@@ -945,6 +963,11 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `pw=${keystore svcpass}` can name `svcpass` when `pw` is first resolved through the password).
   No value leaks, only the keystore entry name; check the reference chain as `cycle()` does if it
   matters.
+- P2.5: when the configuration has errors only the errors are reported; the warnings gathered while
+  loading (a misspelt key, for example) would often explain them. `ConfigException` would have to
+  carry them.
+- P2.5: usage messages and "not implemented yet" go to standard output with everything else; standard
+  error would suit scripts better.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.

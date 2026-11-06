@@ -351,8 +351,11 @@ public class ConfigLoaderTest {
         assertTrue(dump.contains("wrapper.java.additional.3 = -Dagain=-Dpassword=****"), dump);
         assertTrue(dump.contains("wrapper.java.additional.4 = -Dfallback=****"), dump);
         assertFalse(dump.contains("TopSecret123") || dump.contains("DbSecret456") || dump.contains("Other789"), dump);
-        assertTrue(validation.warnings().stream().anyMatch(w -> w.message().contains("'****'")),
-                validation.warnings().toString());
+        // wrapper.java.maxmemory is supported, so the value that does not fit is an error, shown masked.
+        assertTrue(validation.errors().stream().anyMatch(e -> e.getMessage().contains("'****'")),
+                validation.errors().toString());
+        assertTrue(validation.errors().stream().noneMatch(e -> e.getMessage().contains("TopSecret123")),
+                validation.errors().toString());
         assertTrue(validation.warnings().stream().noneMatch(w -> w.toString().contains("TopSecret123")),
                 validation.warnings().toString());
         assertFalse(config.toString().contains("TopSecret123"), config.toString());
