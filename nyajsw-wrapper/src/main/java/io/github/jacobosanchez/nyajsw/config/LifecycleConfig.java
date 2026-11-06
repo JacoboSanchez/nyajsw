@@ -20,6 +20,7 @@ import java.math.BigInteger;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -117,13 +118,18 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
     }
 
     /**
-     * One action per exit code. A code written twice ({@code 7} and {@code 07}) keeps the last one in
-     * file order; the collector has warned. Code 0 comes from the exact {@code wrapper.on_exit.0}
-     * (which has a default), so another spelling of 0 is ignored with a warning.
+     * One action per exit code. Codes are normalised first ({@link #asExitCode}), then the last
+     * spelling of a code in file order wins: for {@code 7} and {@code 07} the collector has warned;
+     * spellings that only agree after normalising ({@code -1} and {@code 4294967295}) warn here.
+     * Code 0 comes from the exact {@code wrapper.on_exit.0} (which has a default), so another
+     * spelling of 0 is ignored with a warning. An invalid action (reported by the validator) leaves
+     * the code to the default action, and so does a later spelling set to nothing. "Later" is precedence
+     * order ({@link ConfigValues#familyInFileOrder}): a system property counts as the latest.
      */
     private static Map<Integer, ExitAction> exitActions(ConfigValues values) {
         Map<Integer, ExitAction> actions = new TreeMap<>();
-        for (KeyCollector.Member member : values.family(ON_EXIT)) {
+        Map<Integer, KeyCollector.Member> spelledBy = new HashMap<>();
+        for (KeyCollector.Member member : values.familyInFileOrder(ON_EXIT)) {
             BigInteger number = member.numbers().get(0);
             if (number.signum() == 0) {
                 values.warn(member.entry().location(), member.key() + " means exit code 0, which "
@@ -131,13 +137,23 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 continue;
             }
             Optional<Integer> code = values.intNumber(ON_EXIT, member, asExitCode(number));
-            if (code.isEmpty() || ValueParser.isUnset(ON_EXIT, member.value())) {
+            if (code.isEmpty()) {
+                continue;
+            }
+            KeyCollector.Member earlier = spelledBy.put(code.get(), member);
+            if (earlier != null && !earlier.numbers().equals(member.numbers())) {
+                values.warn(member.entry().location(), member.key() + " and " + earlier.key()
+                        + " mean the same exit code " + code.get() + "; the later one applies");
+            }
+            if (ValueParser.isUnset(ON_EXIT, member.value())) {
+                actions.remove(code.get()); // set to nothing: the default action applies
                 continue;
             }
             try {
-                actions.put(code.get(), Enum.valueOf(ExitAction.class, ValueParser.parseEnum(ON_EXIT, member.value())));
+                ExitAction action = Enum.valueOf(ExitAction.class, ValueParser.parseEnum(ON_EXIT, member.value()));
+                actions.put(code.get(), action);
             } catch (IllegalArgumentException e) {
-                // Reported by ConfigValidator; the default action applies to this code.
+                actions.remove(code.get()); // reported by ConfigValidator; the default action applies
             }
         }
         actions.put(0, values.required(values.enumeration(ON_EXIT_0, ExitAction.class), ON_EXIT_0));

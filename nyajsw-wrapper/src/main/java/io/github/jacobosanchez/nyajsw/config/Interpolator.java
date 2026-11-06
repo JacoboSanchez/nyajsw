@@ -165,7 +165,8 @@ public final class Interpolator {
         Objects.requireNonNull(location, "location");
         Expansion expansion = new Expansion(Objects.requireNonNull(config, "config"), false);
         Expanded expanded = expansion.expand(text, location, null, expansion.warnings);
-        return new Resolution(expanded.value(), List.copyOf(expanded.unresolved()), expansion.warnings);
+        return new Resolution(expanded.value(), List.copyOf(expanded.unresolved()), expansion.warnings,
+                expansion.usedSecret);
     }
 
     /**
@@ -190,8 +191,14 @@ public final class Interpolator {
      *                   it refers to, in order of discovery and without repetition; the caller decides
      *                   whether that is a warning or an error
      * @param warnings   warnings about the text itself, such as a <code>${</code> without a closing brace
+     * @param usesSecret whether resolving the text read a secret: the value of a key the registry
+     *                   marks as secret, or a system property or environment variable of such a name
+     *                   (e.g. <code>${sys:wrapper.ntservice.password}</code>), directly or through
+     *                   the values of other keys. The value then contains (part of) a secret and must
+     *                   not be shown. A secret under a name the registry cannot recognise
+     *                   (<code>${env:DB_PASS}</code>) is not detected.
      */
-    public record Resolution(String value, List<String> unresolved, List<ConfigWarning> warnings) {
+    public record Resolution(String value, List<String> unresolved, List<ConfigWarning> warnings, boolean usesSecret) {
 
         public Resolution {
             Objects.requireNonNull(value, "value");
@@ -221,6 +228,8 @@ public final class Interpolator {
         private final Map<String, Expanded> resolvedKeys = new HashMap<>();
         private final Deque<String> chain = new ArrayDeque<>();
         private final List<ConfigWarning> warnings = new ArrayList<>();
+        /** Whether a secret key's value was read during this run. */
+        private boolean usedSecret;
 
         Expansion(Function<String, Optional<ConfigEntry>> config, boolean reportEntryProblems) {
             this.config = config;
@@ -229,6 +238,9 @@ public final class Interpolator {
 
         /** The resolved value of an entry; its problems are reported once, at the entry. */
         Expanded entryValue(ConfigEntry entry) {
+            if (secret(entry.key())) {
+                usedSecret = true;
+            }
             Expanded known = resolvedKeys.get(entry.key());
             if (known != null) {
                 return known;
@@ -331,6 +343,11 @@ public final class Interpolator {
         }
 
         private Optional<Expanded> lookup(String name) {
+            String bare = isPrefixed(name) ? name.substring(SYS_PREFIX.length()) : name;
+            if (!bare.isEmpty() && secret(bare)) {
+                // Whatever source answers (a key, ${sys:...}, ${env:...}), a secret name yields a secret.
+                usedSecret = true;
+            }
             if (name.startsWith(SYS_PREFIX)) {
                 return literal(systemProperties.get(name.substring(SYS_PREFIX.length())));
             }

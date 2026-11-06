@@ -55,7 +55,9 @@ import java.util.stream.Collectors;
  *       unresolved variable in the path is an error naming file and line. A plain {@code #include} is
  *       optional, as in the Tanuki format it comes from (and YAJSW treats it as a comment): the same
  *       problems, and also a Groovy expression or a reference cycle in its path, only produce a
- *       warning. An include cycle is always an error. Other
+ *       warning. An include path that reads a secret (a key the registry marks as secret, or a
+ *       system property or environment variable of such a name) is refused, required or not, with a
+ *       message that names neither the path nor the value. An include cycle is always an error. Other
  *       {@code #include.*} directives are ignored with a warning.</li>
  *   <li>With a declared encoding ({@code wrapper.conf.encoding}, see the four-argument constructor)
  *       every file is decoded strictly with it. Otherwise files are read as UTF-8; a leading byte
@@ -370,6 +372,11 @@ public final class FileConfigSource implements ConfigSource {
                     return;
                 }
                 warnings.addAll(resolution.warnings());
+                if (resolution.usesSecret()) {
+                    // The path would carry a secret into messages and entry locations (AGENTS.md §4.7).
+                    skipOrFail(required, location, "include path refers to a secret key, which is not allowed");
+                    return;
+                }
                 if (!resolution.complete()) {
                     // Not naming the variables: some may come from the values of other (secret) keys.
                     skipOrFail(required, location, "unresolved variable in include path " + pathText);

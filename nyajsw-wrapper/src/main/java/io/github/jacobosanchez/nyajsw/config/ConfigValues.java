@@ -5,7 +5,10 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -104,6 +107,28 @@ final class ConfigValues {
         KeyCollector.Collected collected = collector.collect(spec, userEntries);
         warnings.addAll(collected.warnings());
         return collected.members();
+    }
+
+    /**
+     * The members of a family in precedence order, for rules where the last spelling wins:
+     * configuration order (the {@link LoadedConfig} entry order), with members set by a system
+     * property last, since that layer overrides the file (AGENTS.md §4.6). The collector's warnings
+     * are reported as by {@link #family}.
+     */
+    List<KeyCollector.Member> familyInFileOrder(KeySpec spec) {
+        Map<String, Integer> positions = new HashMap<>();
+        for (int i = 0; i < userEntries.size(); i++) {
+            positions.put(userEntries.get(i).key(), i);
+        }
+        List<KeyCollector.Member> members = new ArrayList<>(family(spec));
+        members.sort(Comparator
+                .comparing((KeyCollector.Member member) -> isSystemProperty(member.key()))
+                .thenComparingInt(member -> positions.get(member.key())));
+        return members;
+    }
+
+    private boolean isSystemProperty(String key) {
+        return config.layer(key).orElseThrow() == ConfigLayer.SYSTEM_PROPERTY;
     }
 
     /**

@@ -314,6 +314,22 @@ public class ConfigLoaderTest {
     }
 
     @Test
+    public void includePathReadingASecretSystemPropertyIsRefused() throws IOException {
+        write("TopSecret123.conf", "leak=1\n");
+        Path file = write("wrapper.conf", "#include ${sys:wrapper.ntservice.password}.conf\n"
+                + "#include ${wrapper.ntservice.password}.conf\n#include ${sys:db.password}.conf\n");
+
+        LoadedConfig config = loader(Map.of("wrapper.ntservice.password", "TopSecret123", "db.password", "TopSecret123"),
+                Map.of()).load(file);
+
+        assertEquals(config.get("leak"), Optional.empty());
+        assertEquals(config.warnings().stream().filter(w -> w.message().contains("refers to a secret key")).count(), 3L,
+                config.warnings().toString());
+        assertTrue(config.warnings().stream().noneMatch(w -> w.toString().contains("TopSecret123")),
+                config.warnings().toString());
+    }
+
+    @Test
     public void interpolationWarningsAreReported() throws IOException {
         Path file = write("wrapper.conf", "wrapper.working.dir=${nowhere}\n");
 

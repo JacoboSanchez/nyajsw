@@ -267,7 +267,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   warning to the main file's directory (YAJSW's base) when nothing exists there. `${...}` in an
   include path is resolved by the `Interpolator` with the layer order of the whole configuration
   (a system property, else the last entry read before the include line, else a built-in default),
-  then system properties and environment. `include =` and
+  then system properties and environment. An include path that reads a secret (a registry-secret
+  key, or a system property or environment variable of such a name, directly or through another
+  key) is refused without naming it, since the path would carry the secret into messages and entry
+  locations; a secret under a name the registry cannot recognise (`${env:DB_PASS}`) is not detected. `include =` and
   `#include.required` are required: a missing file or an unresolved variable in the path → error
   naming file and line. A plain `#include` is optional, as in the Tanuki format (YAJSW treats it as a comment), so
   the same problems only warn; an include cycle is always an error. Encoding: UTF-8,
@@ -362,8 +365,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   (log file, pid files, temporary directory, probe files) against the configuration directory
   (D13); classpath entries stay text for wildcard expansion. An empty text value counts as not set
   (`ConfigValues.text`), so derived defaults apply; list families skip empty members. Account names
-  undo doubled backslashes like paths (`DOMAIN\\svc`). Exit codes: one action per code, the last
-  spelling in file order winning; codes 2^31..2^32-1 map to the negative `int` Java reports; code 0
+  undo doubled backslashes like paths (`DOMAIN\\svc`). Exit codes: codes 2^31..2^32-1 map to the
+  negative `int` Java reports, then one action per code, the last spelling in file order winning
+  (a system property counting as the latest; spellings that agree only after that mapping, `-1`
+  and `4294967295`, warn; a later empty or invalid spelling leaves the default); code 0
   only from `wrapper.on_exit.0`. Odd but harmless input (other spellings of 0, environment names
   that differ only in case) always warns; a value problem found here (invalid path, code out of
   range) is an error once the key takes effect (`KeyStatus.takesEffect`), a warning before. Passwords are

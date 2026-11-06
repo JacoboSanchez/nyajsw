@@ -506,6 +506,28 @@ public class FileConfigSourceTest {
     }
 
     @Test
+    public void includePathThatReadsASecretIsRefusedWithoutShowingIt() throws IOException {
+        write("TopSecret123.conf", "leak=1\n");
+        Path optional = write("optional.conf", "wrapper.ntservice.password=TopSecret123\n"
+                + "#include ${wrapper.ntservice.password}.conf\nk=v\n");
+
+        SourceContent content = new FileConfigSource(optional, interpolator(Map.of(), Map.of())).read();
+
+        assertEquals(content.entries().stream().map(ConfigEntry::key).toList(),
+                List.of("wrapper.ntservice.password", "k"));
+        assertEquals(content.warnings().size(), 1);
+        assertEquals(content.warnings().get(0).message(),
+                "optional include skipped, include path refers to a secret key, which is not allowed");
+
+        Path required = write("required.conf", "pw_copy=${wrapper.app.password}\nwrapper.app.password=TopSecret123\n"
+                + "include = ${pw_copy}.conf\n");
+        ConfigException e = expectThrows(ConfigException.class,
+                () -> new FileConfigSource(required, interpolator(Map.of(), Map.of())).read());
+        assertFalse(e.getMessage().contains("TopSecret123"), e.getMessage());
+        assertTrue(e.getMessage().contains("refers to a secret key"), e.getMessage());
+    }
+
+    @Test
     public void groovyInIncludePathIsAnError() throws IOException {
         Path main = write("main.conf", "include = ${util.inquireCLI('path')}\n");
 
