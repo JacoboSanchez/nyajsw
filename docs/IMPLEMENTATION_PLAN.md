@@ -811,7 +811,8 @@ Goal: build and run the application command line exactly as the configuration sa
       is asked to stop too; when only the wrapper is stopped (SIGTERM, a closed console window,
       where Windows kills after about 5 s) the application is not asked and is killed after the
       timeout, and a second Ctrl+C does not shorten the wait.
-- [ ] P2.6 (optional) `wrapper.image` for non-Java executables through the same `ApplicationProcess`.
+- ~~P2.6 (optional) `wrapper.image` for non-Java executables~~ — dropped: the owner runs only Java
+  applications (2026-11-06). `wrapper.image` stays declared, so a file that sets it gets a warning.
 Done when: golden command-line tests pass on fixtures; a test main class is launched and its output
 captured on Linux and Windows.
 
