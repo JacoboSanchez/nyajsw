@@ -13,6 +13,8 @@ import java.util.Objects;
  *       {@code NYAJSW_TEST} and {@code NYAJSW_REMOVED}, whether standard input is at its end, and a
  *       line on standard error, then exits with {@code code};</li>
  *   <li>{@code park}: prints {@code parked} and waits until it is killed;</li>
+ *   <li>{@code linger <ms> <code>}: prints {@code lingering}, waits {@code ms} and exits with
+ *       {@code code}, like an application that finishes its own shutdown;</li>
  *   <li>{@code parent}: starts a {@code park} grandchild, prints {@code child <pid>} and waits until
  *       it is killed;</li>
  *   <li>{@code orphan}: starts a {@code park} grandchild that shares its output, prints
@@ -34,6 +36,11 @@ public final class TestApplication {
                 System.out.println("stdin-ended=" + (System.in.read() < 0));
                 System.err.println("to stderr");
                 System.exit(Integer.parseInt(args[1]));
+            }
+            case "linger" -> {
+                System.out.println("lingering");
+                Thread.sleep(Long.parseLong(args[1]));
+                System.exit(Integer.parseInt(args[2]));
             }
             case "park" -> {
                 System.out.println("parked");
