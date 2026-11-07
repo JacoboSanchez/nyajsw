@@ -1,7 +1,7 @@
 # nyajsw — Implementation Plan
 
 Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
-Last updated: 2026-11-07
+Last updated: 2026-11-08
 
 How to use this document: pick the next unchecked item in §5, implement it following
 [AGENTS.md](../AGENTS.md), and update the checkbox, the decisions log (§9) and the compatibility
@@ -538,8 +538,9 @@ output, configuration and a clock; probes are stateless or own their state expli
 * Agent channel: the wrapper listens on a loopback TCP port chosen at launch; the port is passed to
   the child as `-Dnyajsw.agent.port`, the random token as the environment variable
   `NYAJSW_AGENT_TOKEN` so it never appears in a logged command line. Protocol (`AgentProtocol`,
-  defined once in `nyajsw-agent`): `HELLO <token>`, `PING`/`PONG`, `STOP`. Line-based, ASCII,
-  tested in-process with both ends. The agent never blocks application startup: `premain` returns
+  defined once in `nyajsw-agent`, details in P7.3a): `HELLO 1 <token>`, `PING <n>`/`PONG <n>`,
+  `STOP`/`STOPPING`, `UNKNOWN`; line-based ASCII over `127.0.0.1` on both ends, tested in-process
+  with both ends. The agent never blocks application startup: `premain` returns
   immediately and works on a daemon thread.
 
 ### 4.8 Logging
@@ -1425,7 +1426,33 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
       `wrapper.agent.enabled=false`; default stop strategy becomes `agent,terminate` and default
       liveness `agent` when enabled; `wrapper.ping.*` mapping (both `wrapper.ping.*` and
       `wrapper.liveness.*` have constant defaults, so the mapping must tell a value set in the file
-      from a default by its `ConfigLayer`); round-trip test with both ends.
+      from a default by its `ConfigLayer`); round-trip test with both ends. In three commits:
+  - [x] P7.3a the agent and the protocol. **Done:** `nyajsw-agent` (Java 8, no dependencies) holds
+        `AgentProtocol`, the one definition both ends use: the port as `-Dnyajsw.agent.port`, the
+        token as `NYAJSW_AGENT_TOKEN`, lines of ASCII of at most 256 bytes (one cut off by the end
+        of the stream is no message), `HELLO 1 <token>` from the agent (`helloVersion` reads the
+        version apart from the token, so a newer wrapper can accept and name an older agent), then
+        `PING <n>`/`PONG <n>` (the answer repeats what its ping carried, so a late answer is not
+        taken for the next one's) and `STOP`/`STOPPING` (followed by `System.exit(0)`, so the
+        application's shutdown hooks run, also when the acknowledgement cannot be written),
+        `UNKNOWN` for anything else; random 64-digit tokens, compared in constant time; both ends
+        on `127.0.0.1` (`AgentProtocol.loopback()`), not the JVM's loopback, which is `::1` when it
+        prefers IPv6. `Agent.premain` starts one daemon thread and returns: it connects (20
+        attempts, 250 ms apart), and whatever goes wrong (no port or token, no wrapper to reach, a
+        security manager that forbids reading the property, connecting or exiting) costs one line
+        on standard error and the agent, never the application; a wrapper that goes away ends the
+        thread, not the application. The jar's manifest names `Premain-Class`. Tests: the protocol,
+        the agent against a fake wrapper end in the test JVM, and the agent as `-javaagent` in a
+        real JVM (exit code 0 and the shutdown hook after `STOP`; under a security manager the
+        application still starts).
+        Constraints for P7.3b: authentication is one-way (the agent sends its token to whoever
+        accepted and obeys its `STOP`), so the wrapper must bind its listener (exclusively, on
+        `127.0.0.1`) before the launch, accept one authenticated session per invocation and then
+        stop listening; processes the application starts inherit `NYAJSW_AGENT_TOKEN`, so a second
+        session with the right token must be refused too.
+  - [ ] P7.3b the wrapper side: `agentlink`, `-javaagent` injection, `AgentProbe`,
+        `AgentStopStrategy`.
+  - [ ] P7.3c the defaults (`agent,terminate`, liveness `agent`) and the `wrapper.ping.*` mapping.
 - [ ] P7.4 `docs/probes.md` user guide.
 Done when: each probe has unit tests; an end-to-end Windows test reaches `RUNNING` only after an
 HTTP probe passes and stops gracefully through the agent.
@@ -1474,6 +1501,10 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7.3a: the jar's real manifest is not tested (`AgentJarTest` builds its own from the compiled
+  classes), so a typo in the POM's `Premain-Class` would pass every test; check the packaged jar
+  in `nyajsw-dist` (P8.1). A challenge-response would keep the token off the wire; the P7.3b
+  constraints make the one-way handshake safe enough for a loopback channel.
 - P7.2c: `OutputLines` keeps 10,000 lines and 2 million characters per invocation, filled whether
   or not a `log` probe reads the captured output; an application that logs more than that per
   liveness interval pushes its heartbeat out before the check sees it (the check fails, saying how
@@ -1732,7 +1763,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D7 | Custom line parser (§4.5); odd-trailing-`\` continuation, skipping blank/comment lines inside it; in file values a backslash before `\ , " ' # = : !` or a space stands for that character (YAJSW's escapes, as the owner's Denodo files show; P1.9), every other backslash literal (YAJSW would read `\t`, `\n`, `\r`, `\f`, `\b`, `\uXXXX` as control characters and Unicode); UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected unless declared through `-Dwrapper.conf.encoding`; `wrapper.conf.encoding` decoded strictly; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW defaults to the platform charset, i.e. the JVM default, UTF-8 on Java 18+ per JEP 400, else the ANSI code page), so non-ASCII text may now read differently, and on non-Western Windows (windows-1251, MS932, GBK) a file without `wrapper.conf.encoding` falls back to windows-1252 with a warning; a declared encoding is decoded strictly where YAJSW's reader probably replaced bad bytes silently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: verify the backslash and lower-cased-environment behaviour against a real file; `${...}` in include paths is supported since P1.3 and `wrapper.conf.encoding` since P1.9 |
 | D8 | Single key registry drives parsing, validation, warnings and generated docs. Keys are `public static final KeySpec` constants in `ConfigKeys`, collected into one immutable `KeyRegistry`; derived defaults are declared there by description and computed by the typed view that owns the key (P1.6), or by the loader for `wrapper.conf.encoding`, because they depend on typed values (e.g. `wrapper.agent.enabled`) or the configuration file's location rather than on raw strings | One source of truth; no drift between code and docs; constants let code refer to keys without repeating names | Accepted (P1.2) |
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
-| D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
+| D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Accepted (§10 Q3, 2026-11-08) |
 | D11 | groupId and base package `io.github.jacobosanchez.nyajsw` | Matches the GitHub owner; Maven Central-compatible | Proposed (§10 Q2) |
 | D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.additional.N` (YAJSW's key for these options) + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM, `wrapper.ntservice.java.command` (YAJSW: default the application's Java command) may replace the installing JVM's `javaw.exe` if it is a Java 21; it must be given with its directory, and one known to be older than 21 is an error at install rather than a silent fallback to the installing JVM (P5.3) | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
 | D13 | The default working directory and relative wrapper-side paths (log file, pid files, temporary directory, probe files) resolve against the configuration file's directory; relative application-side paths (jar, library path, image, a Java command with a directory, classpath entries) resolve against the working directory, as the application sees them (P1.6b) | Services start in `System32`; configuration-relative is predictable for the wrapper, while the application's own paths must agree with what the child JVM resolves (usual YAJSW layout: `conf/wrapper.conf` with `wrapper.working.dir=..`) | Proposed (verify YAJSW, P1.9) |
@@ -1770,7 +1801,8 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
    licence allows redistribution in an Apache-2.0 repository.
 2. **Package/groupId** `io.github.jacobosanchez.nyajsw` acceptable? (D11)
 3. **Agent injection by default** acceptable for your application? It adds one `-javaagent` option
-   to the child JVM. (D10)
+   to the child JVM. (D10) (*Answered 2026-11-08:* yes, on by default; `wrapper.agent.enabled=false`
+   turns it off.)
 4. **POSIX** needed in the foreseeable future? It changes nothing now but affects P9 priority.
 5. **Windows versions and service accounts** used in production (LocalSystem, a domain account,
    LocalService)? Affects P5.5/P6.3 hardening and the test matrix.
