@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
@@ -72,7 +73,7 @@ public final class Main {
         }
         if (command.equals(SERVICE)) {
             return serviceMode(new ServiceMode(arguments.get(1), JavaCommandBuilder.forThisJvm(),
-                    ClasspathExpander.forThisHost(), WrapperLog::bootstrapFile), out, platform);
+                    ClasspathExpander.forThisHost(), bootstrapFiles(arguments.get(1))), out, platform);
         }
         return action.isPresent() ? service(action.get(), arguments.get(1), out, platform)
                 : console(arguments.get(1), out);
@@ -81,8 +82,8 @@ public final class Main {
     /**
      * Service mode: the process connects to the Service Control Manager before anything else (plan
      * §4.4), and its exit code is the service's result. What keeps it from running as a service at
-     * all goes to the console, for someone who ran it by hand, and to the service's bootstrap log
-     * once the service manager has named it, since a service has no console.
+     * all goes to the console, for someone who ran it by hand, and to the service's bootstrap log,
+     * since a service has no console ({@link ServiceMode#bootstrapLog}).
      */
     static int serviceMode(ServiceMode mode, PrintStream out, Supplier<Platform> platform) {
         try {
@@ -97,16 +98,31 @@ public final class Main {
         }
     }
 
+    /**
+     * Where service mode's bootstrap log goes: beside the configuration file ({@link
+     * WrapperLog#bootstrapFile(Path, String)}), or in the temporary directory when its path cannot
+     * be parsed.
+     */
+    static Function<String, Path> bootstrapFiles(String file) {
+        try {
+            Path directory = Path.of(file).toAbsolutePath().getParent();
+            if (directory != null) {
+                return name -> WrapperLog.bootstrapFile(directory, name);
+            }
+        } catch (InvalidPathException e) {
+            // the configuration cannot be read either; say so where a file can be written
+        }
+        return WrapperLog::bootstrapFile;
+    }
+
     private static void report(String message, ServiceMode mode, PrintStream out) {
         String masked = mode.mask(message);
         try (WrapperLog console = WrapperLog.console(out, LogLevel.INFO)) {
             console.fatal(masked);
         }
-        mode.bootstrapLog().ifPresent(file -> {
-            try (BootstrapLog bootstrap = new BootstrapLog(file)) {
-                bootstrap.fatal(masked);
-            }
-        });
+        try (BootstrapLog bootstrap = mode.bootstrapLog()) {
+            bootstrap.fatal(masked);
+        }
     }
 
     /**
