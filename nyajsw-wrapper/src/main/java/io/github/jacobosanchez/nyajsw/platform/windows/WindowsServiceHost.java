@@ -45,8 +45,8 @@ final class WindowsServiceHost implements ServiceHost {
      */
     static final Duration FIRST_WAIT_HINT = Duration.ofSeconds(10);
 
-    /** The shortest wait hint reported, so that a body's next report is never due at once (plan §4.4). */
-    static final Duration MIN_WAIT_HINT = Duration.ofSeconds(2);
+    /** The shortest wait hint reported ({@link ServiceContext#MIN_WAIT_HINT}). */
+    static final Duration MIN_WAIT_HINT = ServiceContext.MIN_WAIT_HINT;
 
     /** The controls a running service accepts. */
     static final int RUNNING_ACCEPTS = ServiceHostApi.SERVICE_ACCEPT_STOP | ServiceHostApi.SERVICE_ACCEPT_PRESHUTDOWN

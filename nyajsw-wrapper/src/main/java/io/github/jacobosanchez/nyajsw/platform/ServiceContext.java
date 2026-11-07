@@ -5,10 +5,13 @@ import java.time.Duration;
 /**
  * How a {@link ServiceBody} reports its progress to the service manager. Each pending report is a
  * promise to report again within its wait hint; the manager takes a service that does not as hung.
- * A host may raise a very short wait hint to a floor of its own (2 s on Windows). Reports fail with
- * a {@link ServiceException} when the manager refuses them.
+ * A host raises a shorter wait hint to {@link #MIN_WAIT_HINT}. Reports fail with a {@link
+ * ServiceException} when the manager refuses them.
  */
 public interface ServiceContext {
+
+    /** The shortest wait hint a pending report gets, so that the next one is never due at once (plan §4.4). */
+    Duration MIN_WAIT_HINT = Duration.ofSeconds(2);
 
     /** The service's name, as the service manager started it. */
     String serviceName();
