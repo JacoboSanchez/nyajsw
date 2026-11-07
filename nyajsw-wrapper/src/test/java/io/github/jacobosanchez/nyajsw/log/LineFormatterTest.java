@@ -73,6 +73,15 @@ public class LineFormatterTest {
     }
 
     @Test
+    public void anEmptyFirstFieldKeepsItsSeparatorSoTheFieldsStayInPlace() {
+        // A blank line of application output is an empty message.
+        assertEquals(format(List.of(MESSAGE, PREFIX), "\n", record(WrapperLevel.INFO, "jvm 1", "")), " | jvm 1   \n");
+        assertEquals(format(List.of(THREAD, MESSAGE), "\n", new LogRecord(WrapperLevel.INFO, "m")), " | m\n");
+        assertEquals(format(List.of(PREFIX, MESSAGE, LEVEL), "\n", record(WrapperLevel.INFO, "jvm 1", "")),
+                "jvm 1    |  | INFO  \n");
+    }
+
+    @Test
     public void theStackTraceGoesThroughTheMask() {
         LogRecord record = record(WrapperLevel.ERROR, "wrapper", "failed");
         record.setThrown(new IllegalStateException("password hunter2 rejected"));

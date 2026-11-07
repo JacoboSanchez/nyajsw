@@ -14,7 +14,8 @@ import java.util.logging.LogRecord;
 
 /**
  * Writes a record as one line in a {@link LineFormat}, followed by the stack trace of an attached
- * error. The fields are joined by {@code " | "}:
+ * error. The fields are joined by {@code " | "}, an empty one too, so that every line of a format
+ * has the same number of fields:
  *
  * <ul>
  *   <li>the level is padded to the longest level name ({@code STATUS});
@@ -67,10 +68,13 @@ final class LineFormatter extends Formatter {
         String source = record.getLoggerName() == null ? WrapperLog.WRAPPER_SOURCE : record.getLoggerName();
         String thread = record instanceof WrapperRecord wrapper ? wrapper.thread() : "";
         StringBuilder line = new StringBuilder();
+        boolean first = true;
         for (LineFormat.Field field : format.fields()) {
-            if (!line.isEmpty()) {
+            // By position, not by what is written so far: an empty first field still has its separator.
+            if (!first) {
                 line.append(SEPARATOR);
             }
+            first = false;
             switch (field) {
                 case LEVEL -> pad(line, record.getLevel().getName(), LEVEL_WIDTH);
                 case PREFIX -> pad(line, source, SOURCE_WIDTH);
