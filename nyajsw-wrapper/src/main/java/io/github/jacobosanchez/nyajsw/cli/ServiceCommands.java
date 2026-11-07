@@ -62,33 +62,41 @@ final class ServiceCommands {
         this.log = Objects.requireNonNull(log, "log");
     }
 
-    /** Runs {@code action} for the service of {@code config}; a failure is thrown. */
+    /**
+     * Runs {@code action} for the service of {@code config}; a failure is thrown. Everything it
+     * prints goes through the configuration's secrets: the console log masks nothing itself, and a
+     * value such as the service name may hold a secret copied in with <code>${...}</code>.
+     */
     void run(Action action, WrapperConfig config) {
         for (ConfigWarning warning : config.warnings()) {
-            log.status("warning: " + warning);
+            log.status(config.secrets().maskText("warning: " + warning));
         }
         String name = config.service().requiredName();
         switch (action) {
             case INSTALL -> {
                 List<String> warnings = services.install(config);
-                warnings.forEach(warning -> log.status("warning: " + config.secrets().maskText(warning)));
-                log.info("installed the service '" + name + "'");
+                warnings.forEach(warning -> log.status(config.secrets().maskText("warning: " + warning)));
+                report(config, "installed the service '" + name + "'");
             }
             case REMOVE -> {
                 services.remove(name);
-                log.info("removed the service '" + name + "'; Windows deletes it once it has stopped and no"
+                report(config, "removed the service '" + name + "'; Windows deletes it once it has stopped and no"
                         + " program has it open");
             }
             case START -> {
                 services.start(name, startTimeout(config));
-                log.info("started the service '" + name + "'");
+                report(config, "started the service '" + name + "'");
             }
             case STOP -> {
                 services.stop(name, stopTimeout(config));
-                log.info("stopped the service '" + name + "'");
+                report(config, "stopped the service '" + name + "'");
             }
-            case QUERY -> log.info(describe(name, services.status(name)));
+            case QUERY -> report(config, describe(name, services.status(name)));
         }
+    }
+
+    private void report(WrapperConfig config, String message) {
+        log.info(config.secrets().maskText(message));
     }
 
     /**
