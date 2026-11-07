@@ -542,9 +542,11 @@ output, configuration and a clock; probes are stateless or own their state expli
   options, so the application writes exactly what the wrapper decodes (P2.4); the same stream feeds the `log` probe and (backlog)
   `wrapper.filter.trigger.N`. The command line is logged through the masking form of
   `JavaCommandBuilder`, so secrets never reach the log.
-* `wrapper.debug=true` raises the wrapper log level to `DEBUG`. In service mode nothing is written to
-  the console; logging initialises to the file as early as the configuration allows, with a
-  bootstrap fallback (`%TEMP%\nyajsw-bootstrap.log`) for errors before the configuration is read.
+* `wrapper.debug=true` raises the wrapper log level to `DEBUG`, and `wrapper.debug.level` (0–3,
+  default 3) chooses which debug messages are written by the detail each one names (P4.1). In
+  service mode nothing is written to the console; logging initialises to the file as early as the
+  configuration allows, with a bootstrap fallback (`%TEMP%\nyajsw-bootstrap.log`) for errors
+  before the configuration is read (P4.3a).
 
 ### 4.9 Command-line interface
 
@@ -744,8 +746,8 @@ Done when: every fixture present in the repository loads; every key of the forme
 ### P2 — Application launcher
 Goal: build and run the application command line exactly as the configuration says.
 - [x] P2.1 `WrapperLog` facade with `LogLevel` and a console sink (file handler comes in P4).
-      Instances are passed around, never looked up statically, and are immutable: P4.1 builds a
-      bootstrap log and then a new configured one, it does not reconfigure in place. Each sits on
+      Instances are passed around, never looked up statically, and are immutable: P4 builds a
+      bootstrap log (P4.3a) and then a new configured one, it does not reconfigure in place. Each sits on
       an anonymous `java.util.logging` logger, so no global logging configuration (nor
       `LogManager.reset()`) reaches it. Every sink has its own threshold (console now, the file's
       in P4) and the logger passes what the most verbose one wants. `forSource("jvm 1")` gives a
@@ -971,11 +973,26 @@ Done when: all transitions, timeouts and counters are covered by deterministic t
 
 ### P4 — Logging
 Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
-- [ ] P4.1 YAJSW level names mapping, `wrapper.debug` / `wrapper.debug.level`, bootstrap log for
-      pre-configuration failures.
+- [x] P4.1 YAJSW level names mapping, `wrapper.debug` / `wrapper.debug.level`. **Done:** the level
+      names were mapped in P2.1 (`LogLevel`, `WrapperLevel`). `wrapper.debug` raises the console
+      level to `DEBUG` (`LogConfig.consoleThreshold()`; the log file's follows in P4.3).
+      `wrapper.debug.level` is supported on YAJSW's documented scale (`DebugDetail`): it is read only
+      under `wrapper.debug`, where a value outside 0–3 is an error (a warning while `wrapper.debug`
+      is false, so a leftover cannot stop the wrapper). 0 writes no debug message (YAJSW's level
+      0 is the application's pid and stop, which nyajsw logs above `DEBUG`), 1 starting and stopping
+      the application (state changes, an exit during a stop, the stack trace of an unexpected error),
+      2 the steps of supervision as well (stop steps, readiness checks, pid files), 3 everything.
+      Every debug message names its detail (`WrapperLog.debug(DebugDetail, …)`); one logged without
+      a detail has the most. The bootstrap log moved to P4.3a, since it needs the file sink. So
+      `wrapper.debug=true` with `wrapper.debug.level=0` writes fewer debug lines than
+      `wrapper.console.loglevel=DEBUG` alone, and the stack trace of an unexpected error needs level
+      1; the migration guide (P8.2) should say so.
 - [ ] P4.2 `LogFormat` tokens for console and file formats.
 - [ ] P4.3 `RollingFileHandler`: size and date rolling, `ROLLNUM`/`YYYYMMDD`, `maxsize`, `maxfiles`,
       Windows rename retries, `maxdays`, `wrapper.log.encoding`, roll modes and `maxsize` combined.
+- [ ] P4.3a Bootstrap log for failures before the configuration is read (and when the configured log
+      file cannot be opened): `%TEMP%\nyajsw-bootstrap.log` through the file sink of P4.3, for the
+      service mode of P6, where there is no console.
 - [ ] P4.4 Application output logged with `jvm N` prefix.
 Done when: rotation and formatting are tested against temp directories; no third-party logging dep.
 

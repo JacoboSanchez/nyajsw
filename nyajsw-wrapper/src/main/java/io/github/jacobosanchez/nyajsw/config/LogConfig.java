@@ -28,11 +28,11 @@ import java.util.Optional;
  * @param consoleFormat  {@code wrapper.console.format}
  * @param consoleLevel   {@code wrapper.console.loglevel}
  * @param debug          {@code wrapper.debug}
- * @param debugLevel     {@code wrapper.debug.level}
+ * @param debugLevel     {@code wrapper.debug.level} as configured; {@link #debugDetail()} is what applies
  */
 public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, Optional<LogLevel> logfileLevel,
         Optional<Long> maxSizeBytes, Optional<Integer> maxFiles, Optional<RollMode> rollMode,
-        Optional<String> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, int debugLevel) {
+        Optional<String> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, DebugDetail debugLevel) {
 
     public LogConfig {
         Objects.requireNonNull(logfile, "logfile");
@@ -43,6 +43,25 @@ public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, 
         Objects.requireNonNull(rollMode, "rollMode");
         Objects.requireNonNull(consoleFormat, "consoleFormat");
         Objects.requireNonNull(consoleLevel, "consoleLevel");
+        Objects.requireNonNull(debugLevel, "debugLevel");
+    }
+
+    /**
+     * The lowest level written to the console: {@code wrapper.console.loglevel}, raised to {@code
+     * DEBUG} by {@code wrapper.debug}.
+     */
+    public LogLevel consoleThreshold() {
+        // The registry gives wrapper.console.loglevel a default, so it is always there.
+        return debug ? LogLevel.DEBUG : consoleLevel.orElseThrow();
+    }
+
+    /**
+     * Which debug messages are written, by their detail: {@code wrapper.debug.level} when {@code
+     * wrapper.debug} is on (YAJSW reads the level only then); otherwise all of them, for a sink
+     * whose own level is {@code DEBUG}.
+     */
+    public DebugDetail debugDetail() {
+        return debug ? debugLevel : DebugDetail.ALL;
     }
 
     /**
@@ -65,6 +84,26 @@ public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, 
                 values.text(CONSOLE_FORMAT),
                 values.enumeration(CONSOLE_LOGLEVEL, LogLevel.class),
                 values.required(values.bool(DEBUG), DEBUG),
-                values.required(values.integer(DEBUG_LEVEL), DEBUG_LEVEL));
+                debugLevel(values, values.required(values.bool(DEBUG), DEBUG)));
+    }
+
+    /**
+     * {@code wrapper.debug.level}; a value outside the scale is an error only where it would take
+     * effect, under {@code wrapper.debug}, so that a leftover in a file that does not debug cannot
+     * stop the wrapper.
+     */
+    private static DebugDetail debugLevel(ConfigValues values, boolean debug) {
+        int level = values.required(values.integer(DEBUG_LEVEL), DEBUG_LEVEL);
+        if (DebugDetail.isLevel(level)) {
+            return DebugDetail.ofLevel(level);
+        }
+        ConfigLocation location = values.location(DEBUG_LEVEL).orElseThrow();
+        String problem = DEBUG_LEVEL.name() + "=" + level + " is not between 0 and " + DebugDetail.ALL.ordinal();
+        if (debug) {
+            values.problem(DEBUG_LEVEL, location, problem);
+        } else {
+            values.warn(location, problem + "; it has no effect while " + DEBUG.name() + " is false");
+        }
+        return values.constantDefault(DEBUG_LEVEL, text -> DebugDetail.ofLevel(ValueParser.parseInteger(text)));
     }
 }

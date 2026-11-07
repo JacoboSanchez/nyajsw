@@ -140,15 +140,22 @@ public class MainTest {
         assertTrue(output().contains("-i is not implemented yet"), output());
     }
 
-    @Test
-    public void debugRaisesTheConsoleLevel() throws Exception {
-        WrapperConfig plain = load(conf());
-        WrapperConfig quiet = load(conf("wrapper.console.loglevel=ERROR"));
-        WrapperConfig debug = load(conf("wrapper.console.loglevel=ERROR", "wrapper.debug=true"));
+    @Test(timeOut = 120_000)
+    public void debugWritesTheDebugMessagesUpToTheDebugLevel() throws Exception {
+        ByteArrayOutputStream supervision = new ByteArrayOutputStream();
+        List<String> settings = List.of("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=0",
+                "wrapper.console.loglevel=ERROR", "wrapper.debug=true", "wrapper.pidfile=run/wrapper.pid");
 
-        assertEquals(Main.consoleLevel(plain.log()), LogLevel.INFO);
-        assertEquals(Main.consoleLevel(quiet.log()), LogLevel.ERROR);
-        assertEquals(Main.consoleLevel(debug.log()), LogLevel.DEBUG);
+        Path conf = conf(withLine(settings, "wrapper.debug.level=1"));
+        assertEquals(Main.run(new String[] {"-c", conf.toString()}, out), 0, output());
+        conf = conf(withLine(settings, "wrapper.debug.level=2"));
+        assertEquals(Main.run(new String[] {"-c", conf.toString()},
+                new PrintStream(supervision, true, StandardCharsets.UTF_8)), 0);
+
+        assertTrue(output().contains("wrapper  | state IDLE -> STARTING"), output()); // APPLICATION detail
+        assertFalse(output().contains("wrote "), output()); // the pid file's message is SUPERVISION detail
+        assertTrue(supervision.toString(StandardCharsets.UTF_8).contains("wrapper  | wrote "),
+                supervision.toString(StandardCharsets.UTF_8));
     }
 
     @Test(timeOut = 120_000)
@@ -256,6 +263,12 @@ public class MainTest {
             assertEquals(mode.run(), 0);
         }
         assertFalse(output().contains("launching"), output());
+    }
+
+    private static String[] withLine(List<String> lines, String line) {
+        List<String> all = new ArrayList<>(lines);
+        all.add(line);
+        return all.toArray(String[]::new);
     }
 
     private static WrapperConfig load(Path conf) {

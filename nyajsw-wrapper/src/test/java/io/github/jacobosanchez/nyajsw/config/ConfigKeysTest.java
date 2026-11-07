@@ -233,7 +233,7 @@ public class ConfigKeysTest {
                 {"wrapper.console.minimized", UNSUPPORTED, YAJSW},
                 {"wrapper.console.use_interpolated", UNSUPPORTED, YAJSW},
                 {"wrapper.app.status.log.lines", UNSUPPORTED, YAJSW},
-                {"wrapper.debug.level", PLANNED, YAJSW},
+                {"wrapper.debug.level", SUPPORTED, YAJSW},
                 {"wrapper.ntservice.java.command", PLANNED, YAJSW},
                 {"wrapper.ntservice.java.customProcName", UNSUPPORTED, YAJSW},
                 {"wrapper.ntservice.autoreport.startup", UNSUPPORTED, YAJSW},

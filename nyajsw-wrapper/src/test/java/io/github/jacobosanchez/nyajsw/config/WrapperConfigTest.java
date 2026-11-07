@@ -341,8 +341,46 @@ public class WrapperConfigTest {
 
     @Test
     public void debugLevelDefaultsToFullDetail() throws IOException {
-        assertEquals(load().log().debugLevel(), 3);
-        assertEquals(load("wrapper.debug.level=1").log().debugLevel(), 1);
+        assertEquals(load().log().debugLevel(), DebugDetail.ALL);
+        assertEquals(load("wrapper.debug.level=0").log().debugLevel(), DebugDetail.NONE);
+        assertEquals(load("wrapper.debug.level=1").log().debugLevel(), DebugDetail.APPLICATION);
+        assertEquals(load("wrapper.debug.level=2").log().debugLevel(), DebugDetail.SUPERVISION);
+    }
+
+    @Test
+    public void aDebugLevelOutsideZeroToThreeIsAnErrorUnderDebug() {
+        for (String level : List.of("-1", "4")) {
+            ConfigException error = expectThrows(ConfigException.class,
+                    () -> load("wrapper.debug=true", "wrapper.debug.level=" + level));
+
+            List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
+            assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.debug.level=" + level
+                    + " is not between 0 and 3")), problems.toString());
+        }
+    }
+
+    @Test
+    public void aDebugLevelOutsideZeroToThreeOnlyWarnsWhileDebugIsOff() throws IOException {
+        WrapperConfig config = load("wrapper.debug.level=4");
+
+        assertEquals(config.log().debugLevel(), DebugDetail.ALL);
+        assertTrue(config.warnings().stream().map(ConfigWarning::toString).anyMatch(w -> w.contains(
+                "wrapper.debug.level=4 is not between 0 and 3; it has no effect while wrapper.debug is false")),
+                config.warnings().toString());
+    }
+
+    @Test
+    public void debugRaisesTheConsoleLevelAndAppliesTheDebugLevel() throws IOException {
+        LogConfig plain = load("wrapper.debug.level=1").log();
+        LogConfig quiet = load("wrapper.console.loglevel=ERROR").log();
+        LogConfig debug = load("wrapper.console.loglevel=ERROR", "wrapper.debug=true", "wrapper.debug.level=1").log();
+
+        assertEquals(plain.consoleThreshold(), LogLevel.INFO);
+        assertEquals(quiet.consoleThreshold(), LogLevel.ERROR);
+        assertEquals(debug.consoleThreshold(), LogLevel.DEBUG);
+        // YAJSW reads wrapper.debug.level only under wrapper.debug.
+        assertEquals(plain.debugDetail(), DebugDetail.ALL);
+        assertEquals(debug.debugDetail(), DebugDetail.APPLICATION);
     }
 
     @Test

@@ -743,12 +743,16 @@ public final class ConfigKeys {
             .status(SUPPORTED)
             .description("Raise the wrapper log level to DEBUG")
             .defaultValue("false")
+            .notes("Raises wrapper.console.loglevel; wrapper.debug.level chooses which debug messages are written")
             .build();
 
     public static final KeySpec DEBUG_LEVEL = yajsw("wrapper.debug.level", INTEGER, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Detail of the wrapper.debug output, from 0 (least) to 3 (all)")
             .defaultValue("3")
+            .notes("Read only when wrapper.debug is true. 0: no debug messages; 1: starting and stopping the"
+                    + " application; 2: also the steps of supervision (stop steps, readiness checks, pid files);"
+                    + " 3: everything. Another value is an error while wrapper.debug is true, a warning otherwise")
             .build();
 
     public static final KeySpec SYSLOG = yajsw("wrapper.syslog.<setting>", STRING, LOGGING)
