@@ -21,5 +21,14 @@
             <groupId>io.github.jacobosanchez.nyajsw</groupId>
             <artifactId>nyajsw-agent</artifactId>
         </dependency>
+        <!-- The Windows Service Control Manager and process calls (plan D5); used in platform.windows only. -->
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
+        </dependency>
     </dependencies>
 </project>

@@ -78,6 +78,15 @@ public final class Supervisor {
     public static final Duration AFTER_TERMINATION = Duration.ofSeconds(10);
 
     /**
+     * The longest a stop can take with {@code stopBudget}: the budget the stop strategies share,
+     * then the wait for the terminated application ({@link #AFTER_TERMINATION}). What waits for a
+     * stop (console mode, the service's pre-shutdown timeout) allows this plus its own margin.
+     */
+    public static Duration longestStop(Duration stopBudget) {
+        return stopBudget.plus(AFTER_TERMINATION);
+    }
+
+    /**
      * How supervision ended.
      *
      * @param state    {@link State#STOPPED} or {@link State#FAILED}

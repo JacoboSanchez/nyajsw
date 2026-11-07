@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.platform;
 
 import io.github.jacobosanchez.nyajsw.platform.unsupported.UnsupportedPlatform;
+import io.github.jacobosanchez.nyajsw.platform.windows.WindowsPlatform;
 
 import java.util.List;
 import java.util.Objects;
@@ -28,8 +29,8 @@ public final class Platforms {
         }
     }
 
-    /** The platforms nyajsw implements, tried in order; Windows joins with its service controller (P5.2). */
-    private static final List<Entry> REGISTERED = List.of();
+    /** The platforms nyajsw implements, tried in order. */
+    private static final List<Entry> REGISTERED = List.of(new Entry(HostOs::isWindows, WindowsPlatform::new));
 
     private Platforms() {
     }

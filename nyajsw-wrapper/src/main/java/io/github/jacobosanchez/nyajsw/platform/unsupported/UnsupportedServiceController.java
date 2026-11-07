@@ -6,6 +6,7 @@ import io.github.jacobosanchez.nyajsw.platform.ServiceStatus;
 import io.github.jacobosanchez.nyajsw.platform.UnsupportedPlatformException;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -19,7 +20,7 @@ final class UnsupportedServiceController implements ServiceController {
     }
 
     @Override
-    public void install(WrapperConfig config) {
+    public List<String> install(WrapperConfig config) {
         throw unsupported("install");
     }
 

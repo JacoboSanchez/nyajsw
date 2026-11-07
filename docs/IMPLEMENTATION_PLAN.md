@@ -225,9 +225,9 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   mock the facades; JNA types never leave `platform.windows`. (`W32ServiceManager`/`W32Service` from `jna-platform` are not used: they
   cannot create or delete services, throw their own exception type and are not mockable — D5.)
 * **Minimal access rights per command**: `-q` opens the SCM with `SC_MANAGER_CONNECT` and the
-  service with `SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG`, so it works unelevated; install/remove
-  use `SC_MANAGER_CREATE_SERVICE` / `DELETE`; start/stop use `SERVICE_START` /
-  `SERVICE_STOP | SERVICE_QUERY_STATUS`.
+  service with `SERVICE_QUERY_STATUS` (plus `SERVICE_QUERY_CONFIG` once it shows configuration), so it works unelevated; install/remove
+  use `SC_MANAGER_CREATE_SERVICE` / `DELETE`; start/stop use `SERVICE_START` or `SERVICE_STOP`,
+  each with `SERVICE_QUERY_STATUS` to wait for the new state.
 * **Service registration**: `CreateService(SERVICE_WIN32_OWN_PROCESS, start type, dependencies as a
   double-NUL-terminated list, account, password)`, then `ChangeServiceConfig2` for the description,
   delayed auto-start and the pre-shutdown timeout (the stop budget, `wrapper.shutdown.timeout` plus
@@ -1098,11 +1098,29 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       operations throw `UnsupportedPlatformException` naming the host and saying that `-c` works;
       Windows registers with its controller in P5.2. Exit code 4 is for that subclass only
       (`ExitCode.of`, D23). The CLI routes the service commands through the platform in P5.4.
-- [ ] P5.2 `ScmApi` facade + `JnaScmApi` (adds `jna`/`jna-platform` to `nyajsw-wrapper`; last-error handling in one place); hand-written
+- [x] P5.2 `ScmApi` facade + `JnaScmApi` (adds `jna`/`jna-platform` to `nyajsw-wrapper`; last-error handling in one place); hand-written
       `SERVICE_DELAYED_AUTO_START_INFO` / `SERVICE_PRESHUTDOWN_INFO` with layout tests;
       `WindowsServiceController` (install with start type, dependencies as `\0`-separated list with
       a test, account, description, delayed start, pre-shutdown timeout with margin; remove; start; stop; status
       with pid), minimal access rights per command, wait-for-state helper, `Win32Errors` mapping.
+      **Done:** `ScmApi` has one method per call (per info level of `ChangeServiceConfig2`) in
+      plain types: `ScmHandle` (the native value), `ScmStatus`, `ServiceRegistration` (whose
+      `dependencyList()` ends each name with a NUL; `toString()` hides the binary path and
+      password). `JnaScmApi` is the only class that reads the last error; it throws
+      `platform.ServiceException` (with `errorCode()`) worded by `Win32Errors`: the system's text,
+      the code, and a hint for 5, 1053, 1057, 1069, 1072 and 1073. The structures live in
+      `platform.windows.jna` with layout tests. `WindowsServiceController` opens the manager and the
+      service with the least access (`-q`: `SC_MANAGER_CONNECT` and `SERVICE_QUERY_STATUS` only),
+      closes both handles always, and says what it attempted in every failure. Install registers
+      the `ServiceCommandLine` binary path (display name defaulting to the name, a missing name a
+      configuration error), sets the description, the delayed start and always the pre-shutdown
+      timeout (`Supervisor.longestStop` of the stop budget plus 10 s, the computation console mode
+      now shares), deletes a service it could not configure, and returns the command line's
+      warnings. Start and stop poll through `StateWait` (a tenth of the wait hint, 100 ms to 1 s,
+      on a monotonic ticker) until `RUNNING`/`STOPPED`; a service that stops while starting fails
+      with its exit codes. Status maps 1060 to "not installed" and an unknown state to a failure.
+      `WindowsPlatform` is registered in `Platforms`; `ServiceException` maps to exit code 3 (D23).
+      JNA loads at the first call (D5).
 - [x] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
       (default `java.class.path`; integration tests pass the real jars because surefire's
       `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.additional.N`,
@@ -1312,6 +1330,12 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `wrapper.ntservice.additional.N` fails as a `LaunchException` (exit 1); P5.4 may want to report it
   as a configuration error. Confirm in the P5.6 integration test that the SCM expands `%NAME%` in
   the stored binary path (the warning assumes it).
+- P5.2 (review): `platform.windows.StateWait.Pause` repeats `log.RollingFileSink.Pause` (a pause
+  that tests replace); extract one shared type when a third user appears. `WindowsServiceController`
+  reads `lifecycle.Supervisor.longestStop`, a new edge from `platform` to `lifecycle` that the P6
+  service host needs anyway. In P5.6, read the installed configuration back
+  (`QueryServiceConfig`/`QueryServiceConfig2`: dependencies, delayed start, pre-shutdown timeout).
+  System error texts are localised, so integration tests must not compare them.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
