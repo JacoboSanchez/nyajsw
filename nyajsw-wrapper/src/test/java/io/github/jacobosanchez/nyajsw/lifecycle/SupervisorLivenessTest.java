@@ -16,6 +16,8 @@ import io.github.jacobosanchez.nyajsw.config.FailureAction;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.probe.Probe;
+import io.github.jacobosanchez.nyajsw.probe.ProbeContext;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRegistry;
 import io.github.jacobosanchez.nyajsw.probe.ProbeResult;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRunner;
@@ -381,6 +383,33 @@ public class SupervisorLivenessTest {
         supervisor.runPending();
         assertEquals(supervisor.state(), State.STOPPING);
         assertFalse(logged().contains("failed its liveness check"), logged());
+    }
+
+    @Test
+    public void readinessAndLivenessProbesHearOfEachLaunchBeforeIt() {
+        List<String> events = new CopyOnWriteArrayList<>();
+        Probe heard = new Probe() {
+            @Override
+            public ProbeResult check(ProbeContext context) {
+                return ProbeResult.pass("ok");
+            }
+
+            @Override
+            public void beforeLaunch() {
+                events.add("told");
+            }
+        };
+        ProbeRunner runner = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("heard", heard)), INTERVAL);
+        Supervisor supervisor = new Supervisor(lifecycle(Lifecycles.MAX_FAILED), invocation -> {
+            events.add("launch " + invocation);
+            return new FakeApplication(invocation);
+        }, runner, new Liveness(runner, FAILURES, FailureAction.RESTART), probeExecutor, stops, scheduler, log,
+                (from, to) -> { });
+
+        supervisor.start();
+        supervisor.runPending();
+
+        assertEquals(events, List.of("told", "told", "launch 1"));
     }
 
     @Test

@@ -10,6 +10,7 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.Charset;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Copies one output stream of the application into the wrapper log, line by line, until the stream
@@ -37,15 +38,24 @@ final class OutputPump implements Runnable {
     private final WrapperLog log;
     private final LogLevel level;
     private final SecretMasker secrets;
+    /** Told every line as it is logged, masked. */
+    private final Consumer<String> lines;
     /** Characters kept back when a long line is cut, so a secret that starts there stays whole. */
     private final int keep;
 
     OutputPump(InputStream in, Charset charset, WrapperLog log, LogLevel level, SecretMasker secrets) {
+        this(in, charset, log, level, secrets, line -> { });
+    }
+
+    /** @param lines told every line as it is logged, masked; it must not block */
+    OutputPump(InputStream in, Charset charset, WrapperLog log, LogLevel level, SecretMasker secrets,
+            Consumer<String> lines) {
         this.in = Objects.requireNonNull(in, "in");
         this.charset = Objects.requireNonNull(charset, "charset");
         this.log = Objects.requireNonNull(log, "log");
         this.level = Objects.requireNonNull(level, "level");
         this.secrets = Objects.requireNonNull(secrets, "secrets");
+        this.lines = Objects.requireNonNull(lines, "lines");
         this.keep = Math.min(Math.max(0, secrets.longestSecret() - 1), MAX_LINE / 2);
     }
 
@@ -90,7 +100,9 @@ final class OutputPump implements Runnable {
     private void emit(StringBuilder line, boolean continued) {
         String text = secrets.maskText(line.toString());
         line.setLength(0);
-        safely(() -> log.log(level, continued ? CONTINUED + text : text));
+        String logged = continued ? CONTINUED + text : text;
+        safely(() -> lines.accept(logged));
+        safely(() -> log.log(level, logged));
     }
 
     /** Logs the first part of a full line, cut where no secret is split, and keeps the rest. */
@@ -102,7 +114,9 @@ final class OutputPump implements Runnable {
         }
         String piece = secrets.maskText(text.substring(0, cut));
         line.delete(0, cut);
-        safely(() -> log.log(level, continued ? CONTINUED + piece : piece));
+        String logged = continued ? CONTINUED + piece : piece;
+        safely(() -> lines.accept(logged));
+        safely(() -> log.log(level, logged));
     }
 
     /** A failing sink must not stop the pump: the pipe would fill and block the application. */

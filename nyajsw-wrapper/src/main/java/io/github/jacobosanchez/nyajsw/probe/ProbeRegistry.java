@@ -32,6 +32,7 @@ public final class ProbeRegistry {
         factories.put(HttpProbe.TYPE, HttpProbe::from);
         factories.put(FileProbe.TYPE, FileProbe::from);
         factories.put(CommandProbe.TYPE, CommandProbe::from);
+        factories.put(LogPatternProbe.TYPE, LogPatternProbe::from);
         return new ProbeRegistry(factories);
     }
 

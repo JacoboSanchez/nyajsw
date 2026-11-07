@@ -18,4 +18,12 @@ public interface Probe {
 
     /** Checks the application once. */
     ProbeResult check(ProbeContext context);
+
+    /**
+     * Told just before each invocation is launched, on the supervisor's thread, so that a probe can
+     * note where things stand before the application can change them (the {@code log} probe notes
+     * the size of its file). It must be quick and must not throw; by default it does nothing.
+     */
+    default void beforeLaunch() {
+    }
 }

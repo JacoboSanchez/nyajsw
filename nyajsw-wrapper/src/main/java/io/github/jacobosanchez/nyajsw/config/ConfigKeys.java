@@ -956,14 +956,17 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec READINESS_LOG_PATTERN = nyajsw("wrapper.readiness.log.pattern", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("Regular expression the log readiness probe waits for")
+            .status(SUPPORTED)
+            .description("Regular expression the log probe looks for in new lines, for readiness and liveness alike")
+            .notes("Passes when a line that came since the previous check contains a match (Java regular"
+                    + " expression syntax); lines are matched as logged, secrets masked")
             .build();
 
     public static final KeySpec READINESS_LOG_FILE = nyajsw("wrapper.readiness.log.file", PATH, PROBES)
-            .status(PLANNED, "P7")
-            .description("File the log readiness probe reads")
-            .notes("When absent the probe reads the captured application output")
+            .status(SUPPORTED)
+            .description("File the log probe reads the new lines of")
+            .notes("Relative to wrapper.working.dir, read as UTF-8; when absent the probe reads the captured"
+                    + " application output")
             .build();
 
     public static final KeySpec READINESS_FILE_PATH = nyajsw("wrapper.readiness.file.path", PATH, PROBES)

@@ -518,7 +518,7 @@ output, configuration and a clock; probes are stateless or own their state expli
 | `process` (default) | The application process is alive | — |
 | `tcp` | A TCP connection to host:port succeeds (5 s connect timeout) | `wrapper.readiness.tcp.host` (default `127.0.0.1`), `wrapper.readiness.tcp.port` |
 | `http` | A `GET` returns an expected status (redirects not followed) | `wrapper.readiness.http.url`, `.status` (default `200-399`), `.timeout` (default 5 s) |
-| `log` | Captured stdout/stderr (or a file) matches a regex | `wrapper.readiness.log.pattern`, `.file` (optional) |
+| `log` | A line of the captured stdout/stderr (or one appended to a file) since the previous check matches a regex | `wrapper.readiness.log.pattern`, `.file` (optional, relative to `wrapper.working.dir`) |
 | `file` | A file or directory exists (relative to `wrapper.working.dir`) | `wrapper.readiness.file.path` |
 | `command` | An external command exits `0`, run without a shell in the working directory | `wrapper.readiness.command`, `.timeout` (default 10 s) |
 | `agent` | The in-JVM agent connected and answers `PING` | `wrapper.agent.enabled` (default `true`) |
@@ -1368,7 +1368,7 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
       up to the first failed check, counts towards `wrapper.successful_invocation_time`) or, after
       waiting in `STOPPING` for it to end, end supervision `FAILED` (D24). Tests: fake clock in
       `SupervisorLivenessTest`; the configuration, console and service-mode errors end to end.
-- [ ] P7.2 `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe` (tests with
+- [x] P7.2 `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe` (tests with
       local `ServerSocket`/`HttpServer`, temp files, fake clock). In three commits:
   - [x] P7.2a `tcp`, `http`, `file`. **Done:** registered in `ProbeRegistry`; each serves readiness
         and liveness from the same `wrapper.readiness.<type>.*` keys, now supported. `tcp` opens and
@@ -1397,7 +1397,26 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         with its descendants through `launch.ProcessTrees`, the tree walk `terminateTree` now
         shares. Log messages name the program and the JDK's reason it cannot be started, never the
         arguments. Duration texts in log messages share `log.Durations`.
-  - [ ] P7.2c `log` (captured output or `wrapper.readiness.log.file`).
+  - [x] P7.2c `log` (captured output or `wrapper.readiness.log.file`). **Done:** passes when a
+        line that came since the previous check (for the first check of an invocation, since its
+        launch) contains a match of `wrapper.readiness.log.pattern` (compiled in `ProbeConfig`; an
+        invalid one is a configuration error giving the reason, not the whole pattern). As liveness
+        that is a heartbeat message, which must come once per interval; readiness and liveness share
+        the pattern (D25), so both need an alternation such as `Started|alive`.
+        The captured output reaches it through `RunningApplication.output()`: the output pumps
+        also hand every line, as logged (masked, long ones in pieces), to the invocation's
+        `launch.OutputLines`, which keeps the latest 10,000 lines and 2 million characters and
+        tells a reader how many it missed; `PidFiles` passes it on. With
+        `wrapper.readiness.log.file` (relative to the working directory) the probe reads, as UTF-8,
+        the lines appended since the launch: `Probe.beforeLaunch`, a new default hook the supervisor
+        calls on the readiness and liveness probes just before each launch, notes the file's size,
+        so that a liveness probe first checked an interval after readiness, or a log probe listed
+        after one that failed, still sees the ready line. At most 16 MiB are read per check; a file
+        that shrank is read from its start, one that does not exist yet whole once it appears, and a
+        line without its end yet is matched as far as it goes and counts once. Each invocation
+        starts afresh; a check that finds the previous one still running (a hanging file share)
+        fails at once. `RunningApplication.output()` is abstract, so that a wrapper of it cannot
+        forget to pass it on.
 - [ ] P7.3 `nyajsw-agent`: `premain`, `AgentProtocol`, loopback connection with token from
       `NYAJSW_AGENT_TOKEN`, `STOP` → `System.exit(0)`; wrapper side `agentlink` (`AgentListener`,
       `AgentChannel`), `AgentProbe`, `AgentStopStrategy`; automatic `-javaagent` injection unless
@@ -1453,6 +1472,13 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7.2c: `OutputLines` keeps 10,000 lines and 2 million characters per invocation, filled whether
+  or not a `log` probe reads the captured output; an application that logs more than that per
+  liveness interval pushes its heartbeat out before the check sees it (the check fails, saying how
+  many lines it missed). Matching push-style in the pump (a "matched since the last check" flag per
+  probe), or filling the buffer only when a captured-output `log` probe is configured, would lift
+  both the bound and the retention. `beforeLaunch` reads the log file's size on the supervisor's
+  thread, which a hanging file share would block.
 - P7.2b: a `command` probe's process is not in the application's kill-on-close job, so one that
   hangs while the wrapper is killed survives it; pass the job to probes if that matters. The
   command stop strategy (P3.4 entry) will need the same mechanics (argument array, no shell,

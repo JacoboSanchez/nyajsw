@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.probe;
 
+import io.github.jacobosanchez.nyajsw.launch.OutputLines;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 
 import java.util.concurrent.CompletableFuture;
@@ -8,6 +9,7 @@ import java.util.concurrent.CompletableFuture;
 final class FakeRunningApplication implements RunningApplication {
 
     private final boolean alive;
+    private final OutputLines output = new OutputLines();
 
     FakeRunningApplication(boolean alive) {
         this.alive = alive;
@@ -40,5 +42,10 @@ final class FakeRunningApplication implements RunningApplication {
 
     @Override
     public void terminateTree() {
+    }
+
+    @Override
+    public OutputLines output() {
+        return output;
     }
 }

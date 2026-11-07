@@ -161,6 +161,13 @@ public class PidFilesTest {
     }
 
     @Test
+    public void theOutputIsPassedOn() throws IOException {
+        RunningApplication application = tracking(pidFiles("wrapper.java.pidfile=java.pid")).launch(1);
+
+        assertSame(application.output(), launched.get(0).output());
+    }
+
+    @Test
     public void theProcessEndIsPassedOnBeforeTheFileIsRemoved() throws IOException {
         PidFiles files = pidFiles("wrapper.java.pidfile=java.pid");
         RunningApplication application = tracking(files).launch(1);

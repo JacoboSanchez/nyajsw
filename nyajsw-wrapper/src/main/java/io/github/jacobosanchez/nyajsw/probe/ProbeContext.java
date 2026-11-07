@@ -7,7 +7,7 @@ import java.util.Objects;
 /**
  * What a probe may look at when it checks one invocation. Probes get their settings when they are
  * created ({@link ProbeRegistry}); the context carries what changes from one invocation to the
- * next. The captured output follows with the {@code log} probe (P7).
+ * next, the captured output included ({@link RunningApplication#output()}).
  *
  * @param application the invocation being checked
  */

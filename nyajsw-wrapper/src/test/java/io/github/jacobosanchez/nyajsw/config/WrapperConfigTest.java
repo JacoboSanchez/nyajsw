@@ -392,6 +392,20 @@ public class WrapperConfigTest {
     }
 
     @Test
+    public void theLogProbeSettingsAreReadAndABadPatternIsAnErrorThatDoesNotQuoteIt() throws IOException {
+        ProbeConfig probes = load("wrapper.working.dir=work", "wrapper.readiness.log.pattern=Started .* in \\d+",
+                "wrapper.readiness.log.file=logs/app.log").probes();
+
+        assertEquals(probes.logPattern().orElseThrow().pattern(), "Started .* in \\d+");
+        assertEquals(probes.logFile(), Optional.of(dir.resolve("work/logs/app.log")), "the application's working dir");
+        ConfigException error = expectThrows(ConfigException.class,
+                () -> load("wrapper.readiness.log.pattern=(s3cr3t"));
+        assertTrue(error.getMessage().contains("wrapper.readiness.log.pattern is not a valid regular expression:"),
+                error.getMessage());
+        assertFalse(error.getMessage().contains("s3cr3t"), error.getMessage());
+    }
+
+    @Test
     public void userInformationInTheHttpUrlIsWarnedAboutWithoutQuotingIt() throws IOException {
         WrapperConfig config = load("wrapper.readiness.http.url=http://admin:s3cr3t@localhost:8080/health");
 
