@@ -25,6 +25,17 @@ public interface RunningApplication {
      */
     CompletableFuture<Integer> onExit();
 
+    /**
+     * Completes as soon as the process has ended, before its output is drained and before {@link
+     * #onExit()}, which may come up to a couple of seconds later when a process it started holds the
+     * output open. It tells how long the process ran; the exit code and the end of its output come
+     * through {@link #onExit()}. By default the same moment as {@link #onExit()}, for runs that
+     * cannot tell the two apart.
+     */
+    default CompletableFuture<Void> onProcessEnd() {
+        return onExit().handle((code, error) -> null);
+    }
+
     /** Kills the process and everything it started, at once, without waiting for them to end. */
     void terminateTree();
 }

@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.testng.annotations.AfterMethod;
@@ -190,8 +191,13 @@ public class ApplicationProcessTest {
     @Test(timeOut = 120_000)
     public void anExitIsReportedEvenWhileAGrandchildHoldsTheOutput() throws Exception {
         ApplicationProcess process = start(config("wrapper.app.parameter.1=orphan"), 1);
+        CompletableFuture<Long> processEnded = process.onProcessEnd().thenApply(ignored -> System.nanoTime());
+        CompletableFuture<Long> exitReported = process.onExit().thenApply(code -> System.nanoTime());
 
         assertEquals(process.waitFor(GENEROUS), Optional.of(0));
+        // The process end comes first: the exit waits for the output, which the grandchild holds.
+        long gap = exitReported.get(1, TimeUnit.MINUTES) - processEnded.get(1, TimeUnit.MINUTES);
+        assertTrue(gap >= ApplicationProcess.DRAIN.dividedBy(2).toNanos(), "gap " + gap + " ns");
         awaitGrandchildPid(); // registers it for tearDown
         assertTrue(logLines().stream().anyMatch(line -> line.contains("still reading after jvm 1 ended")),
                 logLines().toString());

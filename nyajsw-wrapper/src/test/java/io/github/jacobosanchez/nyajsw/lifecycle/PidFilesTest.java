@@ -6,8 +6,7 @@ import static org.testng.Assert.assertSame;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
-import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
-import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
+import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
@@ -23,7 +22,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import org.testng.annotations.AfterMethod;
@@ -46,20 +44,12 @@ public class PidFilesTest {
     @AfterMethod(alwaysRun = true)
     public void tearDown() throws IOException {
         log.close();
-        try (var paths = Files.walk(dir)) {
-            for (Path path : paths.sorted((a, b) -> b.compareTo(a)).toList()) {
-                Files.deleteIfExists(path);
-            }
-        }
+        TestConfigs.delete(dir);
     }
 
     /** Pid files from a configuration file in the temporary directory, so relative paths resolve there. */
     private PidFiles pidFiles(String... lines) throws IOException {
-        List<String> all = new ArrayList<>(List.of("wrapper.java.app.mainclass=Main"));
-        all.addAll(List.of(lines));
-        Path conf = Files.write(dir.resolve("wrapper.conf"), all);
-        WrapperConfig config = WrapperConfig.from(
-                new ConfigLoader(Map.of(), Map.of(), false, ConfigKeys.registry()).load(conf));
+        WrapperConfig config = TestConfigs.load(dir, lines);
         return new PidFiles(config.lifecycle(), config.secrets(), log);
     }
 
@@ -168,6 +158,20 @@ public class PidFilesTest {
         launched.get(0).exit(3);
 
         assertEquals(existedWhenReported, List.of(false));
+    }
+
+    @Test
+    public void theProcessEndIsPassedOnBeforeTheFileIsRemoved() throws IOException {
+        PidFiles files = pidFiles("wrapper.java.pidfile=java.pid");
+        RunningApplication application = tracking(files).launch(1);
+        CompletableFuture<Void> processEnd = application.onProcessEnd();
+        CompletableFuture<Integer> exit = application.onExit();
+
+        launched.get(0).endProcess(); // a grandchild still holds the output
+
+        assertTrue(processEnd.isDone(), "the run time ends with the process, not with the pid file's removal");
+        assertFalse(exit.isDone());
+        assertTrue(Files.exists(dir.resolve("java.pid")));
     }
 
     @Test

@@ -100,7 +100,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
     }
 
     static LifecycleConfig from(ConfigValues values, boolean agentInEffect) {
-        List<String> stopStrategies = values.list(STOP_STRATEGY);
+        List<String> stopStrategies = stopStrategies(values);
         return new LifecycleConfig(
                 values.required(values.enumeration(CONTROL, ControlMode.class), CONTROL),
                 exitActions(values),
@@ -118,6 +118,22 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 values.text(STOP_COMMAND),
                 values.duration(PING_INTERVAL),
                 values.duration(PING_TIMEOUT));
+    }
+
+    /**
+     * {@code wrapper.stop.strategy} as configured, or nothing (the default applies) when the value
+     * holds a secret copied in with <code>${...}</code>: a secret names no strategy, and once the
+     * value is split into names, a secret with a comma would reach the log in pieces that no masker
+     * recognises. The warning does not echo the value.
+     */
+    private static List<String> stopStrategies(ConfigValues values) {
+        Optional<String> raw = values.string(STOP_STRATEGY);
+        if (raw.isPresent() && !values.masker().maskText(raw.get()).equals(raw.get())) {
+            values.location(STOP_STRATEGY).ifPresent(location -> values.warn(location, STOP_STRATEGY.name()
+                    + " contains a secret, which cannot name a stop strategy; ignored, the default applies"));
+            return List.of();
+        }
+        return values.list(STOP_STRATEGY);
     }
 
     /** The derived default of {@code wrapper.stop.strategy}, as its registry description states. */

@@ -204,6 +204,11 @@ public final class ApplicationProcess implements RunningApplication {
         return exit.copy();
     }
 
+    @Override
+    public CompletableFuture<Void> onProcessEnd() {
+        return process.onExit().handle((ended, error) -> null);
+    }
+
     /**
      * Kills the process and everything it started, at once. On Windows {@code Process.destroy()} is
      * already a hard kill and leaves grandchildren, such as a JVM started by a batch file, running;

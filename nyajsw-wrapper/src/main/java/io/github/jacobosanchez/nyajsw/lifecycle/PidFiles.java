@@ -124,6 +124,11 @@ public final class PidFiles {
         }
 
         @Override
+        public CompletableFuture<Void> onProcessEnd() {
+            return application.onProcessEnd();
+        }
+
+        @Override
         public void terminateTree() {
             application.terminateTree();
         }

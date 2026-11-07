@@ -12,6 +12,7 @@ final class FakeApplication implements RunningApplication {
     private final String name;
     private final long pid;
     private final CompletableFuture<Integer> exit = new CompletableFuture<>();
+    private final CompletableFuture<Void> processEnd = new CompletableFuture<>();
     private final AtomicInteger terminations = new AtomicInteger();
     private volatile boolean alive = true;
     /** The exit code a termination ends it with; {@code null} for an application that survives it. */
@@ -24,10 +25,25 @@ final class FakeApplication implements RunningApplication {
         this.pid = 1000 + invocation;
     }
 
-    /** Ends the application with {@code code}. */
+    /** Ends the application with {@code code}: its process ends and its exit is reported at once. */
     void exit(int code) {
+        endProcess();
+        exit.complete(code);
+    }
+
+    /** Reports the exit without the process end, as when the two arrive in the other order. */
+    void reportExitOnly(int code) {
         alive = false;
         exit.complete(code);
+    }
+
+    /**
+     * Ends the process without reporting the exit yet, as when a process it started still holds its
+     * output; {@link #exit(int)} reports it later.
+     */
+    void endProcess() {
+        alive = false;
+        processEnd.complete(null);
     }
 
     /** Makes the observed exit fail while the process stays alive, as if the wrapper lost track of it. */
@@ -78,6 +94,11 @@ final class FakeApplication implements RunningApplication {
             throw new IllegalStateException("onExit broke");
         }
         return exit.copy();
+    }
+
+    @Override
+    public CompletableFuture<Void> onProcessEnd() {
+        return processEnd.copy();
     }
 
     @Override

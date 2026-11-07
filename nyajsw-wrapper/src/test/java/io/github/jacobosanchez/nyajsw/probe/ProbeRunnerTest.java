@@ -3,10 +3,8 @@ package io.github.jacobosanchez.nyajsw.probe;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.expectThrows;
 
-import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
-import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
+import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.ProbeConfig;
-import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 
 import java.nio.file.Files;
@@ -14,7 +12,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
@@ -141,15 +138,9 @@ public class ProbeRunnerTest {
     private static ProbeConfig defaultProbeConfig() throws Exception {
         Path dir = Files.createTempDirectory("nyajsw-probe");
         try {
-            Path conf = Files.writeString(dir.resolve("wrapper.conf"), "wrapper.java.app.mainclass=Main\n");
-            return WrapperConfig.from(new ConfigLoader(Map.of(), Map.of(), false, ConfigKeys.registry()).load(conf))
-                    .probes();
+            return TestConfigs.load(dir).probes();
         } finally {
-            try (var paths = Files.walk(dir)) {
-                for (Path path : paths.sorted((a, b) -> b.compareTo(a)).toList()) {
-                    Files.deleteIfExists(path);
-                }
-            }
+            TestConfigs.delete(dir);
         }
     }
 }

@@ -44,10 +44,4 @@ final class Lifecycles {
                 SUCCESSFUL_TIME, startupDelay, startupTimeout, shutdownTimeout, jvmExitTimeout, Optional.empty(),
                 Optional.empty(), stopStrategies, Optional.empty(), Optional.empty(), Optional.empty());
     }
-
-    /** The defaults, with {@code wrapper.stop.strategy} set to {@code stopStrategies}. */
-    static LifecycleConfig withStopStrategies(String... stopStrategies) {
-        return lifecycle(ControlMode.TIGHT, ExitAction.SHUTDOWN, Map.of(), MAX_FAILED, Duration.ZERO,
-                STARTUP_TIMEOUT, Duration.ZERO, List.of(stopStrategies));
-    }
 }
