@@ -1070,7 +1070,11 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       exceptions are shown by class only (their messages could repeat a masked file name); it is
       set before the file is opened, so a failed start roll is heard too. Console mode keeps
       reporting configuration errors on the console.
-- [ ] P4.4 Application output logged with `jvm N` prefix.
+- [x] P4.4 Application output logged with `jvm N` prefix. **Done:** in place since P2.4
+      (`ApplicationProcess` logs both streams through `WrapperLog.forSource("jvm N")`); P4.2 made it
+      the `P` field of both formats, padded to line up with `wrapper`. Covered end to end for both
+      streams on the console and in the log file, for the first invocation and a restarted one
+      (`MainTest`), and by `ApplicationProcessTest`/`OutputPumpTest`.
 Done when: rotation and formatting are tested against temp directories; no third-party logging dep.
 
 ### P5 — Windows service control (client side)
