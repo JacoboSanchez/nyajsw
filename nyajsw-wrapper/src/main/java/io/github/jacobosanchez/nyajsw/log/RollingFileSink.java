@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.log;
 
 import io.github.jacobosanchez.nyajsw.config.LogFileNames;
+import io.github.jacobosanchez.nyajsw.config.RollMode;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -12,7 +13,10 @@ import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.LongSupplier;
 import java.util.function.UnaryOperator;
 import java.util.logging.ErrorManager;
@@ -34,6 +38,12 @@ import java.util.logging.LogRecord;
  * still fails the sink goes on appending to the file, reports the failure to its error manager and
  * tries again a minute later. Since a retry only fills the gap the failed attempt left, a file that
  * stays locked costs no further old copy.
+ *
+ * <p>The roll modes ({@code wrapper.logfile.rollmode}) add rolls: {@code JVM} and {@code WRAPPER}
+ * roll a file that is not empty when the sink opens it, {@code JVM} also before every restarted
+ * application ({@link #applicationStarting}); {@code DATE} writes each record to the file of its
+ * day, opened with the day's first record (so a day without output has no file), and deletes the
+ * files of days past {@code wrapper.logfile.maxdays}. Rolling by size goes on within each file.
  */
 final class RollingFileSink extends Handler implements AutoCloseable {
 
@@ -79,15 +89,30 @@ final class RollingFileSink extends Handler implements AutoCloseable {
         }
     }
 
-    /** The file settings that the configuration gives. */
-    record Settings(Path file, long maxSize, int maxFiles, Charset charset) {
+    /**
+     * The file settings that the configuration gives.
+     *
+     * @param mode    {@code wrapper.logfile.rollmode}; empty to roll by size only
+     * @param maxDays {@code wrapper.logfile.maxdays}, for the {@code DATE} mode; negative keeps every day
+     */
+    record Settings(Path file, long maxSize, int maxFiles, Charset charset, Optional<RollMode> mode, int maxDays) {
 
         Settings {
             Objects.requireNonNull(file, "file");
             Objects.requireNonNull(charset, "charset");
+            Objects.requireNonNull(mode, "mode");
             if (maxSize < 0 || maxFiles < 0) {
                 throw new IllegalArgumentException("negative limits: " + maxSize + ", " + maxFiles);
             }
+        }
+
+        /** Rolling by size only, with every day kept. */
+        Settings(Path file, long maxSize, int maxFiles, Charset charset) {
+            this(file, maxSize, maxFiles, charset, Optional.empty(), -1);
+        }
+
+        boolean is(RollMode rollMode) {
+            return mode.equals(Optional.of(rollMode));
         }
     }
 
@@ -99,8 +124,10 @@ final class RollingFileSink extends Handler implements AutoCloseable {
     private final LogFileNames names;
     private final Seams seams;
     private final UnaryOperator<String> mask;
-    private final LocalDate date;
-    private final Path file;
+    private final ZoneId zone;
+    /** The day of the file; under {@code DATE}, of the last record written. */
+    private LocalDate date;
+    private Path file;
     private OutputStream out;
     private long size;
     private boolean closed;
@@ -116,13 +143,20 @@ final class RollingFileSink extends Handler implements AutoCloseable {
         this.names = new LogFileNames(settings.file());
         setFormatter(Objects.requireNonNull(formatter, "formatter"));
         setLevel(Objects.requireNonNull(threshold, "threshold"));
-        this.date = LocalDate.now(Objects.requireNonNull(clock, "clock"));
+        this.zone = Objects.requireNonNull(clock, "clock").getZone();
+        this.date = LocalDate.now(clock);
         this.file = names.current(date);
         Path directory = file.toAbsolutePath().getParent();
         if (directory != null) {
             Files.createDirectories(directory);
         }
         open();
+        if ((settings.is(RollMode.JVM) || settings.is(RollMode.WRAPPER)) && size > 0) {
+            roll(); // both modes start every wrapper run in a new file
+        }
+        if (settings.is(RollMode.DATE)) {
+            deleteOldDays();
+        }
     }
 
     /**
@@ -145,7 +179,7 @@ final class RollingFileSink extends Handler implements AutoCloseable {
     }
 
     /** The file written to. */
-    Path file() {
+    synchronized Path file() {
         return file;
     }
 
@@ -163,6 +197,14 @@ final class RollingFileSink extends Handler implements AutoCloseable {
             return;
         }
         try {
+            if (settings.is(RollMode.DATE)) {
+                // Only forward: a record stamped just before midnight may arrive after one stamped just
+                // after it, and a clock set back must not reopen the files of earlier days.
+                LocalDate day = LocalDate.ofInstant(record.getInstant(), zone);
+                if (day.isAfter(date)) {
+                    startDay(day);
+                }
+            }
             if (out == null) {
                 open(); // an earlier reopen failed
             }
@@ -177,8 +219,66 @@ final class RollingFileSink extends Handler implements AutoCloseable {
         }
     }
 
+    /**
+     * Tells the sink that the application is being started for the {@code invocation}th time: under
+     * the {@code JVM} roll mode every restarted application begins a new file (the first one shares
+     * the file the wrapper started).
+     */
+    synchronized void applicationStarting(int invocation) {
+        if (closed || !settings.is(RollMode.JVM) || invocation <= 1 || size == 0) {
+            return;
+        }
+        try {
+            roll();
+        } catch (IOException e) {
+            report("cannot open the log file " + file + " again", e, ErrorManager.OPEN_FAILURE);
+        }
+    }
+
+    /** Moves to the file of {@code day} (the {@code DATE} roll mode), opening it with the first record of the day. */
+    private void startDay(LocalDate day) throws IOException {
+        closeStream();
+        date = day;
+        file = names.current(day);
+        rollBlocked = false;
+        try {
+            open();
+        } finally {
+            deleteOldDays(); // also when the day's file cannot be opened, so the clean-up is not lost
+        }
+    }
+
+    /**
+     * Deletes the files, current or rolled, of the days before the last {@code wrapper.logfile.maxdays}
+     * ones; a file that cannot be deleted is reported and tried again with the next day.
+     */
+    private void deleteOldDays() {
+        if (settings.maxDays() < 0) {
+            return;
+        }
+        LocalDate oldestKept = date.minusDays(settings.maxDays());
+        Path directory = file.toAbsolutePath().getParent();
+        List<Path> old;
+        try (var files = Files.list(directory)) {
+            old = files.filter(Files::isRegularFile)
+                    .filter(candidate -> names.dateOf(candidate).filter(day -> day.isBefore(oldestKept)).isPresent())
+                    .toList();
+        } catch (IOException e) {
+            report("cannot list the log directory " + directory, e, ErrorManager.GENERIC_FAILURE);
+            return;
+        }
+        for (Path stale : old) {
+            try {
+                retrying("delete " + stale, () -> seams.deleter().delete(stale));
+            } catch (IOException e) {
+                report("cannot delete the old log file " + stale, e, ErrorManager.GENERIC_FAILURE);
+            }
+        }
+    }
+
     private boolean isFull(int adding) {
-        if (settings.maxSize() == 0 || size == 0 || size + adding <= settings.maxSize()) {
+        if (settings.is(RollMode.NONE) || settings.maxSize() == 0 || size == 0
+                || size + adding <= settings.maxSize()) {
             return false;
         }
         return !rollBlocked || seams.nanoTicker().getAsLong() - noRollBefore >= 0;

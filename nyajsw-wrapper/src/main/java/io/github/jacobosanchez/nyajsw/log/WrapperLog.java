@@ -138,7 +138,8 @@ public final class WrapperLog implements AutoCloseable {
                 && config.logfileThreshold() != LogLevel.NONE) {
             try {
                 RollingFileSink.Settings settings = new RollingFileSink.Settings(config.logfile().get(),
-                        config.maxSizeBytes().orElse(0L), config.maxFiles().orElse(0), config.encoding());
+                        config.maxSizeBytes().orElse(0L), config.maxFiles().orElse(0), config.encoding(),
+                        config.rollMode(), config.maxDays());
                 sinks.add(RollingFileSink.open(settings, new LineFormatter(config.logfileFormat().get(), zone),
                         WrapperLevel.threshold(config.logfileThreshold()), clock, secrets::maskText));
             } catch (IOException | RuntimeException e) {
@@ -155,6 +156,19 @@ public final class WrapperLog implements AutoCloseable {
 
     private static Handler consoleSink(PrintStream out, LineFormat format, ZoneId zone, LogLevel threshold) {
         return new ConsoleSink(out, new LineFormatter(format, zone), WrapperLevel.threshold(threshold));
+    }
+
+    /**
+     * Tells the sinks that the application is being started for the {@code invocation}th time, 1
+     * for the first; the log file rolls then under {@code wrapper.logfile.rollmode=JVM}. Shared with
+     * the {@link #forSource} views.
+     */
+    public void applicationStarting(int invocation) {
+        for (Handler handler : logger.getHandlers()) {
+            if (handler instanceof RollingFileSink file) {
+                file.applicationStarting(invocation);
+            }
+        }
     }
 
     /**

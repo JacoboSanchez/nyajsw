@@ -6,6 +6,7 @@ import static org.testng.Assert.assertTrue;
 
 import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.LineFormat;
+import io.github.jacobosanchez.nyajsw.config.RollMode;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +20,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.logging.ErrorManager;
 import java.util.logging.Level;
@@ -62,8 +64,16 @@ public class RollingFileSinkTest {
 
     /** A sink writing each message and {@code \n}: a five-letter message is six bytes. */
     private RollingFileSink sink(String name, long maxSize, int maxFiles) throws IOException {
-        RollingFileSink sink = RollingFileSink.open(
-                new RollingFileSink.Settings(dir.resolve(name), maxSize, maxFiles, StandardCharsets.UTF_8),
+        return sink(new RollingFileSink.Settings(dir.resolve(name), maxSize, maxFiles, StandardCharsets.UTF_8));
+    }
+
+    private RollingFileSink sink(String name, long maxSize, RollMode mode, int maxDays) throws IOException {
+        return sink(new RollingFileSink.Settings(dir.resolve(name), maxSize, 0, StandardCharsets.UTF_8,
+                Optional.of(mode), maxDays));
+    }
+
+    private RollingFileSink sink(RollingFileSink.Settings settings) throws IOException {
+        RollingFileSink sink = RollingFileSink.open(settings,
                 new LineFormatter(new LineFormat(List.of(LineFormat.Field.MESSAGE), "\n"), ZoneOffset.UTC),
                 Level.ALL, clock, text -> text.replace("hunter2", "****"),
                 new RollingFileSink.Seams(
@@ -103,8 +113,150 @@ public class RollingFileSinkTest {
         }
     }
 
+    /** Writes {@code messages} as logged at {@code time}, as the log stamps them from its clock. */
+    private static void writeAt(RollingFileSink sink, String time, String... messages) {
+        for (String message : messages) {
+            LogRecord record = new LogRecord(Level.INFO, message);
+            record.setInstant(Instant.parse(time));
+            sink.publish(record);
+        }
+    }
+
     private String read(String name) throws IOException {
         return Files.readString(dir.resolve(name), StandardCharsets.UTF_8);
+    }
+
+    @Test
+    public void theJvmModeRollsAtTheStartAndBeforeEveryRestartedApplication() throws IOException {
+        Files.writeString(dir.resolve("wrapper.log"), "last run\n");
+        try (RollingFileSink sink = sink("wrapper.log", 0, RollMode.JVM, -1)) {
+            write(sink, "start");
+            sink.applicationStarting(1); // the first application shares the wrapper's file
+            write(sink, "jvm 1");
+            sink.applicationStarting(2);
+            write(sink, "jvm 2");
+        }
+
+        assertEquals(read("wrapper.log"), "jvm 2\n");
+        assertEquals(read("wrapper.log.1"), "start\njvm 1\n");
+        assertEquals(read("wrapper.log.2"), "last run\n");
+    }
+
+    @Test
+    public void theWrapperModeRollsAtTheStartOnly() throws IOException {
+        Files.writeString(dir.resolve("wrapper.log"), "last run\n");
+        try (RollingFileSink sink = sink("wrapper.log", 0, RollMode.WRAPPER, -1)) {
+            write(sink, "start");
+            sink.applicationStarting(2);
+            write(sink, "jvm 2");
+        }
+
+        assertEquals(read("wrapper.log"), "start\njvm 2\n");
+        assertEquals(read("wrapper.log.1"), "last run\n");
+    }
+
+    @Test
+    public void anEmptyFileIsNotRolledAtTheStart() throws IOException {
+        Files.writeString(dir.resolve("wrapper.log"), "");
+        try (RollingFileSink sink = sink("wrapper.log", 0, RollMode.JVM, -1)) {
+            write(sink, "start");
+        }
+
+        assertEquals(read("wrapper.log"), "start\n");
+        assertFalse(Files.exists(dir.resolve("wrapper.log.1")));
+    }
+
+    @Test
+    public void theDateModeStartsAFileForEachDayOfOutputAndRollsBySizeWithinTheDay() throws IOException {
+        try (RollingFileSink sink = sink("w_YYYYMMDD.log", 12, RollMode.DATE, -1)) {
+            writeAt(sink, "2026-11-07T09:00:00Z", "aaaaa", "bbbbb", "ccccc");
+            writeAt(sink, "2026-11-09T00:00:01Z", "ddddd"); // nothing on the 8th: no file
+
+            assertEquals(sink.file(), dir.resolve("w_20261109.log"));
+        }
+
+        assertEquals(read("w_20261107.log"), "ccccc\n");
+        assertEquals(read("w_20261107.log.1"), "aaaaa\nbbbbb\n");
+        assertEquals(read("w_20261109.log"), "ddddd\n");
+        assertFalse(Files.exists(dir.resolve("w_20261108.log")));
+    }
+
+    @Test
+    public void aLateRecordOfThePreviousDayStaysInTheCurrentDaysFile() throws IOException {
+        try (RollingFileSink sink = sink("w_YYYYMMDD.log", 0, RollMode.DATE, -1)) {
+            writeAt(sink, "2026-11-08T00:00:00.001Z", "after");
+            writeAt(sink, "2026-11-07T23:59:59.999Z", "late");
+        }
+
+        assertEquals(read("w_20261108.log"), "after\nlate\n");
+        assertEquals(read("w_20261107.log"), "", "the start day's file, opened when the sink was");
+    }
+
+    @Test
+    public void maxdaysZeroKeepsOnlyTheDayWrittenTo() throws IOException {
+        Files.writeString(dir.resolve("w_20261106.log"), "yesterday\n");
+        Files.createDirectory(dir.resolve("w_20261101.log")); // shaped like ours, but not a file
+        try (RollingFileSink sink = sink("w_YYYYMMDD.log", 0, RollMode.DATE, 0)) {
+            writeAt(sink, "2026-11-07T10:00:00Z", "today");
+        }
+
+        assertFalse(Files.exists(dir.resolve("w_20261106.log")));
+        assertTrue(Files.isDirectory(dir.resolve("w_20261101.log")));
+        assertEquals(deletes, List.of(dir.resolve("w_20261106.log")));
+        assertEquals(read("w_20261107.log"), "today\n");
+    }
+
+    @Test
+    public void theNoneModeNeverRollsAndSizeRollsBySizeOnly() throws IOException {
+        try (RollingFileSink sink = sink("wrapper.log", 6, RollMode.NONE, -1)) {
+            write(sink, "aaaaa", "bbbbb");
+            sink.applicationStarting(2);
+        }
+        assertEquals(read("wrapper.log"), "aaaaa\nbbbbb\n");
+        assertFalse(Files.exists(dir.resolve("wrapper.log.1")));
+
+        Files.delete(dir.resolve("wrapper.log"));
+        Files.writeString(dir.resolve("wrapper.log"), "last run\n");
+        try (RollingFileSink sink = sink("wrapper.log", 20, RollMode.SIZE, -1)) {
+            write(sink, "aaaaa");
+            sink.applicationStarting(2);
+            write(sink, "bbbbb");
+        }
+        assertEquals(read("wrapper.log"), "bbbbb\n");
+        assertEquals(read("wrapper.log.1"), "last run\naaaaa\n", "no roll at the start nor for jvm 2");
+    }
+
+    @Test
+    public void anApplicationStartingAfterCloseChangesNothing() throws IOException {
+        RollingFileSink sink = sink("wrapper.log", 0, RollMode.JVM, -1);
+        write(sink, "aaaaa");
+        sink.close();
+        sink.applicationStarting(2);
+
+        assertEquals(read("wrapper.log"), "aaaaa\n");
+        assertFalse(Files.exists(dir.resolve("wrapper.log.1")));
+    }
+
+    @Test
+    public void maxdaysDeletesTheFilesOfOlderDaysWithTheirCopies() throws IOException {
+        for (String old : List.of("w_20261101.log", "w_20261101.log.1", "w_20261104.log", "w_20261105.log.3")) {
+            Files.writeString(dir.resolve(old), "old\n");
+        }
+        Files.writeString(dir.resolve("other_20261101.log"), "not ours\n");
+        try (RollingFileSink sink = sink("w_YYYYMMDD.log", 0, RollMode.DATE, 2)) {
+            // the clock says 2026-11-07: the 5th, 6th and 7th are kept
+            assertFalse(Files.exists(dir.resolve("w_20261101.log")));
+            assertFalse(Files.exists(dir.resolve("w_20261101.log.1")));
+            assertFalse(Files.exists(dir.resolve("w_20261104.log")));
+            assertTrue(Files.exists(dir.resolve("w_20261105.log.3")));
+
+            writeAt(sink, "2026-11-08T10:00:00Z", "aaaaa"); // a new day deletes the 5th
+        }
+
+        assertFalse(Files.exists(dir.resolve("w_20261105.log.3")));
+        assertTrue(Files.exists(dir.resolve("w_20261107.log")));
+        assertEquals(read("w_20261108.log"), "aaaaa\n");
+        assertEquals(read("other_20261101.log"), "not ours\n");
     }
 
     @Test

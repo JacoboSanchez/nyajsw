@@ -159,6 +159,7 @@ public final class ConsoleMode {
 
     /** One invocation: the classpath is expanded again, so jars added since the last start are picked up. */
     private RunningApplication launch(int invocation) {
+        log.applicationStarting(invocation);
         ClasspathExpander.Expanded classpath = expander.expand(config.java().classpath(), config.java().workingDir(),
                 config.secrets());
         warn(classpath.warnings());

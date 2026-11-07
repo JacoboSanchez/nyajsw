@@ -82,11 +82,12 @@ public class ConfigValidatorTest {
 
     @Test
     public void plannedKeyWithAnInvalidValueOnlyWarns() {
-        ConfigValidator.Result result = validator.validate(config("wrapper.logfile.rollmode", "SIZE", ConfigLayer.FILE));
+        ConfigValidator.Result result = validator.validate(
+                config("wrapper.ntservice.starttype", "SOMETIMES", ConfigLayer.FILE));
 
         assertTrue(result.errors().isEmpty(), result.errors().toString());
-        assertTrue(result.warnings().stream().anyMatch(w -> w.message().equals("invalid value 'SIZE' for"
-                + " wrapper.logfile.rollmode: expected one of JVM, WRAPPER, DATE")), result.warnings().toString());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.message().startsWith("invalid value 'SOMETIMES' for"
+                + " wrapper.ntservice.starttype: expected one of ")), result.warnings().toString());
     }
 
     @Test

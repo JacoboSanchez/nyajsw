@@ -126,7 +126,7 @@ public class ConfigKeysTest {
                 {"wrapper.logfile.loglevel", SUPPORTED, YAJSW},
                 {"wrapper.logfile.maxsize", SUPPORTED, YAJSW},
                 {"wrapper.logfile.maxfiles", SUPPORTED, YAJSW},
-                {"wrapper.logfile.rollmode", PLANNED, YAJSW},
+                {"wrapper.logfile.rollmode", SUPPORTED, YAJSW},
                 {"wrapper.console.format", SUPPORTED, YAJSW},
                 {"wrapper.console.loglevel", SUPPORTED, YAJSW},
                 {"wrapper.console.visible", UNSUPPORTED, YAJSW},
@@ -227,7 +227,7 @@ public class ConfigKeysTest {
                 {"wrapper.filter.missing.trigger.1", UNSUPPORTED, YAJSW},
                 {"wrapper.filter.missing.autostop.1", UNSUPPORTED, YAJSW},
                 {"wrapper.filter.debug.default", UNSUPPORTED, YAJSW},
-                {"wrapper.logfile.maxdays", PLANNED, YAJSW},
+                {"wrapper.logfile.maxdays", SUPPORTED, YAJSW},
                 {"wrapper.logfile.desc", UNSUPPORTED, YAJSW},
                 {"wrapper.log.encoding", SUPPORTED, YAJSW},
                 {"wrapper.console.minimized", UNSUPPORTED, YAJSW},
@@ -276,8 +276,8 @@ public class ConfigKeysTest {
     }
 
     @Test
-    public void rollModesHaveTheYajswValues() {
-        assertEquals(ConfigKeys.LOGFILE_ROLLMODE.values(), List.of("JVM", "WRAPPER", "DATE"));
+    public void rollModesHaveTheYajswValuesAndTanukisWithAliases() {
+        assertEquals(ConfigKeys.LOGFILE_ROLLMODE.values(), List.of("JVM", "WRAPPER", "DATE", "SIZE", "NONE"));
     }
 
     @Test(dataProvider = "seededKeys")

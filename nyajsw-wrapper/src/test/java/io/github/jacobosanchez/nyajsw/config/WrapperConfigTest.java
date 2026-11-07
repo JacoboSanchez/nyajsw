@@ -361,7 +361,7 @@ public class WrapperConfigTest {
     }
 
     @Test
-    public void anUnknownLogEncodingANegativeMaxfilesOrAnUnusableFileNameIsAnError() {
+    public void anUnknownLogEncodingANegativeMaxfilesOrAnUnusableFileNameIsAnError() throws IOException {
         ConfigException error = expectThrows(ConfigException.class,
                 () -> load("wrapper.log.encoding=klingon-8", "wrapper.logfile.maxfiles=-1",
                         "wrapper.logfile=logs/ROLLNUM"));
@@ -373,6 +373,38 @@ public class WrapperConfigTest {
                 problems.toString());
         assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.logfile: the file name is only ROLLNUM")),
                 problems.toString());
+    }
+
+    @Test
+    public void rollModesTakeYajswsValuesAndTanukisWithDaysKeptOnlyUnderDate() throws IOException {
+        assertEquals(load().log().rollMode(), Optional.empty());
+        assertEquals(load().log().maxDays(), -1);
+        LogConfig dated = load("wrapper.logfile=w_YYYYMMDD.log", "wrapper.logfile.rollmode=DATE",
+                "wrapper.logfile.maxdays=3").log();
+        assertEquals(dated.rollMode(), Optional.of(RollMode.DATE));
+        assertEquals(dated.maxDays(), 3);
+        // Tanuki's values, from files derived from its templates (D22)
+        assertEquals(load("wrapper.logfile.rollmode=SIZE_OR_JVM").log().rollMode(), Optional.of(RollMode.JVM));
+        assertEquals(load("wrapper.logfile.rollmode=SIZE_OR_WRAPPER").log().rollMode(),
+                Optional.of(RollMode.WRAPPER));
+        assertEquals(load("wrapper.logfile.rollmode=SIZE").log().rollMode(), Optional.of(RollMode.SIZE));
+        assertEquals(load("wrapper.logfile.rollmode=NONE").log().rollMode(), Optional.of(RollMode.NONE));
+
+        WrapperConfig undatedDays = load("wrapper.logfile.maxdays=3");
+        assertTrue(undatedDays.warnings().stream().map(ConfigWarning::toString).anyMatch(w -> w.endsWith(
+                "wrapper.logfile.maxdays has an effect only with wrapper.logfile.rollmode=DATE")),
+                undatedDays.warnings().toString());
+        assertFalse(load("wrapper.logfile=w_YYYYMMDD.log", "wrapper.logfile.rollmode=DATE",
+                "wrapper.logfile.maxdays=3").warnings().stream().anyMatch(w -> w.toString().contains("maxdays")));
+
+        ConfigException undated = expectThrows(ConfigException.class,
+                () -> load("wrapper.logfile=logs/wrapper.log", "wrapper.logfile.rollmode=DATE"));
+        assertTrue(undated.problems().stream().map(Throwable::getMessage).anyMatch(p -> p.contains(
+                "wrapper.logfile.rollmode=DATE needs YYYYMMDD in the name of wrapper.logfile")),
+                undated.problems().toString());
+        ConfigException unknown = expectThrows(ConfigException.class, () -> load("wrapper.logfile.rollmode=WEEKLY"));
+        assertTrue(unknown.problems().toString().contains("invalid value 'WEEKLY' for wrapper.logfile.rollmode"),
+                unknown.problems().toString());
     }
 
     @Test

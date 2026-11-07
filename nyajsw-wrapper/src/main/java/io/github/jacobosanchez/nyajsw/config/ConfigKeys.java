@@ -675,16 +675,26 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec LOGFILE_MAXDAYS = yajsw("wrapper.logfile.maxdays", INTEGER, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Days of log files kept under the DATE roll mode; -1 keeps all")
             .defaultValue("-1")
+            .notes("Files dated more than this many days before the current one are deleted, rolled copies"
+                    + " included, when a day's file is opened; 0 keeps the current day only. A system clock that"
+                    + " jumps ahead deletes the files of the days it skips")
             .build();
 
     public static final KeySpec LOGFILE_ROLLMODE = yajsw("wrapper.logfile.rollmode", ENUM, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("When the log file rolls, besides rolling by size")
             .values(names(RollMode.class))
+            .alias("SIZE_OR_JVM", "JVM")
+            .alias("SIZE_OR_WRAPPER", "WRAPPER")
             .toVerify(VALUES)
+            .notes("Not set or SIZE: by size only. JVM: also at wrapper start and before each restarted JVM; WRAPPER:"
+                    + " also at wrapper start; DATE: a file per day of output (wrapper.logfile needs YYYYMMDD),"
+                    + " rolled by size within the day; NONE: never. wrapper.logfile.maxsize applies in every mode but"
+                    + " NONE, so the Tanuki values SIZE_OR_JVM and SIZE_OR_WRAPPER are accepted as JVM and WRAPPER"
+                    + " (D22)")
             .build();
 
     public static final KeySpec LOGFILE_DESC = yajsw("wrapper.logfile.desc", BOOLEAN, LOGGING)

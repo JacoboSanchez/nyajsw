@@ -127,7 +127,8 @@ the key registry so divergences are visible.
 * Without `wrapper.logfile` the log is `wrapper.log` beside the configuration file (D13), not beside
   the wrapper executable (YAJSW 11.01+: its `log` folder); a blank value turns the file off in both.
   The time fields of the log formats are nyajsw's (`yyyy/MM/dd HH:mm:ss`), since YAJSW documents
-  none (P4.2).
+  none (P4.2). `wrapper.logfile.maxsize` also rolls files of the `JVM` roll mode, which YAJSW
+  describes as without a size limit (P4.3b).
 * Extensions (probes, stop strategies) are new `wrapper.*`
   keys tagged as nyajsw extensions in the matrix.
 
@@ -532,10 +533,10 @@ output, configuration and a clock; probes are stateless or own their state expli
   `LPTM`, blank disables file logging), `wrapper.console.format` (default `PM`, blank disables
   console output). YAJSW describes rollmodes `JVM` (roll at wrapper start and before each restarted
   JVM) and `DATE`, and names `WRAPPER` without describing it; the registry declares these three
-  (`RollMode`). How they combine with `maxsize` is open (the reference says `JVM` files have no
-  size limit), and Tanuki values such as `SIZE` now warn as invalid; P4.3b settles both. Default
-  file: `wrapper.log` beside the configuration file (YAJSW: beside the wrapper, since 11.01 in its
-  `log` folder; §3.4).
+  (`RollMode`; nyajsw reads `WRAPPER` as "roll at wrapper start" only). Rolling by `maxsize`
+  applies in every mode, although the reference says `JVM` files have no size limit (§3.4), and
+  Tanuki's `SIZE`, `NONE`, `SIZE_OR_JVM` and `SIZE_OR_WRAPPER` are accepted (D22, P4.3b). Default file: `wrapper.log` beside the
+  configuration file (YAJSW: beside the wrapper, since 11.01 in its `log` folder; §3.4).
 * Format tokens follow the Tanuki/YAJSW letter convention (`L` level, `P` prefix, `D` thread,
   `T` time, `Z` millisecond time, `M` message) with `wrapper` / `jvm N` prefixes so operators
   can tell wrapper lines from captured application output. Fields are joined by ` | `; times are
@@ -1029,10 +1030,26 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       that cannot be opened is a masked error on the console, and the log goes on without it.
       `WrapperLog` stamps records from its `Clock`, so the line times and the file's date agree and
       tests are deterministic.
-- [ ] P4.3b Roll modes: `wrapper.logfile.rollmode` `JVM` (roll at wrapper start and before each
+- [x] P4.3b Roll modes: `wrapper.logfile.rollmode` `JVM` (roll at wrapper start and before each
       restarted JVM), `WRAPPER` (at wrapper start), `DATE` (a new file when the date changes, none
       on days without output; `YYYYMMDD` required) with `wrapper.logfile.maxdays`; roll modes and
-      `maxsize` combined.
+      `maxsize` combined. **Done:** `JVM` and `WRAPPER` roll a file that is not empty when the sink
+      opens it; `JVM` also rolls before every restarted application (`WrapperLog.applicationStarting`,
+      called by console mode before each launch; P6 must call it too). `DATE` writes a record to the
+      file of the record's day (in the log clock's zone), opened with the day's first record, and
+      then deletes the files, rolled copies included, dated more than `wrapper.logfile.maxdays` days
+      before that day (`config.LogFileNames.dateOf` recognises them; `-1` keeps all, `0` only the
+      day itself); `DATE` without `YYYYMMDD` in `wrapper.logfile` is an error. Rolling by size goes
+      on in every mode, `JVM` included, where YAJSW documents no size limit (§3.4): a configuration
+      that sets a size wants it honoured, and a restarting application could otherwise fill the
+      disk. Tanuki's values, common in files derived from its templates, are accepted (D22):
+      `SIZE_OR_JVM` and `SIZE_OR_WRAPPER` as aliases of `JVM` and `WRAPPER` (which roll by size as
+      well), `SIZE` (by size only, as without a mode) and `NONE` (never, `maxsize` ignored); any
+      other value is an error. Under `DATE` the day only moves forward: a record stamped just before
+      midnight that arrives after one stamped just after it, or a clock set back, stays in the
+      current file; a clock that jumps ahead deletes the files of the days it skips (registry
+      note). The clean-up skips directories and also runs when the day's file cannot be opened.
+      `maxdays` without `DATE` is a warning.
 - [ ] P4.3a Bootstrap log for failures before the configuration is read (and when the configured log
       file cannot be opened): `%TEMP%\nyajsw-bootstrap.log` through the file sink of P4.3, for the
       service mode of P6, where there is no console.
@@ -1216,6 +1233,15 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `.` and `..` resolved), so a password such as `pa/ss` would not be recognised; register the
   normalised form with `SecretMasker` if secrets in log file names ever matter. A roll that is
   interrupted (the interrupt flag of the logging thread set) gets no retries.
+- P4.3b: the start roll of the `JVM`/`WRAPPER` modes and the first `maxdays` clean-up happen when
+  the file sink opens, so any process that opens the configured log rolls the live file. Today
+  only console mode does; the P5 commands (`-q`, `-i`, …) must not open the file sink (or must
+  open it without the start roll, e.g. through an explicit `wrapperStarting()`), or a query beside
+  a running service would try to move its log. Failures there are reported before a caller could
+  set an error manager (see the P4.3 entry). The `DATE` clean-up lists the directory and retries
+  deletes while holding the sink's lock, which can block the application's output for a moment
+  at the first record of a day; move it off the lock if that shows. Under `DATE` the start day's
+  file is created even when the first record falls on the next day.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -1287,6 +1313,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D18 | The registry declares the YAJSW keys its public reference documents as supported by YAJSW, each with a nyajsw status; Tanuki keys that the reference lists as not (yet) supported by YAJSW (e.g. `wrapper.disable_restarts`, `wrapper.jvm.port`, `wrapper.ntservice.pausable`) stay undeclared and get the generic unknown-key warning (keys seeded earlier, such as `wrapper.syslog.*`, keep their entries). Defaults follow the reference where it states one (§3.3), including `wrapper.on_exit.default=SHUTDOWN` | A YAJSW file can only rely on keys YAJSW honours; declaring Tanuki-only keys would suggest a compatibility YAJSW never had. Following YAJSW's defaults keeps migrated services behaving as before | Accepted (P1.10) |
 | D19 | Arguments of the application are passed as an array. One pair of double quotes around a whole argument, or around everything after its first `=` (`-Dx="a b"`, `-XX:OnError="cmd /c x"`), is removed, as a shell would; any other double quote is a launch error naming the key family, with the argument masked | On POSIX every argument reaches the application unchanged, quotes included; on Windows `ProcessBuilder` wraps an argument with blanks in quotes, so `-Dx="a b"` would become `"-Dx="a b""` and break the command line, and an embedded quote is passed on unescaped (`jdk.lang.Process.allowAmbiguousCommands` defaults to true on JDK 21), which breaks it as well; checked by running `java.exe` through `ProcessBuilder` on JDK 21.0.13, which also handles trailing backslashes and empty arguments itself. Dropping a stray quote would change the value | Accepted (P2.2) |
 | D20 | `wrapper.control` is honoured in both directions. Application ends → wrapper ends under `TIGHT` and `WRAPPER`, so there the exit action `STOP` ends the wrapper like `SHUTDOWN`; only under `LOOSE` and `APPLICATION` does `STOP` keep the wrapper running without an application until it is stopped. Wrapper stopped → application stopped under `TIGHT` and `APPLICATION`; under `LOOSE` and `WRAPPER` the application is left running (logged with its pid). Launch errors count as failed invocations and are retried, also those a retry cannot fix (a missing Java executable is logged `wrapper.max_failed_invocations` times, `wrapper.restart.delay` apart, before `FAILED`). `wrapper.max_failed_invocations=N` means N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures; with 1 there is none | YAJSW's reference (read 2026-11-06/07) defines the four couplings that way and `STOP` as "stop the application but not the wrapper"; its change log ties `STOP` to `wrapper.control`, and this is the reading that coupling implies. The reference counts launches that fail towards `wrapper.max_failed_invocations` and gives its default as "5 invocations", though its "maximum number of times … to restart" also allows N restarts | Proposed (P3.2; the coupling itself is documented, its effect on `STOP` is our reading; confirm with YAJSW 13.18 or real use, §10 Q1) |
+| D22 | `wrapper.logfile.rollmode` takes YAJSW's `JVM`, `WRAPPER`, `DATE` and Tanuki's `SIZE`, `NONE`, `SIZE_OR_JVM`, `SIZE_OR_WRAPPER` (the last two as aliases of `JVM` and `WRAPPER`); `wrapper.logfile.maxsize` rolls in every mode but `NONE`, `JVM` included; `WRAPPER` rolls at wrapper start only | YAJSW documents `JVM` (no size limit) and `DATE`, and names `WRAPPER` without describing it; files derived from Tanuki templates carry its values, and an error would break the "swap the wrapper, not the configuration" goal. Keeping size rolling under `JVM` honours a configured size and keeps a restarting application from filling the disk | Proposed (P4.3b; confirm against YAJSW 13.18, §10 Q1) |
 | D21 | In console mode the shutdown hook (Ctrl+C, closing the session) stops through the supervisor, waits at most the stop budget + 10 s + 10 s, then ends the JVM with `Runtime.halt(<exit code>)`; `halt` is allowed only there, beside `System.exit` in `Main` | Once a signal has begun the JVM's shutdown its exit code is the signal's (130, `0xC000013A`) and `System.exit` blocks; `halt` is the only way to return the application's code, as §3.2 promises. It skips hooks that have not run yet, which nyajsw does not rely on; the console is flushed first (a file log, P4, must be flushed too) | Accepted (P3.6) |
 
 ## 10. Open questions for the project owner

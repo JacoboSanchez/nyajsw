@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 37 |
-| planned | 35 |
+| supported | 39 |
+| planned | 33 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -149,8 +149,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.logfile.loglevel` | Lowest level written to the log file | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | `INFO` | **supported** |  |
 | `wrapper.logfile.maxsize` | Size at which the log file rolls; 0 turns rolling by size off | size | `0` | **supported** |  |
 | `wrapper.logfile.maxfiles` | Number of rolled log files kept, per day under the DATE roll mode | integer | — | **supported** | When not set, or 0, every rolled file is kept |
-| `wrapper.logfile.maxdays` | Days of log files kept under the DATE roll mode; -1 keeps all | integer | `-1` | **planned** (P4) |  |
-| `wrapper.logfile.rollmode` | When the log file rolls, besides rolling by size | one of `JVM`, `WRAPPER`, `DATE` | — | **planned** (P4) | *Verify:* values |
+| `wrapper.logfile.maxdays` | Days of log files kept under the DATE roll mode; -1 keeps all | integer | `-1` | **supported** | Files dated more than this many days before the current one are deleted, rolled copies included, when a day's file is opened; 0 keeps the current day only. A system clock that jumps ahead deletes the files of the days it skips |
+| `wrapper.logfile.rollmode` | When the log file rolls, besides rolling by size | one of `JVM`, `WRAPPER`, `DATE`, `SIZE`, `NONE`; alias `SIZE_OR_JVM` = `JVM`, `SIZE_OR_WRAPPER` = `WRAPPER` | — | **supported** | Not set or SIZE: by size only. JVM: also at wrapper start and before each restarted JVM; WRAPPER: also at wrapper start; DATE: a file per day of output (wrapper.logfile needs YYYYMMDD), rolled by size within the day; NONE: never. wrapper.logfile.maxsize applies in every mode but NONE, so the Tanuki values SIZE_OR_JVM and SIZE_OR_WRAPPER are accepted as JVM and WRAPPER (D22)<br>*Verify:* values |
 | `wrapper.logfile.desc` | Roll by renaming only the newest file, which then gets the highest number | boolean | — | **unsupported** (P9) |  |
 | `wrapper.log.encoding` | Character encoding of the wrapper log file | text | the default charset of the wrapper JVM, as in YAJSW (UTF-8 on Java 18 and later) | **supported** | YAJSW also reads scripts and configuration files with it; nyajsw reads configuration files as wrapper.conf.encoding says |
 | `wrapper.console.format` | Format tokens of console lines | text | `PM` | **supported** | One field per letter, in either case, separated by ' \| ': L level, P prefix (wrapper or jvm N), D thread, T time (yyyy/MM/dd HH:mm:ss), Z time with milliseconds, M message; spaces are ignored, other characters skipped with a warning. A trailing \\n or \\r\\n chooses the line ending. Blank turns the console output off |
