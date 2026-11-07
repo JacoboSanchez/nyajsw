@@ -1,5 +1,11 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
+import io.github.jacobosanchez.nyajsw.NyajswException;
+import io.github.jacobosanchez.nyajsw.config.ConfigException;
+import io.github.jacobosanchez.nyajsw.platform.UnsupportedPlatformException;
+
+import java.util.Objects;
+
 /**
  * Exit codes of the wrapper's own commands (plan §3.2). Console mode returns the application's exit
  * code instead, which may coincide with these; the log says which one it was.
@@ -30,5 +36,19 @@ public enum ExitCode {
     /** The process exit code. */
     public int code() {
         return code;
+    }
+
+    /**
+     * The exit code for a command that failed with {@code failure} (D23). An operating system error
+     * on a platform that has the operation is not an unsupported platform: the service manager's
+     * refusals ({@code ServiceException}, P5.2) end as {@link #SERVICE_OPERATION_FAILED}.
+     */
+    public static ExitCode of(NyajswException failure) {
+        Objects.requireNonNull(failure, "failure");
+        return switch (failure) {
+            case ConfigException configuration -> CONFIGURATION_ERROR;
+            case UnsupportedPlatformException unsupported -> UNSUPPORTED_PLATFORM;
+            default -> UNEXPECTED_ERROR;
+        };
     }
 }
