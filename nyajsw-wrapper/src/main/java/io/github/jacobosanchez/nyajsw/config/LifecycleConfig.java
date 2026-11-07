@@ -139,9 +139,10 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
      * spelling of a code in file order wins: for {@code 7} and {@code 07} the collector has warned;
      * spellings that only agree after normalising ({@code -1} and {@code 4294967295}) warn here.
      * Code 0 comes only from the exact {@code wrapper.on_exit.0}, so another spelling of 0 is ignored
-     * with a warning; without it, code 0 takes the default action like any other code. An invalid
-     * action (reported by the validator) leaves the code to the default action, and so does a later
-     * spelling set to nothing. "Later" is precedence order ({@link ConfigValues#familyInFileOrder}):
+     * with a warning; without it, code 0 takes the default action like any other code. A later
+     * spelling set to nothing leaves the code to the default action. An invalid action is a
+     * configuration error (the validator reports it) since the keys take effect (P3.6); it is
+     * skipped here so that all errors are collected. "Later" is precedence order ({@link ConfigValues#familyInFileOrder}):
      * a system property counts as the latest.
      */
     private static Map<Integer, ExitAction> exitActions(ConfigValues values) {

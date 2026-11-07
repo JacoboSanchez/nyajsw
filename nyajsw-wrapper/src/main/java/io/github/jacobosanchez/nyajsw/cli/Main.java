@@ -7,7 +7,6 @@ import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
-import io.github.jacobosanchez.nyajsw.launch.LaunchException;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 
 import java.io.PrintStream;
@@ -15,12 +14,14 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.function.IntConsumer;
 
 /**
  * The command-line entry point (plan §3.2, §4.9) and the only place in the wrapper that calls
- * {@code System.exit}. This phase implements console mode ({@code -c}); the service commands follow
- * in P5 and P6 and are recognised already, so that a YAJSW runbook gets a clear answer instead of a
- * usage error.
+ * {@code System.exit} (and, in the console shutdown hook, {@code Runtime.halt}, which sets the exit
+ * code once the JVM is already shutting down). This phase implements console mode ({@code -c}); the
+ * service commands follow in P5 and P6 and are recognised already, so that a YAJSW runbook gets a
+ * clear answer instead of a usage error.
  */
 public final class Main {
 
@@ -79,32 +80,52 @@ public final class Main {
             }
         }
         try (WrapperLog log = WrapperLog.console(out, consoleLevel(config.log()))) {
-            ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
-                    ClasspathExpander.forThisHost());
-            Thread hook = Thread.ofPlatform().name("nyajsw-console-stop").unstarted(mode::stop);
+            ConsoleMode mode;
+            try {
+                mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());
+            } catch (RuntimeException e) {
+                return unexpected(e, config, log);
+            }
+            Thread hook = Thread.ofPlatform().name("nyajsw-console-stop")
+                    .unstarted(consoleStopHook(mode, out, Runtime.getRuntime()::halt));
             Runtime.getRuntime().addShutdownHook(hook);
             try {
                 return mode.run();
-            } catch (LaunchException e) {
-                log.fatal(e.getMessage());
-                return ExitCode.UNEXPECTED_ERROR.code();
             } catch (RuntimeException e) {
-                log.fatal("unexpected error: " + config.secrets().maskText(String.valueOf(e)));
-                log.debug(() -> config.secrets().maskText(stackTrace(e)));
                 mode.stop();
-                return ExitCode.UNEXPECTED_ERROR.code();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                mode.stop();
-                return ExitCode.UNEXPECTED_ERROR.code();
+                return unexpected(e, config, log);
             } finally {
                 try {
+                    // A Ctrl+C between here and System.exit ends the JVM with the signal's code: a window
+                    // of a few instructions, after the application has ended anyway.
                     Runtime.getRuntime().removeShutdownHook(hook);
                 } catch (IllegalStateException e) {
                     // Shutting down already: the hook is running or has run.
                 }
             }
         }
+    }
+
+    /**
+     * What runs on Ctrl+C or the end of the session (D21): stop through the supervisor, wait for it
+     * (bounded, {@link ConsoleMode#stop()}), flush the console, then end the JVM with the
+     * application's exit code. Once a signal has begun the shutdown the exit code is the signal's,
+     * and {@code System.exit} would block; {@code halt} is the only way to set it, at the price of
+     * the hooks that have not run yet, which nyajsw does not rely on. A Ctrl+C before {@code run()}
+     * has begun starts nothing and exits with 0.
+     */
+    static Runnable consoleStopHook(ConsoleMode mode, PrintStream out, IntConsumer halt) {
+        return () -> {
+            int code = mode.stop();
+            out.flush();
+            halt.accept(code);
+        };
+    }
+
+    private static int unexpected(RuntimeException e, WrapperConfig config, WrapperLog log) {
+        log.fatal("unexpected error: " + config.secrets().maskText(String.valueOf(e)));
+        log.debug(() -> config.secrets().maskText(stackTrace(e)));
+        return ExitCode.UNEXPECTED_ERROR.code();
     }
 
     /** {@code wrapper.console.loglevel}, raised to {@code DEBUG} by {@code wrapper.debug}. */

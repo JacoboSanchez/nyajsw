@@ -27,8 +27,9 @@ import java.util.Optional;
 /**
  * Readiness, liveness and the agent as configured (plan §4.7).
  *
- * @param readinessTypes        {@code wrapper.readiness.type}; all must pass
- * @param readinessInterval     {@code wrapper.readiness.interval}
+ * @param readinessTypes        {@code wrapper.readiness.type}, the probes that apply, all of which must
+ *                              pass; its default until the key takes effect (P7)
+ * @param readinessInterval     {@code wrapper.readiness.interval}, likewise
  * @param tcpHost               {@code wrapper.readiness.tcp.host}
  * @param tcpPort               {@code wrapper.readiness.tcp.port}, if set
  * @param httpUrl               {@code wrapper.readiness.http.url}, if set
@@ -83,9 +84,14 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
         boolean agentEnabled = values.required(values.bool(AGENT_ENABLED), AGENT_ENABLED);
         List<String> livenessTypes = values.list(LIVENESS_TYPE);
         boolean agentInEffect = agentInEffect(agentEnabled);
+        // The supervisor uses these from P3 on, but the keys take effect only in P7: until then their
+        // defaults apply, whatever the file says (it is warned about).
         return new ProbeConfig(
-                values.list(READINESS_TYPE),
-                values.required(values.duration(READINESS_INTERVAL), READINESS_INTERVAL),
+                READINESS_TYPE.status().takesEffect() ? values.list(READINESS_TYPE)
+                        : values.constantDefault(READINESS_TYPE, ValueParser::parseList),
+                READINESS_INTERVAL.status().takesEffect()
+                        ? values.required(values.duration(READINESS_INTERVAL), READINESS_INTERVAL)
+                        : values.constantDefault(READINESS_INTERVAL, ValueParser::parseDuration),
                 values.required(values.string(READINESS_TCP_HOST), READINESS_TCP_HOST),
                 values.integer(READINESS_TCP_PORT),
                 values.text(READINESS_HTTP_URL),
