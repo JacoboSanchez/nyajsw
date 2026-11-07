@@ -73,10 +73,11 @@ public final class Main {
         }
         if (command.equals(SERVICE)) {
             return serviceMode(new ServiceMode(arguments.get(1), JavaCommandBuilder.forThisJvm(),
-                    ClasspathExpander.forThisHost(), bootstrapFiles(arguments.get(1))), out, platform);
+                    ClasspathExpander.forThisHost(), bootstrapFiles(arguments.get(1)),
+                    () -> platform.get().processTools()), out, platform);
         }
         return action.isPresent() ? service(action.get(), arguments.get(1), out, platform)
-                : console(arguments.get(1), out);
+                : console(arguments.get(1), out, platform);
     }
 
     /**
@@ -176,7 +177,7 @@ public final class Main {
                 .ifPresent(tmp -> properties.setProperty("jna.tmpdir", tmp.toAbsolutePath().normalize().toString()));
     }
 
-    private static int console(String file, PrintStream out) {
+    private static int console(String file, PrintStream out, Supplier<Platform> platform) {
         WrapperConfig config;
         try (WrapperLog early = WrapperLog.console(out, LogLevel.INFO)) {
             Optional<WrapperConfig> loaded = load(file, early::error);
@@ -188,7 +189,8 @@ public final class Main {
         try (WrapperLog log = WrapperLog.open(config.log(), out, config.secrets())) {
             ConsoleMode mode;
             try {
-                mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());
+                mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost(),
+                        platform.get().processTools());
             } catch (RuntimeException e) {
                 return unexpected(e, config, log);
             }

@@ -36,6 +36,11 @@ public class Win32ErrorsTest {
     }
 
     @Test
+    public void theHintCanBeLeftOutForCallsThatAreNotAboutServices() {
+        assertEquals(Win32Errors.describe(5, "Access is denied.", false), "Access is denied (Win32 error 5)");
+    }
+
+    @Test
     public void anUnknownErrorKeepsItsSystemTextOrIsJustAnError() {
         assertEquals(Win32Errors.describe(87, "The parameter is incorrect."), "The parameter is incorrect (Win32 error 87)");
         assertEquals(Win32Errors.describe(12345, " "), "error (Win32 error 12345)");

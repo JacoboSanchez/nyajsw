@@ -19,4 +19,7 @@ public interface Platform {
 
     /** Runs this process as a service ({@code --service}); on a host without services, it fails. */
     ServiceHost serviceHost();
+
+    /** Help with the application's processes; {@link ProcessTools#NONE} where there is none. */
+    ProcessTools processTools();
 }

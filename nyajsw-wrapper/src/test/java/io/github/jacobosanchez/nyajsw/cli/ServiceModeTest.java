@@ -14,6 +14,7 @@ import io.github.jacobosanchez.nyajsw.lifecycle.State;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import io.github.jacobosanchez.nyajsw.platform.FakeServiceHost;
+import io.github.jacobosanchez.nyajsw.platform.ProcessTools;
 import io.github.jacobosanchez.nyajsw.platform.ServiceControl;
 import io.github.jacobosanchez.nyajsw.platform.ServiceExit;
 import io.github.jacobosanchez.nyajsw.platform.ServiceState;
@@ -81,7 +82,7 @@ public class ServiceModeTest {
 
     private ServiceMode mode(Path conf) {
         return new ServiceMode(conf.toString(), JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost(),
-                name -> dir.resolve("bootstrap-" + name + ".log"));
+                name -> dir.resolve("bootstrap-" + name + ".log"), () -> ProcessTools.NONE);
     }
 
     private String log() throws IOException {

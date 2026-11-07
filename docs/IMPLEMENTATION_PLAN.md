@@ -188,9 +188,9 @@ older JVMs than the wrapper requires.
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
 | `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileSink`, `LogFileNames` |
-| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status) with `ServiceBody`, `ServiceContext`, `ServiceControl` and `ServiceExit`, `ServiceStatus` + `ServiceState`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
-| `platform.windows` | Windows implementations. | `ScmApi`, `ServiceHostApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaServiceHostApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
-| `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
+| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status) with `ServiceBody`, `ServiceContext`, `ServiceControl` and `ServiceExit`, `ServiceStatus` + `ServiceState`, `ProcessTools` and `ProcessJob` (P6.4), `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
+| `platform.windows` | Windows implementations. | `ScmApi`, `ServiceHostApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaServiceHostApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `KernelHandle`, `Win32Errors`, `Win32Failures` |
+| `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Lsa`, `Kernel32Jobs`, structures |
 | `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `UnsupportedPlatformException`, which `cli` maps to exit code 4. | `UnsupportedPlatform`, `UnsupportedServiceController`, `UnsupportedServiceHost` |
 | `agent` (module `nyajsw-agent`) | Agent `premain` and the shared protocol. | `Agent`, `AgentProtocol` |
 
@@ -485,10 +485,12 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
   application ends when the wrapper ends, but the wrapper survives the application; `LOOSE` —
   independent (meanings as YAJSW documents them, P1.10). The supervisor honours both directions
   (P3.2, D20): under `LOOSE`/`WRAPPER` a stop request ends supervision and leaves the application
-  running, logged with its pid. On Windows a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` enforces `TIGHT`/`APPLICATION` even if the
-  wrapper dies abruptly: the job is created before launch, the child is assigned right after start
-  (`OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE)`), the job handle stays open for the
-  wrapper's lifetime, and the tiny pre-assignment window is accepted and documented (P6.4).
+  running, logged with its pid. On Windows a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+  enforces `TIGHT`/`APPLICATION` even if the wrapper dies abruptly: the job is created when
+  supervision begins, each invocation is assigned right after start
+  (`OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE)`), the job is closed when supervision
+  ends, which ends whatever the application started, also after a clean exit of its own, and the
+  short pre-assignment window is accepted and documented (P6.4).
 * **Pid files**: `wrapper.pidfile` (wrapper) and `wrapper.java.pidfile` (application), written on
   start, removed on stop, stale files overwritten.
 * **Console mode**: Ctrl+C reaches both the wrapper and the child because they share the console.
@@ -1296,9 +1298,31 @@ Goal: the wrapper itself runs under the SCM.
       protecting the installation, the two logs, the application JVM given with its directory, and
       `jna.tmpdir` with the `jna.boot.library.path` / `jna.nounpack` fallback for
       `jnidispatch.dll`.
-- [ ] P6.4 Job object (hand-written binding) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for
+- [x] P6.4 Job object (hand-written binding) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for
       `TIGHT`/`APPLICATION` (the modes in which the application ends with the wrapper, §4.6);
-      `TerminateJobObject` used by the `terminate` strategy when present.
+      `TerminateJobObject` used by the `terminate` strategy when present. **Done:**
+      `Platform.processTools()` gives `ProcessTools.createKillOnCloseJob()` → `ProcessJob` (`add`,
+      `terminate`, `close`); `WindowsProcessTools` on the `ProcessApi` facade (`JnaProcessApi`: the
+      hand-written `Kernel32Jobs` binding with `JOBOBJECT_BASIC_LIMIT_INFORMATION` and
+      `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`, layout-tested, and `jna-platform`'s `OpenProcess` and
+      `CloseHandle`), `ProcessTools.NONE` elsewhere. `Supervision` makes one job per supervision
+      under `TIGHT`/`APPLICATION`, in console mode as in service mode, and closes it when
+      supervision ends; under `LOOSE`/`WRAPPER` there is none, since the application may outlive
+      the wrapper. `ApplicationProcess` adds each invocation right after it starts, and
+      `terminateTree` ends the job first (`TerminateJobObject`, exit code 1 as
+      `destroyForcibly`), then still walks the process tree for anything outside it. A job that
+      cannot be created, or a process it refuses, is an error in the log, and the application runs
+      without it. What a process started before it was added stays outside, as does an earlier
+      invocation's orphan only until the job ends: one job serves all invocations, so `terminate`
+      also ends orphans an earlier invocation left. Tested with a mocked facade, a recording job and
+      counting tools; on Windows `WindowsProcessToolsIntegrationTest` (`windows-integration`, no
+      elevation needed) shows that closing or ending a real job ends a `TestApplication` and the
+      grandchild it starts, and the console-mode tests run under a real job. `Win32Failures` now
+      words every facade's failures (the deferred P5.5 finding), without the service commands'
+      hints for process calls. After review: the job is created when supervision runs, not when it
+      is built; a process that ended before it could join the job (Windows refuses it with 5) is
+      a debug line, not an error; the tree is read before the job is ended; the user guide says
+      that under `TIGHT`/`APPLICATION` everything the application started ends with supervision.
 - [ ] P6.5 `windows-integration` end-to-end: install → start → `RUNNING` → stop → `STOPPED` →
       remove, with a test application and the wrapper log attached on failure.
 Done when: a real service runs a test application from an unmodified YAJSW-style `wrapper.conf`.
@@ -1432,8 +1456,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P3.2: under `LOOSE`/`WRAPPER` the application "keeps running" after the wrapper ends, but its
   standard output and error are pipes the wrapper owns, so it loses them (and may fail writing to
   them), and in console mode it shares the console and its Ctrl+C. P6.2 left it as is (a
-  service has no console); P6.4 must decide, with its kill-on-close job: redirect its output,
-  detach it from the console, and keep it out of the job.
+  service has no console); P6.4 keeps it out of the job (none under `LOOSE`/`WRAPPER`). Still
+  open: redirect its output and detach it from the console, so that it really survives the
+  wrapper.
 - P4.3a (review): done in P6.2/P6.3: service mode opens the configured log with the bootstrap log
   for its problems and uses the bootstrap log before the configuration is read, opened only when
   there is something to write, beside the configuration file instead of the temporary directory
@@ -1490,7 +1515,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
   the next policy refresh, and 1069 comes back later, as with the Services console: say so in the
   user guide. Built-in accounts are recognised by spelling; comparing the looked-up SID with the
   well-known ones would also catch localised names (`NT-AUTORITÄT\...`). `JnaLsaApi` borrows the
-  system-text helper of `JnaScmApi`; a small shared `Win32Failures` would read better.
+  system-text helper of `JnaScmApi`, which uses the shared `Win32Failures` since P6.4.
 - PR #7 (review): in `WindowsServiceController.install` the logon grant runs inside the
   `catch (RuntimeException)` that deletes a half-installed service; a `LinkageError` from the
   first use of the LSA binding skips that clean-up, and `Main.service()` shows its stack trace.
@@ -1501,6 +1526,14 @@ entry names the commit/plan item it came from; remove entries when addressed.
   short. Not tested: a stop control that arrives between the handler's registration and the first
   `START_PENDING`, which Windows cannot send (nothing is accepted yet); the final `STOPPED` is not
   retried before `run` gives up.
+- P6.4 (review): without `JOB_OBJECT_LIMIT_BREAKAWAY_OK`, a helper the application starts with
+  `CREATE_BREAKAWAY_FROM_JOB` cannot leave the job; decide when a user needs it (until then
+  `LOOSE`/`WRAPPER` or a helper started outside the tree). With a script as `wrapper.java.command`,
+  `cmd.exe` may start the JVM before it is assigned, which leaves the JVM outside the job.
+  `Supervisor.abandonUnready` logs "giving up on it", while the job now ends it with supervision.
+  Not tested: that killing the process that holds the job handle ends the application (a helper
+  JVM that creates the job and is then killed would show it), that the console-mode run under a
+  real job logs no job error, and the order of the job's end against the walk of the tree.
 - P6.3 (review): a bare `wrapper.java.command` (`java`, YAJSW's default) is found by Windows in
   the wrapper's own JDK first, before `PATH` (`CreateProcess` searches the parent's directory
   first), so the application runs on the wrapper's Java 21; the `ApplicationProcess` Javadoc says

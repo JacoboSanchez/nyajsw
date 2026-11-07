@@ -5,6 +5,7 @@ import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.platform.ProcessTools;
 
 import java.time.Duration;
 import java.util.List;
@@ -35,12 +36,14 @@ public final class ConsoleMode {
     private final CompletableFuture<Integer> finished = new CompletableFuture<>();
 
     /**
+     * @param processes the platform's help with the application's processes ({@link ProcessTools#NONE} for none)
      * @throws IllegalArgumentException when a readiness probe type is not known
      */
-    public ConsoleMode(WrapperConfig config, WrapperLog log, JavaCommandBuilder builder, ClasspathExpander expander) {
+    public ConsoleMode(WrapperConfig config, WrapperLog log, JavaCommandBuilder builder, ClasspathExpander expander,
+            ProcessTools processes) {
         this.config = Objects.requireNonNull(config, "config");
         this.log = Objects.requireNonNull(log, "log");
-        this.supervision = new Supervision(config, log, builder, expander, List.of(), (from, to) -> { });
+        this.supervision = new Supervision(config, log, builder, expander, List.of(), (from, to) -> { }, processes);
     }
 
     /**

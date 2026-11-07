@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.platform.unsupported;
 
 import io.github.jacobosanchez.nyajsw.platform.Platform;
+import io.github.jacobosanchez.nyajsw.platform.ProcessTools;
 import io.github.jacobosanchez.nyajsw.platform.ServiceController;
 import io.github.jacobosanchez.nyajsw.platform.ServiceHost;
 
@@ -37,5 +38,10 @@ public final class UnsupportedPlatform implements Platform {
     @Override
     public ServiceHost serviceHost() {
         return host;
+    }
+
+    @Override
+    public ProcessTools processTools() {
+        return ProcessTools.NONE;
     }
 }

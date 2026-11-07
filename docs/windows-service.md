@@ -65,6 +65,23 @@ Everything else is read from `wrapper.conf` (and its includes) at every start.
 - With `wrapper.ntservice.reduce_signals=true` (the default), the application JVM is started with
   `-Xrs`, so that a user logging off does not end it.
 
+### Processes the application starts
+
+With `wrapper.control=TIGHT` (the default) or `APPLICATION`, the application runs in a Windows job
+object. Everything it starts runs in the job too. The job ends with the wrapper's supervision, so
+nothing the application started is left running:
+
+- when the service stops;
+- when the application ends by itself and the service stops with it, so a helper it started to
+  restart the service (`net stop` then `net start`) is ended as well;
+- when the wrapper itself is killed.
+
+To let processes outlive the wrapper, use `wrapper.control=LOOSE` or `WRAPPER` (the application is
+then not stopped with the service either), or start the helper outside the application, for
+example through the Task Scheduler. A process the application starts within the first moment,
+before the wrapper has put it in the job, stays outside it. When `wrapper.java.command` is a
+script, the JVM the script starts can be one of those.
+
 ## Accounts
 
 The service runs as `LocalSystem` unless `wrapper.ntservice.account` names another account:
