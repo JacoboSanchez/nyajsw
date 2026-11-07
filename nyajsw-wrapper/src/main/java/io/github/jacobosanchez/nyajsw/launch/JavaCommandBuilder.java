@@ -32,6 +32,7 @@ import java.util.Optional;
  *       {@code -Djava.library.path} from {@code wrapper.java.library.path.<n>}, before the JVM options:
  *       the JVM takes the last value, so an option written there wins, as YAJSW documents for
  *       {@code -Xmx};</li>
+ *   <li>the options the wrapper adds itself, such as {@code -Xrs} in service mode;</li>
  *   <li>{@code wrapper.java.additional.<n>}, empty ones (after unquoting) skipped with a warning;</li>
  *   <li>the output encoding, after the JVM options so that it is the value in effect: the charset of
  *       standard output and error, UTF-8 ({@link #OUTPUT_ENCODING}) unless a JVM option sets one
@@ -84,8 +85,18 @@ public final class JavaCommandBuilder {
      *                         argument holds a double quote that cannot be passed on safely
      */
     public JavaCommand build(JavaConfig java, List<String> classpath, SecretMasker secrets) {
+        return build(java, classpath, List.of(), secrets);
+    }
+
+    /**
+     * As {@link #build(JavaConfig, List, SecretMasker)}, with {@code wrapperOptions}, the JVM options
+     * the wrapper itself adds (such as {@code -Xrs} in service mode), after {@code -Djava.library.path}
+     * and before {@code wrapper.java.additional.<n>}.
+     */
+    public JavaCommand build(JavaConfig java, List<String> classpath, List<String> wrapperOptions, SecretMasker secrets) {
         Objects.requireNonNull(java, "java");
         Objects.requireNonNull(classpath, "classpath");
+        Objects.requireNonNull(wrapperOptions, "wrapperOptions");
         Objects.requireNonNull(secrets, "secrets");
         List<String> arguments = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
@@ -96,6 +107,7 @@ public final class JavaCommandBuilder {
             arguments.add("-Djava.library.path=" + String.join(separator(),
                     java.libraryPath().stream().map(Path::toString).toList()));
         }
+        arguments.addAll(wrapperOptions);
         List<String> options = new ArrayList<>();
         for (String option : java.jvmOptions()) {
             String unquoted = unquote(option, JAVA_ADDITIONAL.name(), secrets);

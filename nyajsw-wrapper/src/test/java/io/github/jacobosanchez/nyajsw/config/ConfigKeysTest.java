@@ -238,7 +238,7 @@ public class ConfigKeysTest {
                 {"wrapper.ntservice.java.customProcName", UNSUPPORTED, YAJSW},
                 {"wrapper.ntservice.autoreport.startup", UNSUPPORTED, YAJSW},
                 {"wrapper.ntservice.autoreport.waitready", UNSUPPORTED, YAJSW},
-                {"wrapper.ntservice.reduce_signals", PLANNED, YAJSW},
+                {"wrapper.ntservice.reduce_signals", SUPPORTED, YAJSW},
                 {"wrapper.ntservice.logon_active_session", UNSUPPORTED, YAJSW},
                 {"wrapper.ntservice.desktop", UNSUPPORTED, YAJSW},
                 {"wrapper.save_interpolated", IGNORED, YAJSW},

@@ -150,11 +150,11 @@ public class MainTest {
         assertEquals(Main.run(new String[] {}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-c"}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-x", "a"}, out), ExitCode.UNEXPECTED_ERROR.code());
-        assertEquals(Main.run(new String[] {"--service", "wrapper.conf"}, out), ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(Main.run(new String[] {"--service"}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-q"}, out), ExitCode.UNEXPECTED_ERROR.code());
 
         assertTrue(output().contains("usage: nyajsw -c <wrapper.conf>"), output());
-        assertTrue(output().contains("--service is not implemented yet"), output());
+        assertTrue(output().contains("nyajsw --service <wrapper.conf>  run as the service"), output());
         assertTrue(output().contains("nyajsw -i <wrapper.conf>    install the Windows service"), output());
     }
 
@@ -257,13 +257,13 @@ public class MainTest {
 
     @Test
     public void aFailedSupervisionNeverExitsWithZero() {
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(7))), 7);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(0))), 0);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.empty())), 0);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(5))), 5);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(0))),
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(7))), 7);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(0))), 0);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.empty())), 0);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(5))), 5);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(0))),
                 ExitCode.UNEXPECTED_ERROR.code());
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.empty())),
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.empty())),
                 ExitCode.UNEXPECTED_ERROR.code());
     }
 

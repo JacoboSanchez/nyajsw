@@ -877,7 +877,7 @@ public final class ConfigKeys {
                     .build();
 
     public static final KeySpec NTSERVICE_REDUCE_SIGNALS = yajsw("wrapper.ntservice.reduce_signals", BOOLEAN, SERVICE)
-            .status(PLANNED, "P6")
+            .status(SUPPORTED)
             .description("Start the application JVM with -Xrs in service mode, so a user logging off does not"
                     + " stop it")
             .defaultValue("true")

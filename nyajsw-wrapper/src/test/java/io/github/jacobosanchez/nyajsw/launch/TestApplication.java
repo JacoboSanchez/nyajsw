@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.launch;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
@@ -14,6 +15,8 @@ import java.util.Objects;
  *       line on standard error, then exits with {@code code};</li>
  *   <li>{@code cafe}: prints {@code caf\u00e9} on standard output and exits;</li>
  *   <li>{@code park}: prints {@code parked} and waits until it is killed;</li>
+ *   <li>{@code options}: prints {@code options=} and its JVM's options, then waits until it is
+ *       killed;</li>
  *   <li>{@code linger <ms> <code>}: prints {@code lingering}, waits {@code ms} and exits with
  *       {@code code}, like an application that finishes its own shutdown;</li>
  *   <li>{@code parent}: starts a {@code park} grandchild, prints {@code child <pid>} and waits until
@@ -46,6 +49,10 @@ public final class TestApplication {
             case "cafe" -> System.out.println("caf\u00e9");
             case "park" -> {
                 System.out.println("parked");
+                park();
+            }
+            case "options" -> {
+                System.out.println("options=" + ManagementFactory.getRuntimeMXBean().getInputArguments());
                 park();
             }
             case "parent", "orphan" -> {

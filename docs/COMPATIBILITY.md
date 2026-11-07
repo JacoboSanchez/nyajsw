@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 49 |
-| planned | 23 |
+| supported | 50 |
+| planned | 22 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -183,7 +183,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.ntservice.java.customProcName` | Run the service from a renamed copy of the Java executable | text | — | **unsupported** (P9) |  |
 | `wrapper.ntservice.autoreport.startup` | Report the service as running as soon as the application starts | boolean | — | **unsupported** | Readiness probes decide when nyajsw reports RUNNING (wrapper.readiness.type); with false, YAJSW waits for the application to report through YAJSW's API |
 | `wrapper.ntservice.autoreport.waitready` | Show the service as waiting in the tray icon until the application reports | boolean | — | **unsupported** |  |
-| `wrapper.ntservice.reduce_signals` | Start the application JVM with -Xrs in service mode, so a user logging off does not stop it | boolean | `true` | **planned** (P6) |  |
+| `wrapper.ntservice.reduce_signals` | Start the application JVM with -Xrs in service mode, so a user logging off does not stop it | boolean | `true` | **supported** |  |
 | `wrapper.ntservice.logon_active_session` | Start the application in the session of the logged-on user | boolean | — | **unsupported** | *Verify:* meaning |
 | `wrapper.ntservice.desktop` | Desktop the application is started on | text | — | **unsupported** | *Verify:* meaning |
 | `wrapper.save_interpolated` | Store the resolved ${...} values with the installed service | boolean | — | **ignored** | nyajsw resolves them again at every start, as if false (plan section 3.4) |
