@@ -360,6 +360,18 @@ public class WindowsServiceControllerTest {
     }
 
     @Test
+    public void aNativeLibraryThatCannotBeLoadedIsAReadableFailure() {
+        when(scm.openManager(anyInt())).thenThrow(new UnsatisfiedLinkError("Unable to load library 'jnidispatch'"));
+
+        io.github.jacobosanchez.nyajsw.platform.PlatformException failure = expectThrows(
+                io.github.jacobosanchez.nyajsw.platform.PlatformException.class, () -> controller.status("svc"));
+
+        assertTrue(failure.getMessage().startsWith("cannot query the service 'svc': the native library (JNA) cannot"
+                + " be loaded: java.lang.UnsatisfiedLinkError: Unable to load library 'jnidispatch'; check that the"
+                + " directory '"), failure.getMessage());
+    }
+
+    @Test
     public void aManagerThatCannotBeOpenedSaysWhy() {
         when(scm.openManager(anyInt())).thenThrow(error(Win32Errors.ACCESS_DENIED));
 

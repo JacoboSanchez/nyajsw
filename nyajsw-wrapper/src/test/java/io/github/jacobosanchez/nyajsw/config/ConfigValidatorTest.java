@@ -81,13 +81,23 @@ public class ConfigValidatorTest {
     }
 
     @Test
-    public void plannedKeyWithAnInvalidValueOnlyWarns() {
+    public void aServiceKeyIsCheckedInEveryModeSinceItIsSupported() {
         ConfigValidator.Result result = validator.validate(
                 config("wrapper.ntservice.starttype", "SOMETIMES", ConfigLayer.FILE));
 
+        assertEquals(result.errors().size(), 1, result.errors().toString());
+        assertTrue(result.errors().get(0).getMessage().contains("invalid value 'SOMETIMES' for"
+                + " wrapper.ntservice.starttype"), result.errors().toString());
+    }
+
+    @Test
+    public void plannedKeyWithAnInvalidValueOnlyWarns() {
+        ConfigValidator.Result result = validator.validate(
+                config("wrapper.ping.interval", "SOMETIMES", ConfigLayer.FILE));
+
         assertTrue(result.errors().isEmpty(), result.errors().toString());
         assertTrue(result.warnings().stream().anyMatch(w -> w.message().startsWith("invalid value 'SOMETIMES' for"
-                + " wrapper.ntservice.starttype: expected one of ")), result.warnings().toString());
+                + " wrapper.ping.interval: ")), result.warnings().toString());
     }
 
     @Test
@@ -189,9 +199,8 @@ public class ConfigValidatorTest {
 
         result.throwIfErrors();
         // The application keys are supported since console mode (P2.5), the supervision keys since it
-        // runs through the supervisor (P3.6), so they no longer warn.
+        // runs through the supervisor (P3.6), the service keys since -i (P5.4), so they no longer warn.
         assertEquals(result.warnings().stream().map(ConfigWarning::message).toList(), List.of(
-                "wrapper.ntservice.starttype is not implemented yet in this version of nyajsw; it has no effect",
                 "wrapper.tray is not supported by nyajsw; it has no effect"));
     }
 

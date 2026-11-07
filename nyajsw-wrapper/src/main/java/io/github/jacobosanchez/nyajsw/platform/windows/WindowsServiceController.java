@@ -1,13 +1,10 @@
 package io.github.jacobosanchez.nyajsw.platform.windows;
 
-import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JAVA_APP_MAINCLASS;
-import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_NAME;
-
-import io.github.jacobosanchez.nyajsw.config.ConfigException;
 import io.github.jacobosanchez.nyajsw.config.ServiceConfig;
 import io.github.jacobosanchez.nyajsw.config.StartType;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
+import io.github.jacobosanchez.nyajsw.platform.PlatformException;
 import io.github.jacobosanchez.nyajsw.platform.ServiceController;
 import io.github.jacobosanchez.nyajsw.platform.ServiceException;
 import io.github.jacobosanchez.nyajsw.platform.ServiceStatus;
@@ -27,14 +24,11 @@ import java.util.function.Supplier;
  *
  * <p>Install registers an own-process service running the {@link ServiceCommandLine}'s binary path, then
  * sets its description, the delayed start of {@code DELAYED_AUTO_START} and, always, the
- * pre-shutdown timeout: the longest a stop can take (the stop budget, the supervisor's wait after
- * terminating, {@link #STOPPED_MARGIN} to report it), since the Windows default is only 10 s. A
+ * pre-shutdown timeout: as long as a stop may take to end ({@link Supervisor#stopWait}), since the
+ * Windows default is only 10 s. A
  * service that cannot be configured is deleted again, so that a failed install leaves nothing.
  */
 final class WindowsServiceController implements ServiceController {
-
-    /** What the pre-shutdown timeout allows beyond the longest stop, for the wrapper to report and exit. */
-    static final Duration STOPPED_MARGIN = Duration.ofSeconds(10);
 
     private final ScmApi scm;
     private final ServiceCommandLine commandLine;
@@ -49,8 +43,7 @@ final class WindowsServiceController implements ServiceController {
     @Override
     public List<String> install(WrapperConfig config) {
         ServiceConfig service = config.service();
-        String name = service.name().orElseThrow(() -> new ConfigException(NTSERVICE_NAME.name() + " is not set,"
-                + " and there is no " + JAVA_APP_MAINCLASS.name() + " to name the service after"));
+        String name = service.requiredName();
         ServiceCommand command = commandLine.build(config);
         ServiceRegistration registration = new ServiceRegistration(name, service.displayName().orElse(name),
                 command.binaryPath(), service.startType(), service.dependencies(), service.account(),
@@ -86,9 +79,9 @@ final class WindowsServiceController implements ServiceController {
         scm.setPreshutdownTimeout(created, preshutdownTimeout);
     }
 
-    /** The longest a stop of {@code config}'s application can take, and the time to report it. */
+    /** As long as a stop of {@code config}'s application may take to end and be reported. */
     static Duration preshutdownTimeout(WrapperConfig config) {
-        return Supervisor.longestStop(config.lifecycle().stopBudget()).plus(STOPPED_MARGIN);
+        return Supervisor.stopWait(config.lifecycle().stopBudget());
     }
 
     @Override
@@ -161,12 +154,20 @@ final class WindowsServiceController implements ServiceController {
         }
     }
 
-    /** {@code call}'s result; a failure of the Service Control Manager says what was attempted. */
+    /**
+     * {@code call}'s result; a failure of the Service Control Manager says what was attempted, and so
+     * does a native library that cannot be loaded (JNA unpacks it into {@code jna.tmpdir} first).
+     */
     private static <T> T call(Supplier<T> call, String what) {
         try {
             return call.get();
         } catch (ServiceException e) {
             throw failure(what, e);
+        } catch (LinkageError e) { // UnsatisfiedLinkError, NoClassDefFoundError, ExceptionInInitializerError
+            throw new PlatformException("cannot " + what + ": the native library (JNA) cannot be loaded: " + e
+                    + "; check that the directory '" + System.getProperty("jna.tmpdir", System.getProperty(
+                            "java.io.tmpdir")) + "' (jna.tmpdir, from wrapper.tmp.path) is writable, or ship"
+                    + " jnidispatch.dll and set jna.boot.library.path", e);
         }
     }
 

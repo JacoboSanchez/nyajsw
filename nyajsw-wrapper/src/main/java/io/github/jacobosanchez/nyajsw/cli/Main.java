@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
+import io.github.jacobosanchez.nyajsw.NyajswException;
 import io.github.jacobosanchez.nyajsw.config.ConfigException;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
@@ -8,26 +9,30 @@ import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.platform.Platform;
+import io.github.jacobosanchez.nyajsw.platform.Platforms;
 
 import java.io.PrintStream;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.IntConsumer;
+import java.util.function.Supplier;
 
 /**
  * The command-line entry point (plan §3.2, §4.9) and the only place in the wrapper that calls
  * {@code System.exit} (and, in the console shutdown hook, {@code Runtime.halt}, which sets the exit
- * code once the JVM is already shutting down). This phase implements console mode ({@code -c}); the
- * service commands follow in P5 and P6 and are recognised already, so that a YAJSW runbook gets a
- * clear answer instead of a usage error.
+ * code once the JVM is already shutting down). It runs console mode ({@code -c}) and the service
+ * commands ({@code -i -r -t -p -q}, {@link ServiceCommands}); {@code --service}, the entry point the
+ * Service Control Manager runs, follows in P6 and is recognised already, so that it gets a clear
+ * answer instead of a usage error.
  */
 public final class Main {
 
     private static final Set<String> CONSOLE = Set.of("-c", "--console");
-    private static final Set<String> NOT_YET = Set.of("-i", "--install", "-r", "--remove", "-t", "--start", "-p",
-            "--stop", "-q", "--query", "--service");
+    private static final Set<String> NOT_YET = Set.of("--service");
 
     private Main() {
     }
@@ -41,6 +46,11 @@ public final class Main {
      * {@link ExitCode} otherwise.
      */
     static int run(String[] args, PrintStream out) {
+        return run(args, out, Platforms::forThisHost);
+    }
+
+    /** {@link #run(String[], PrintStream)} on the platform {@code platform} gives, for tests. */
+    static int run(String[] args, PrintStream out, Supplier<Platform> platform) {
         List<String> arguments = List.of(args);
         if (arguments.isEmpty()) {
             out.println(usage());
@@ -56,28 +66,77 @@ public final class Main {
             return ExitCode.SUCCESS.code();
         }
         if (NOT_YET.contains(command)) {
-            out.println(command + " is not implemented yet in this version of nyajsw; only -c (console) is");
+            out.println(command + " is not implemented yet in this version of nyajsw");
             return ExitCode.UNEXPECTED_ERROR.code();
         }
-        if (!CONSOLE.contains(command) || arguments.size() != 2) {
+        Optional<ServiceCommands.Action> action = ServiceCommands.Action.of(command);
+        if (arguments.size() != 2 || (action.isEmpty() && !CONSOLE.contains(command))) {
             out.println(usage());
             return ExitCode.UNEXPECTED_ERROR.code();
         }
-        return console(arguments.get(1), out);
+        return action.isPresent() ? service(action.get(), arguments.get(1), out, platform)
+                : console(arguments.get(1), out);
+    }
+
+    /**
+     * A service command, reported on the console only: it must not roll or write the log file of a
+     * service that runs beside it.
+     */
+    private static int service(ServiceCommands.Action action, String file, PrintStream out,
+            Supplier<Platform> platform) {
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
+            Optional<WrapperConfig> loaded = load(file, log);
+            if (loaded.isEmpty()) {
+                return ExitCode.CONFIGURATION_ERROR.code();
+            }
+            WrapperConfig config = loaded.get();
+            try {
+                new ServiceCommands(platform.get().serviceController(), log).run(action, config);
+                return ExitCode.SUCCESS.code();
+            } catch (ConfigException e) {
+                e.problems().forEach(problem -> log.error(config.secrets().maskText(problem.getMessage())));
+                return ExitCode.of(e).code();
+            } catch (NyajswException e) {
+                log.error(config.secrets().maskText(e.getMessage()));
+                return ExitCode.of(e).code();
+            } catch (RuntimeException e) {
+                return unexpected(e, config, log);
+            }
+        }
+    }
+
+    /**
+     * The configuration in {@code file}, or empty once {@code log} has said why it cannot be loaded.
+     * Its {@code wrapper.tmp.path} becomes {@code jna.tmpdir} (unless the command line sets that)
+     * before anything can load JNA, which unpacks its native library there (plan §4.4).
+     */
+    private static Optional<WrapperConfig> load(String file, WrapperLog log) {
+        try {
+            WrapperConfig config = WrapperConfig.from(ConfigLoader.forCurrentProcess().load(Path.of(file)));
+            useTmpPath(config, System.getProperties());
+            return Optional.of(config);
+        } catch (ConfigException e) {
+            e.problems().forEach(problem -> log.error(problem.getMessage()));
+        } catch (InvalidPathException e) {
+            log.error("not a valid path for the configuration file: " + file);
+        }
+        return Optional.empty();
+    }
+
+    /** Sets {@code jna.tmpdir} in {@code properties} from {@code wrapper.tmp.path}, unless it is set. */
+    static void useTmpPath(WrapperConfig config, java.util.Properties properties) {
+        config.java().tmpPath().filter(tmp -> properties.getProperty("jna.tmpdir") == null)
+                .ifPresent(tmp -> properties.setProperty("jna.tmpdir", tmp.toAbsolutePath().normalize().toString()));
     }
 
     private static int console(String file, PrintStream out) {
         WrapperConfig config;
         try (WrapperLog early = WrapperLog.console(out, LogLevel.INFO)) {
-            try {
-                config = WrapperConfig.from(ConfigLoader.forCurrentProcess().load(Path.of(file)));
-            } catch (ConfigException e) {
-                e.problems().forEach(problem -> early.error(problem.getMessage()));
-                return ExitCode.of(e).code();
-            } catch (InvalidPathException e) {
-                early.error("not a valid path for the configuration file: " + file);
+            Optional<WrapperConfig> loaded = load(file, early);
+            if (loaded.isEmpty()) {
                 return ExitCode.CONFIGURATION_ERROR.code();
             }
+            config = loaded.get();
         }
         try (WrapperLog log = WrapperLog.open(config.log(), out, config.secrets())) {
             ConsoleMode mode;
@@ -142,7 +201,12 @@ public final class Main {
     private static String usage() {
         return String.join(System.lineSeparator(),
                 "usage: nyajsw -c <wrapper.conf>    run the application in the console",
+                "       nyajsw -i <wrapper.conf>    install the Windows service",
+                "       nyajsw -r <wrapper.conf>    remove the service",
+                "       nyajsw -t <wrapper.conf>    start the service and wait until it runs",
+                "       nyajsw -p <wrapper.conf>    stop the service and wait until it has stopped",
+                "       nyajsw -q <wrapper.conf>    show the service's state",
                 "       nyajsw --help | --version",
-                "The service commands -i -r -t -p -q follow in a later version.");
+                "Long forms: --console --install --remove --start --stop --query.");
     }
 }
