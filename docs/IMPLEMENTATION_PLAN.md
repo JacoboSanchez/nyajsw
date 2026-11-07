@@ -520,7 +520,7 @@ output, configuration and a clock; probes are stateless or own their state expli
 | `http` | A `GET` returns an expected status (redirects not followed) | `wrapper.readiness.http.url`, `.status` (default `200-399`), `.timeout` (default 5 s) |
 | `log` | Captured stdout/stderr (or a file) matches a regex | `wrapper.readiness.log.pattern`, `.file` (optional) |
 | `file` | A file or directory exists (relative to `wrapper.working.dir`) | `wrapper.readiness.file.path` |
-| `command` | An external command exits `0` | `wrapper.readiness.command`, `.timeout` |
+| `command` | An external command exits `0`, run without a shell in the working directory | `wrapper.readiness.command`, `.timeout` (default 10 s) |
 | `agent` | The in-JVM agent connected and answers `PING` | `wrapper.agent.enabled` (default `true`) |
 | `jmx` (backlog) | A JMX attribute matches | `wrapper.readiness.jmx.url`, `.attribute`, `.value` |
 
@@ -1385,7 +1385,18 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         it may hold credentials), unreadable status ranges, a timeout of 0. A probe listed without
         its required key is a configuration error naming that key when supervision is set up. Log
         messages show an http target without user information, query or fragment.
-  - [ ] P7.2b `command`.
+  - [x] P7.2b `command`. **Done:** `wrapper.readiness.command` is split into an argument array by
+        `ValueParser.parseCommand` (blanks separate, double quotes group and are removed, no escape
+        character; an open quote or a missing program is a configuration error that does not quote
+        the value) and run without a shell in `wrapper.working.dir`, with the wrapper's
+        environment, its output discarded and its input closed at once. The program follows the
+        rule of the other executable keys: a bare name is looked up on `PATH`, one with a directory
+        is resolved against the working directory (Windows would look from the wrapper's own,
+        `System32` for a service). Exit code 0 passes; one that overruns
+        `wrapper.readiness.command.timeout` (now supported, default 10 s, at least 1 s) is killed
+        with its descendants through `launch.ProcessTrees`, the tree walk `terminateTree` now
+        shares. Log messages name the program and the JDK's reason it cannot be started, never the
+        arguments. Duration texts in log messages share `log.Durations`.
   - [ ] P7.2c `log` (captured output or `wrapper.readiness.log.file`).
 - [ ] P7.3 `nyajsw-agent`: `premain`, `AgentProtocol`, loopback connection with token from
       `NYAJSW_AGENT_TOKEN`, `STOP` → `System.exit(0)`; wrapper side `agentlink` (`AgentListener`,
@@ -1442,6 +1453,13 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7.2b: a `command` probe's process is not in the application's kill-on-close job, so one that
+  hangs while the wrapper is killed survives it; pass the job to probes if that matters. The
+  command stop strategy (P3.4 entry) will need the same mechanics (argument array, no shell,
+  discarded output, closed input, timeout, tree kill): extract a small runner from `CommandProbe`
+  then, and decide one environment rule for both (the probe uses the wrapper's environment, not
+  `wrapper.app.env.*`). `StateWait` still formats its durations itself (`… ms`), not through
+  `log.Durations`. `ConfigDump` shows `wrapper.readiness.command` whole, arguments included.
 - P7.2a: a `file` readiness probe passes at once on every restart when the application leaves its
   file behind (a crash does), so restarts are judged ready and `wrapper.max_failed_invocations` is
   undermined; decide before P7.4 between "modified since the launch" (`ProbeContext` would carry

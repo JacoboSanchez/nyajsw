@@ -31,6 +31,7 @@ public final class ProbeRegistry {
         factories.put(TcpProbe.TYPE, TcpProbe::from);
         factories.put(HttpProbe.TYPE, HttpProbe::from);
         factories.put(FileProbe.TYPE, FileProbe::from);
+        factories.put(CommandProbe.TYPE, CommandProbe::from);
         return new ProbeRegistry(factories);
     }
 

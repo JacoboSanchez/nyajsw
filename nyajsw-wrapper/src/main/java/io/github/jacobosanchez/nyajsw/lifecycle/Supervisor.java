@@ -1,5 +1,7 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
+import static io.github.jacobosanchez.nyajsw.log.Durations.seconds;
+
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.ExitAction;
@@ -16,7 +18,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalInt;
@@ -702,12 +703,6 @@ public final class Supervisor {
                 + "; terminating it (" + stops.last().name() + ")");
         terminateNow();
         startTimer(AFTER_TERMINATION, this::abandon);
-    }
-
-    /** {@code 30 s}, or with milliseconds when the duration has them ({@code 7.500 s}). */
-    private static String seconds(Duration duration) {
-        long millis = duration.toMillis();
-        return millis % 1000 == 0 ? millis / 1000 + " s" : String.format(Locale.ROOT, "%.3f s", millis / 1000.0);
     }
 
     /** Supervision gave up: the application could not be stopped, which a caller must not take for success. */

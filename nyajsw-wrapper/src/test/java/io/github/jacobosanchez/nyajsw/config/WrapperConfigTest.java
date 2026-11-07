@@ -280,10 +280,10 @@ public class WrapperConfigTest {
 
     @Test
     public void invalidValueOfAPlannedKeyFallsBackToTheDefaultWithWarning() throws IOException {
-        WrapperConfig config = load("wrapper.ping.interval=soon", "wrapper.readiness.command.timeout=later");
+        WrapperConfig config = load("wrapper.ping.interval=soon", "wrapper.ping.timeout=later");
 
         assertEquals(config.lifecycle().pingInterval(), Optional.of(Duration.ofSeconds(5)));
-        assertEquals(config.probes().commandTimeout(), Optional.empty());
+        assertEquals(config.lifecycle().pingTimeout(), Optional.of(Duration.ofSeconds(30)));
         assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'soon'")),
                 messages(config).toString());
         assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'later'")),
@@ -356,6 +356,39 @@ public class WrapperConfigTest {
         assertTrue(expectThrows(ConfigException.class, () -> load("wrapper.readiness.http.url=http://a b/"))
                 .getMessage().contains("wrapper.readiness.http.url is not a valid URL"));
         expectThrows(ConfigException.class, () -> load("wrapper.readiness.tcp.port=0"));
+    }
+
+    @Test
+    public void theProbeCommandIsSplitIntoArgumentsAndRunsInTheWorkingDirectory() throws IOException {
+        ProbeConfig probes = load("wrapper.working.dir=work",
+                "wrapper.readiness.command=\"C:/Program Files/check.exe\" --port 8080 \"\"").probes();
+
+        assertEquals(probes.command(), List.of(Path.of("C:/Program Files/check.exe").isAbsolute()
+                ? Path.of("C:/Program Files/check.exe").toString()
+                : dir.resolve("work/C:/Program Files/check.exe").normalize().toString(), "--port", "8080", ""));
+        assertEquals(probes.commandTimeout(), Duration.ofSeconds(10));
+        assertEquals(probes.workingDir(), dir.resolve("work"));
+        assertEquals(load().probes().command(), List.of());
+        assertEquals(load("wrapper.working.dir=work", "wrapper.readiness.command=bin/check -v").probes().command(),
+                List.of(dir.resolve("work/bin/check").toString(), "-v"), "relative to the working directory");
+        assertEquals(load("wrapper.readiness.command=curl -f").probes().command(), List.of("curl", "-f"),
+                "a bare name is looked up on PATH");
+    }
+
+    @Test
+    public void aProbeCommandWithAnOpenQuoteOrNoTimeIsAnErrorThatDoesNotQuoteIt() {
+        ConfigException error = expectThrows(ConfigException.class, () -> load(
+                "wrapper.readiness.command=check --token \"s3cr3t", "wrapper.readiness.command.timeout=0"));
+
+        List<String> problems = error.problems().stream().map(ConfigException::getMessage).toList();
+        assertEquals(problems.size(), 2, problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.command: a double quote is not"
+                + " closed")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.command.timeout must be at least"
+                + " 1 s")), problems.toString());
+        assertTrue(problems.stream().noneMatch(m -> m.contains("s3cr3t")), problems.toString());
+        assertTrue(expectThrows(ConfigException.class, () -> load("wrapper.readiness.command=\"\" --x"))
+                .getMessage().contains("wrapper.readiness.command: names no program"));
     }
 
     @Test
