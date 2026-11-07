@@ -15,11 +15,14 @@ import io.github.jacobosanchez.nyajsw.lifecycle.StopChain;
 import io.github.jacobosanchez.nyajsw.lifecycle.StopStrategyRegistry;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.platform.ProcessJob;
+import io.github.jacobosanchez.nyajsw.platform.ProcessTools;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRegistry;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRunner;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,6 +31,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The application under a {@link Supervisor}, as console mode and service mode both run it: its
  * restart policy, readiness probes, stop strategies and pid files, each invocation launched with a
  * freshly expanded classpath. It runs once.
+ *
+ * <p>When {@code wrapper.control} ends the application with the wrapper ({@code TIGHT}, {@code
+ * APPLICATION}), every invocation goes in one kill-on-close {@link ProcessJob} where the platform has
+ * one (plan P6.4), closed when supervision ends: then not even a wrapper that is killed leaves the
+ * application behind, {@code terminate} ends what it started too, and so does the end of
+ * supervision, also after the application ended by itself. Under {@code LOOSE} and {@code
+ * WRAPPER} the application may outlive the wrapper, so there is no job.
  */
 final class Supervision {
 
@@ -41,6 +51,9 @@ final class Supervision {
     private final ExecutorScheduler scheduler = new ExecutorScheduler();
     /** A thread per readiness check, so that one that hangs cannot hold up the next invocation's. */
     private final ExecutorService probeExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final ProcessTools processes;
+    /** The job of this run, from {@link #run()} on; read by the launches, which run on the same thread. */
+    private Optional<ProcessJob> job = Optional.empty();
     private final Supervisor supervisor;
     private final AtomicBoolean started = new AtomicBoolean();
 
@@ -48,10 +61,11 @@ final class Supervision {
      * @param wrapperOptions the JVM options the wrapper adds to every invocation ({@code -Xrs} in
      *                       service mode)
      * @param listener       told about every change of the supervisor's state
+     * @param processes      the platform's help with processes ({@link ProcessTools#NONE} for none)
      * @throws IllegalArgumentException when a readiness probe type is not known
      */
     Supervision(WrapperConfig config, WrapperLog log, JavaCommandBuilder builder, ClasspathExpander expander,
-            List<String> wrapperOptions, Supervisor.StateListener listener) {
+            List<String> wrapperOptions, Supervisor.StateListener listener, ProcessTools processes) {
         this.config = Objects.requireNonNull(config, "config");
         this.log = Objects.requireNonNull(log, "log");
         this.builder = Objects.requireNonNull(builder, "builder");
@@ -59,6 +73,7 @@ final class Supervision {
         this.wrapperOptions = List.copyOf(wrapperOptions);
         this.stops = StopStrategyRegistry.defaults().chain(config.lifecycle(), config.secrets());
         this.pidFiles = new PidFiles(config.lifecycle(), config.secrets(), log);
+        this.processes = Objects.requireNonNull(processes, "processes");
         ProbeConfig probes = config.probes();
         ProbeRunner readiness = new ProbeRunner(ProbeRegistry.defaults().create(probes.readinessTypes(), probes),
                 probes.readinessInterval());
@@ -80,6 +95,9 @@ final class Supervision {
                 log.status("warning: " + warning);
             }
             warn(stops.warnings());
+            if (config.lifecycle().control().applicationEndsWithWrapper()) {
+                job = createJob(processes, log);
+            }
             pidFiles.wrapperStarted(pid);
             return supervisor.run();
         } finally {
@@ -116,6 +134,18 @@ final class Supervision {
     private void close() {
         probeExecutor.shutdownNow();
         scheduler.close();
+        job.ifPresent(ProcessJob::close);
+    }
+
+    /** The job of the application's processes, if the platform can make one; an error is logged, not fatal. */
+    private static Optional<ProcessJob> createJob(ProcessTools processes, WrapperLog log) {
+        try {
+            return processes.createKillOnCloseJob();
+        } catch (RuntimeException e) {
+            log.error(e.getMessage() + "; the application runs without it, so it may outlive the wrapper if that is"
+                    + " killed");
+            return Optional.empty();
+        }
     }
 
     /** One invocation: the classpath is expanded again, so jars added since the last start are picked up. */
@@ -126,7 +156,7 @@ final class Supervision {
         warn(classpath.warnings());
         JavaCommand command = builder.build(config.java(), classpath.entries(), wrapperOptions, config.secrets());
         warn(command.warnings());
-        return ApplicationProcess.start(command, config.java(), invocation, config.secrets(), log);
+        return ApplicationProcess.start(command, config.java(), invocation, config.secrets(), log, job);
     }
 
     private void warn(List<String> warnings) {

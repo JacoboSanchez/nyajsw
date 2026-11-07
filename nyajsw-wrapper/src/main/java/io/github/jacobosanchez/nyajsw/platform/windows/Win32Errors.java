@@ -5,8 +5,8 @@ import com.sun.jna.platform.win32.WinError;
 import java.util.Map;
 
 /**
- * Turns a Win32 error code of a service call into text for the operator (plan §4.4): the system's
- * own message, the code, and for the errors an operator can act on, what to do. The codes are
+ * Turns a Win32 error code into text for the operator (plan §4.4): the system's own message, the
+ * code, and for the errors of a service call that an operator can act on, what to do. The codes are
  * {@code jna-platform}'s constants, inlined by the compiler, so this class loads no native code.
  */
 final class Win32Errors {
@@ -81,6 +81,11 @@ final class Win32Errors {
      * run the command as Administrator"}.
      */
     static String describe(int code, String systemText) {
+        return describe(code, systemText, true);
+    }
+
+    /** As {@link #describe(int, String)}; without the hint, which suits service calls only, unless {@code hint}. */
+    static String describe(int code, String systemText, boolean hint) {
         Known known = KNOWN.get(code);
         String text = systemText == null ? "" : systemText.strip();
         if (text.endsWith(".")) {
@@ -90,6 +95,6 @@ final class Win32Errors {
             text = known == null ? "error" : known.name();
         }
         String described = text + " (Win32 error " + code + ")";
-        return known == null || known.hint().isEmpty() ? described : described + "; " + known.hint();
+        return !hint || known == null || known.hint().isEmpty() ? described : described + "; " + known.hint();
     }
 }

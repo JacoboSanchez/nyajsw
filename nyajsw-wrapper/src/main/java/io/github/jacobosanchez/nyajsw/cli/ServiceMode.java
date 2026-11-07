@@ -8,6 +8,7 @@ import io.github.jacobosanchez.nyajsw.lifecycle.ExecutorScheduler;
 import io.github.jacobosanchez.nyajsw.lifecycle.State;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.platform.ProcessTools;
 import io.github.jacobosanchez.nyajsw.platform.ServiceBody;
 import io.github.jacobosanchez.nyajsw.platform.ServiceContext;
 import io.github.jacobosanchez.nyajsw.platform.ServiceControl;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Service mode ({@code --service}, plan P6.2): what runs as the service under a {@link
@@ -55,6 +57,7 @@ final class ServiceMode implements ServiceBody {
     private final JavaCommandBuilder builder;
     private final ClasspathExpander expander;
     private final Function<String, Path> bootstrapFile;
+    private final Supplier<ProcessTools> processes;
     private final Object lock = new Object();
     /** Set while the application is supervised; guarded by {@link #lock}. */
     private Supervision supervision;
@@ -69,13 +72,16 @@ final class ServiceMode implements ServiceBody {
     /**
      * @param file          the configuration file, as given on the command line
      * @param bootstrapFile the bootstrap log of a service name ({@link WrapperLog#bootstrapFile})
+     * @param processes     the platform's help with the application's processes, asked for once the
+     *                      configured log is open, so that a failure is logged
      */
     ServiceMode(String file, JavaCommandBuilder builder, ClasspathExpander expander,
-            Function<String, Path> bootstrapFile) {
+            Function<String, Path> bootstrapFile, Supplier<ProcessTools> processes) {
         this.file = Objects.requireNonNull(file, "file");
         this.builder = Objects.requireNonNull(builder, "builder");
         this.expander = Objects.requireNonNull(expander, "expander");
         this.bootstrapFile = Objects.requireNonNull(bootstrapFile, "bootstrapFile");
+        this.processes = Objects.requireNonNull(processes, "processes");
     }
 
     @Override
@@ -102,7 +108,8 @@ final class ServiceMode implements ServiceBody {
         ServiceStatusReporter reporter = new ServiceStatusReporter(context, timer, config.probes().readinessInterval(),
                 ServiceCommands.startTimeout(config), ServiceCommands.stopTimeout(config), configured);
         try {
-            Supervision run = new Supervision(config, configured, builder, expander, wrapperOptions(config), reporter);
+            Supervision run = new Supervision(config, configured, builder, expander, wrapperOptions(config), reporter,
+                    processes.get());
             boolean stopFirst;
             synchronized (lock) {
                 supervision = run;
