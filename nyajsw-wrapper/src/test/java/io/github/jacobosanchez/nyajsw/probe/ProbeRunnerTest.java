@@ -14,8 +14,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 import org.testng.annotations.Test;
 
@@ -25,31 +23,7 @@ public class ProbeRunnerTest {
 
     /** An application that is alive as long as {@code alive} says. */
     private static RunningApplication application(boolean alive) {
-        return new RunningApplication() {
-            @Override
-            public String name() {
-                return "jvm 1";
-            }
-
-            @Override
-            public long pid() {
-                return 42;
-            }
-
-            @Override
-            public boolean isAlive() {
-                return alive;
-            }
-
-            @Override
-            public CompletableFuture<Integer> onExit() {
-                return new CompletableFuture<>();
-            }
-
-            @Override
-            public void terminateTree() {
-            }
-        };
+        return new FakeRunningApplication(alive);
     }
 
     private static ProbeRegistry.NamedProbe probe(String type, Probe probe) {
@@ -128,13 +102,17 @@ public class ProbeRunnerTest {
 
         List<ProbeRegistry.NamedProbe> probes = registry.create(config.readinessTypes(), config);
 
-        assertEquals(registry.types(), Set.of(ProcessProbe.TYPE));
+        assertEquals(List.copyOf(registry.types()), List.of(ProcessProbe.TYPE, TcpProbe.TYPE, HttpProbe.TYPE,
+                FileProbe.TYPE));
         assertEquals(probes.size(), 1);
         assertEquals(probes.get(0).type(), ProcessProbe.TYPE);
         assertEquals(probes.get(0).probe().getClass(), ProcessProbe.class);
         IllegalArgumentException unknown = expectThrows(IllegalArgumentException.class,
+                () -> registry.create(List.of("telepathy"), config));
+        assertEquals(unknown.getMessage(), "unknown probe type telepathy; known: [process, tcp, http, file]");
+        IllegalArgumentException incomplete = expectThrows(IllegalArgumentException.class,
                 () -> registry.create(List.of("tcp"), config));
-        assertEquals(unknown.getMessage(), "unknown probe type tcp; known: [process]");
+        assertEquals(incomplete.getMessage(), "the tcp probe needs wrapper.readiness.tcp.port");
         List<ProbeRegistry.NamedProbe> spelled = registry.create(List.of(" Process "), config);
         assertEquals(spelled.get(0).type(), ProcessProbe.TYPE, "case and blanks do not matter");
     }

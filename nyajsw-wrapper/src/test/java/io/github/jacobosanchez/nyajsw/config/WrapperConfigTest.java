@@ -147,7 +147,8 @@ public class WrapperConfigTest {
         assertEquals(probes.readinessTypes(), List.of("process"));
         assertEquals(probes.readinessInterval(), Duration.ofSeconds(1));
         assertEquals(probes.tcpHost(), "127.0.0.1");
-        assertEquals(probes.httpStatus(), "200-399");
+        assertEquals(probes.httpStatus(), StatusRanges.parse("200-399"));
+        assertEquals(probes.httpTimeout(), Duration.ofSeconds(5));
         assertEquals(probes.livenessTypes(), List.of());
         assertEquals(probes.livenessInterval(), Duration.ofSeconds(10));
         assertEquals(probes.livenessFailures(), 3);
@@ -279,10 +280,10 @@ public class WrapperConfigTest {
 
     @Test
     public void invalidValueOfAPlannedKeyFallsBackToTheDefaultWithWarning() throws IOException {
-        WrapperConfig config = load("wrapper.ping.interval=soon", "wrapper.readiness.http.timeout=later");
+        WrapperConfig config = load("wrapper.ping.interval=soon", "wrapper.readiness.command.timeout=later");
 
         assertEquals(config.lifecycle().pingInterval(), Optional.of(Duration.ofSeconds(5)));
-        assertEquals(config.probes().httpTimeout(), Optional.empty());
+        assertEquals(config.probes().commandTimeout(), Optional.empty());
         assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'soon'")),
                 messages(config).toString());
         assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'later'")),
@@ -316,6 +317,55 @@ public class WrapperConfigTest {
         assertTrue(messages(config).contains("wrapper.liveness.type contains a secret, which cannot name a probe type;"
                 + " ignored, the default applies"), messages(config).toString());
         assertTrue(messages(config).stream().noneMatch(m -> m.contains("5w0rd")), messages(config).toString());
+    }
+
+    @Test
+    public void theTcpHttpAndFileSettingsAreRead() throws IOException {
+        ProbeConfig probes = load("wrapper.working.dir=work", "wrapper.readiness.tcp.host=localhost",
+                "wrapper.readiness.tcp.port=8443", "wrapper.readiness.http.url=https://localhost:8443/health",
+                "wrapper.readiness.http.status=200, 204", "wrapper.readiness.http.timeout=2",
+                "wrapper.readiness.file.path=run/ready").probes();
+
+        assertEquals(probes.tcpHost(), "localhost");
+        assertEquals(probes.tcpPort(), Optional.of(8443));
+        assertEquals(probes.httpUrl(), Optional.of("https://localhost:8443/health"));
+        assertEquals(probes.httpStatus().toString(), "200,204");
+        assertEquals(probes.httpTimeout(), Duration.ofSeconds(2));
+        assertEquals(probes.filePath(), Optional.of(dir.resolve("work/run/ready")), "the application's working dir");
+    }
+
+    @Test
+    public void tcpHttpSettingsThatCannotWorkAreErrorsThatDoNotQuoteTheUrl() {
+        ConfigException error = expectThrows(ConfigException.class, () -> load("wrapper.readiness.tcp.port=70000",
+                "wrapper.readiness.http.url=ftp://user:pw@host/x", "wrapper.readiness.http.status=200-",
+                "wrapper.readiness.http.timeout=0"));
+
+        List<String> problems = error.problems().stream().map(ConfigException::getMessage).toList();
+        assertEquals(problems.size(), 4, problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.tcp.port must be between 1 and"
+                + " 65535")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.http.url must start with http://"
+                + " or https://")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("invalid value '200-' for"
+                + " wrapper.readiness.http.status")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.http.timeout must be at least 1 s")),
+                problems.toString());
+        assertTrue(problems.stream().noneMatch(m -> m.contains("pw@")), problems.toString());
+        assertTrue(expectThrows(ConfigException.class, () -> load("wrapper.readiness.http.url=http:///path"))
+                .getMessage().contains("wrapper.readiness.http.url has no host (a host name may not contain '_')"));
+        assertTrue(expectThrows(ConfigException.class, () -> load("wrapper.readiness.http.url=http://a b/"))
+                .getMessage().contains("wrapper.readiness.http.url is not a valid URL"));
+        expectThrows(ConfigException.class, () -> load("wrapper.readiness.tcp.port=0"));
+    }
+
+    @Test
+    public void userInformationInTheHttpUrlIsWarnedAboutWithoutQuotingIt() throws IOException {
+        WrapperConfig config = load("wrapper.readiness.http.url=http://admin:s3cr3t@localhost:8080/health");
+
+        assertEquals(config.probes().httpUrl(), Optional.of("http://admin:s3cr3t@localhost:8080/health"));
+        assertTrue(messages(config).contains("wrapper.readiness.http.url has user information, which the http probe"
+                + " does not send"), messages(config).toString());
+        assertTrue(messages(config).stream().noneMatch(m -> m.contains("s3cr3t")), messages(config).toString());
     }
 
     @Test
