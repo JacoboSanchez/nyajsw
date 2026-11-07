@@ -3,6 +3,7 @@ package io.github.jacobosanchez.nyajsw.cli;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
@@ -11,6 +12,8 @@ import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
 import io.github.jacobosanchez.nyajsw.launch.TestApplication;
+import io.github.jacobosanchez.nyajsw.lifecycle.State;
+import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 
 import java.io.ByteArrayOutputStream;
@@ -22,6 +25,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -91,14 +95,33 @@ public class MainTest {
     }
 
     @Test
-    public void launchErrorsAreFatalWithoutAStackTrace() throws Exception {
-        Path conf = conf("wrapper.java.command=" + dir.resolve("missing/java").toString().replace('\\', '/'));
+    public void launchErrorsEndSupervisionWithoutAStackTrace() throws Exception {
+        Path conf = conf("wrapper.java.command=" + dir.resolve("missing/java").toString().replace('\\', '/'),
+                "wrapper.max_failed_invocations=1");
 
         int code = Main.run(new String[] {"-c", conf.toString()}, out);
 
         assertEquals(code, ExitCode.UNEXPECTED_ERROR.code());
-        assertTrue(output().contains("wrapper  | the Java executable"), output());
+        assertTrue(output().contains("wrapper  | cannot start jvm 1: the Java executable"), output());
+        assertTrue(output().contains("supervision ended FAILED; exit code 1 is the wrapper's"), output());
         assertFalse(output().contains("\tat "), output());
+    }
+
+    @Test(timeOut = 120_000)
+    public void consoleModeRestartsAsTheExitActionsSayAndGivesUpAtTheLimit() throws Exception {
+        Path conf = conf("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=5",
+                "wrapper.on_exit.default=RESTART", "wrapper.restart.delay=0", "wrapper.max_failed_invocations=2",
+                "wrapper.pidfile=run/wrapper.pid", "wrapper.java.pidfile=run/java.pid");
+
+        int code = Main.run(new String[] {"-c", conf.toString()}, out);
+
+        assertEquals(code, 5, output());
+        assertTrue(output().contains("launching jvm 2"), output());
+        assertFalse(output().contains("launching jvm 3"), output());
+        assertTrue(output().contains("supervision ended FAILED; exit code 5 is the application's"), output());
+        assertFalse(Files.exists(dir.resolve("run/wrapper.pid")), "removed at the end");
+        assertFalse(Files.exists(dir.resolve("run/java.pid")), "removed when the last invocation ended");
+        assertFalse(output().contains("pid file"), output());
     }
 
     @Test
@@ -135,20 +158,15 @@ public class MainTest {
         CompletableFuture<Integer> run;
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
             mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());
-            run = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return mode.run();
-                } catch (InterruptedException e) {
-                    throw new IllegalStateException(e);
-                }
-            });
+            run = CompletableFuture.supplyAsync(mode::run);
             try {
                 awaitOutput("jvm 1    | parked");
 
-                mode.stop();
+                int stopped = mode.stop();
 
                 int code = run.get(1, TimeUnit.MINUTES);
                 assertTrue(code != 0, "a killed process does not exit with 0: " + code);
+                assertEquals(stopped, code, "stop() returns what run() returns, for the shutdown hook");
             } finally {
                 mode.stop(); // no parked JVM is left behind when an assertion fails
             }
@@ -165,13 +183,7 @@ public class MainTest {
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
             ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
                     ClasspathExpander.forThisHost());
-            CompletableFuture<Integer> run = CompletableFuture.supplyAsync(() -> {
-                try {
-                    return mode.run();
-                } catch (InterruptedException e) {
-                    throw new IllegalStateException(e);
-                }
-            });
+            CompletableFuture<Integer> run = CompletableFuture.supplyAsync(mode::run);
             try {
                 awaitOutput("jvm 1    | lingering");
 
@@ -184,6 +196,53 @@ public class MainTest {
         }
         assertTrue(output().contains("stopping: waiting up to 30 s for jvm 1 to end"), output());
         assertFalse(output().contains("terminating it"), output());
+    }
+
+    @Test(timeOut = 120_000)
+    public void theStopHookEndsTheJvmWithTheApplicationsExitCode() throws Exception {
+        WrapperConfig config = load(conf("wrapper.app.parameter.1=linger", "wrapper.app.parameter.2=500",
+                "wrapper.app.parameter.3=3", "wrapper.shutdown.timeout=30"));
+        List<Integer> halted = new ArrayList<>();
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
+            ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
+                    ClasspathExpander.forThisHost());
+            CompletableFuture<Integer> run = CompletableFuture.supplyAsync(mode::run);
+            try {
+                awaitOutput("jvm 1    | lingering");
+
+                Main.consoleStopHook(mode, out, halted::add).run();
+
+                assertEquals(halted, List.of(3), "halted once, with the application's code");
+                assertEquals(run.get(1, TimeUnit.MINUTES), 3);
+            } finally {
+                mode.stop();
+            }
+        }
+    }
+
+    @Test
+    public void aFailedSupervisionNeverExitsWithZero() {
+        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(7))), 7);
+        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(0))), 0);
+        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.empty())), 0);
+        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(5))), 5);
+        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(0))),
+                ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.empty())),
+                ExitCode.UNEXPECTED_ERROR.code());
+    }
+
+    @Test
+    public void consoleModeRunsOnce() throws Exception {
+        WrapperConfig config = load(conf("wrapper.app.parameter.1=park"));
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
+            ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
+                    ClasspathExpander.forThisHost());
+            mode.stop();
+            mode.run();
+
+            expectThrows(IllegalStateException.class, mode::run);
+        }
     }
 
     @Test

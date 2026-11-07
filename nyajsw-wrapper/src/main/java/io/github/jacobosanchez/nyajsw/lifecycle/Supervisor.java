@@ -69,12 +69,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>A stop runs the {@link StopChain}: the graceful strategies of {@code wrapper.stop.strategy}
  * share the stop budget, then {@code terminate} ends the application by force; one still alive 10 s
- * after that is given up on.
+ * after that is given up on, and supervision ends {@link State#FAILED FAILED}.
  */
 public final class Supervisor {
 
     /** How long a terminated application may take to be gone before the supervisor gives up on it. */
-    static final Duration AFTER_TERMINATION = Duration.ofSeconds(10);
+    public static final Duration AFTER_TERMINATION = Duration.ofSeconds(10);
 
     /**
      * How supervision ended.
@@ -181,16 +181,28 @@ public final class Supervisor {
 
     /**
      * Supervises the application until supervision is over. Call it once. A stop requested before
-     * the call ends supervision without starting anything.
+     * the call ends supervision without starting anything. An interrupt of the calling thread is a
+     * stop request, so the application is never left unwatched; the thread's interrupt status is set
+     * again when this returns.
      *
      * @return how supervision ended
-     * @throws InterruptedException when the calling thread is interrupted; the application is left
-     *                              as it is, so use {@link #requestStop()} to end supervision instead
      */
-    public Outcome run() throws InterruptedException {
+    public Outcome run() {
         start();
+        boolean interrupted = false;
         while (!state.isTerminal()) {
-            handle(events.take());
+            try {
+                handle(events.take());
+            } catch (InterruptedException e) {
+                if (!interrupted) {
+                    interrupted = true;
+                    log.status("interrupted: stopping");
+                    requestStop();
+                }
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
         return outcome();
     }
@@ -521,7 +533,10 @@ public final class Supervisor {
     }
 
     private void forceStop() {
-        log.status(application.name() + " did not end within " + seconds(scheduler.now().minus(stopStartedAt))
+        // The budget once it is spent (a real timer fires a little late); less when every step gave up early.
+        Duration spent = scheduler.now().minus(stopStartedAt);
+        Duration budget = lifecycle.stopBudget();
+        log.status(application.name() + " did not end within " + seconds(spent.compareTo(budget) >= 0 ? budget : spent)
                 + "; terminating it (" + stops.last().name() + ")");
         stops.last().strategy().requestStop(new StopStrategy.Context(application, log, Duration.ZERO));
         startTimer(AFTER_TERMINATION, this::abandon);
@@ -533,11 +548,12 @@ public final class Supervisor {
         return millis % 1000 == 0 ? millis / 1000 + " s" : String.format(Locale.ROOT, "%.3f s", millis / 1000.0);
     }
 
+    /** Supervision gave up: the application could not be stopped, which a caller must not take for success. */
     private void abandon() {
         log.error(application.name() + " is still running " + AFTER_TERMINATION.toSeconds()
                 + " s after it was terminated; giving up on it");
         application = null;
-        moveTo(State.STOPPED);
+        moveTo(State.FAILED);
     }
 
     private void startTimer(Duration delay, Runnable action) {

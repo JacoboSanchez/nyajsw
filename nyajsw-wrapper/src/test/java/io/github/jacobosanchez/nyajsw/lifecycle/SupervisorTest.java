@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -308,13 +309,13 @@ public class SupervisorTest {
         assertEquals(supervisor.state(), STOPPING);
 
         advance(supervisor, Supervisor.AFTER_TERMINATION);
-        assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.empty()));
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(FAILED, OptionalInt.empty()));
         assertTrue(logged().contains("jvm 1 is still running 10 s after it was terminated; giving up on it"),
                 logged());
 
         stubborn.exit(9); // too late to matter
         supervisor.runPending();
-        assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.empty()));
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(FAILED, OptionalInt.empty()));
     }
 
     @Test
@@ -705,7 +706,7 @@ public class SupervisorTest {
         supervisor.runPending();
         advance(supervisor, Supervisor.AFTER_TERMINATION);
 
-        assertEquals(supervisor.state(), STOPPED);
+        assertEquals(supervisor.state(), FAILED);
         assertEquals(stubborn.terminations(), 1);
     }
 
@@ -1144,7 +1145,7 @@ public class SupervisorTest {
 
         assertEquals(asked, List.of("first@0"));
         assertEquals(stubborn.terminations(), 1);
-        assertEquals(supervisor.outcome(), new Supervisor.Outcome(STOPPED, OptionalInt.empty()));
+        assertEquals(supervisor.outcome(), new Supervisor.Outcome(FAILED, OptionalInt.empty()));
     }
 
     @Test
@@ -1187,6 +1188,40 @@ public class SupervisorTest {
 
         assertEquals(asked, List.of());
         assertEquals(launched.get(0).terminations(), 1);
+    }
+
+    @Test
+    public void anInterruptOfTheRunningThreadIsAStopRequest() throws Exception {
+        CountDownLatch supervisorRunning = new CountDownLatch(1);
+        CountDownLatch stopping = new CountDownLatch(1);
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                Runnable::run, stops, scheduler, log, (from, to) -> {
+            if (to == RUNNING) {
+                supervisorRunning.countDown();
+            }
+            if (to == STOPPING) {
+                stopping.countDown();
+            }
+        });
+        CompletableFuture<Boolean> interruptedAfterwards = new CompletableFuture<>();
+        CompletableFuture<Supervisor.Outcome> outcome = new CompletableFuture<>();
+        Thread runner = Thread.ofPlatform().start(() -> {
+            outcome.complete(supervisor.run());
+            interruptedAfterwards.complete(Thread.currentThread().isInterrupted());
+        });
+        try {
+            assertTrue(supervisorRunning.await(1, TimeUnit.MINUTES));
+            runner.interrupt();
+            assertTrue(stopping.await(1, TimeUnit.MINUTES), "the interrupt asked for a stop");
+            launched.get(0).exit(0);
+
+            assertEquals(outcome.get(1, TimeUnit.MINUTES), new Supervisor.Outcome(STOPPED, OptionalInt.of(0)));
+            assertTrue(interruptedAfterwards.get(1, TimeUnit.MINUTES), "the interrupt status is set again");
+            assertTrue(logged().contains("interrupted: stopping"), logged());
+        } finally {
+            runner.interrupt();
+            runner.join(TimeUnit.MINUTES.toMillis(1));
+        }
     }
 
     @Test

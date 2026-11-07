@@ -36,15 +36,14 @@ public enum State {
     RESTART_WAIT,
 
     /**
-     * Supervision is over as planned and the wrapper may end: the application has ended, was left
-     * running because {@code wrapper.control} lets it outlive the wrapper, or was given up on after
-     * it survived termination (the supervisor logs that as an error).
+     * Supervision is over as planned and the wrapper may end: the application has ended, or was left
+     * running because {@code wrapper.control} lets it outlive the wrapper.
      */
     STOPPED,
 
     /**
-     * Supervision gave up: the application cannot be kept running, or an unexpected error ended
-     * supervision, which every other state that is not terminal may move to.
+     * Supervision gave up: the application cannot be kept running, survived its termination, or an
+     * unexpected error ended supervision, which every other state that is not terminal may move to.
      */
     FAILED;
 
