@@ -5,6 +5,7 @@ import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_ADDITIO
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DEPENDENCY;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DESCRIPTION;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DISPLAYNAME;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_JAVA_COMMAND;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_NAME;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_PASSWORD;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_STARTTYPE;
@@ -26,10 +27,14 @@ import java.util.Optional;
  *                        ({@code DOMAIN\\svc} gives {@code DOMAIN\svc}); empty means LocalSystem
  * @param password        {@code wrapper.ntservice.password}, if set
  * @param wrapperJvmOptions {@code wrapper.ntservice.additional.<n>} in index order
+ * @param javaCommand     {@code wrapper.ntservice.java.command}, if set: like {@code
+ *                        wrapper.java.command}, a bare name stays as it is and anything with a
+ *                        directory is resolved, against the configuration file's directory, since the
+ *                        service has no working directory of its own when it starts
  */
 public record ServiceConfig(Optional<String> name, Optional<String> displayName, Optional<String> description,
         StartType startType, List<String> dependencies, Optional<String> account, Optional<Secret> password,
-        List<String> wrapperJvmOptions) {
+        List<String> wrapperJvmOptions, Optional<String> javaCommand) {
 
     public ServiceConfig {
         Objects.requireNonNull(name, "name");
@@ -40,6 +45,7 @@ public record ServiceConfig(Optional<String> name, Optional<String> displayName,
         Objects.requireNonNull(account, "account");
         Objects.requireNonNull(password, "password");
         wrapperJvmOptions = List.copyOf(wrapperJvmOptions);
+        Objects.requireNonNull(javaCommand, "javaCommand");
     }
 
     /**
@@ -60,7 +66,8 @@ public record ServiceConfig(Optional<String> name, Optional<String> displayName,
                 values.familyValues(NTSERVICE_DEPENDENCY),
                 values.text(NTSERVICE_ACCOUNT).map(ValueParser::normalisePath),
                 values.text(NTSERVICE_PASSWORD).map(Secret::new),
-                values.familyValues(NTSERVICE_ADDITIONAL));
+                values.familyValues(NTSERVICE_ADDITIONAL),
+                JavaConfig.executable(values, NTSERVICE_JAVA_COMMAND, values.directory()));
     }
 
     /** {@code com.example.Main} gives {@code Main}; a nested {@code Outer$Inner} gives {@code Inner}. */

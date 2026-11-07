@@ -847,7 +847,10 @@ public final class ConfigKeys {
             .status(PLANNED, "P5")
             .description("Java executable of the wrapper JVM that runs the service")
             .derivedDefault("javaw from the java.home of the JVM that installs the service (D12)")
-            .notes("YAJSW defaults to the application's Java command; nyajsw needs Java 21 here")
+            .notes("YAJSW defaults to the application's Java command; nyajsw needs Java 21 here. Give it"
+                    + " with its directory (resolved against the configuration file's); a bare name, a missing"
+                    + " file or a Java older than 21 (told by its installation's release file) is an error at"
+                    + " install, and a Java whose version cannot be told a warning")
             .build();
 
     public static final KeySpec NTSERVICE_JAVA_CUSTOM_PROC_NAME =

@@ -215,7 +215,7 @@ public final class JavaCommandBuilder {
      *
      * @throws LaunchException for any other double quote; the message shows the argument masked
      */
-    static String unquote(String argument, String source, SecretMasker secrets) {
+    public static String unquote(String argument, String source, SecretMasker secrets) {
         int first = argument.indexOf('"');
         if (first < 0) {
             return argument;
