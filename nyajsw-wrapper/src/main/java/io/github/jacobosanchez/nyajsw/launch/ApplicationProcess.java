@@ -40,7 +40,7 @@ import java.util.concurrent.TimeoutException;
  * looked up by the operating system on the wrapper's own {@code PATH}, not on {@code
  * wrapper.app.env.PATH}.
  */
-public final class ApplicationProcess {
+public final class ApplicationProcess implements RunningApplication {
 
     /** How long the pumps may take to drain after the process ended; a grandchild may hold the pipes. */
     static final Duration DRAIN = Duration.ofSeconds(2);
@@ -89,7 +89,7 @@ public final class ApplicationProcess {
             throw new LaunchException("the working directory " + secrets.maskText(java.workingDir().toString())
                     + " does not exist");
         }
-        String name = "jvm " + invocation;
+        String name = ApplicationLauncher.nameOf(invocation);
         log.status("launching " + name + ": " + command.loggable());
         Process process;
         try {
@@ -156,16 +156,17 @@ public final class ApplicationProcess {
         throw new LaunchException("the Java executable " + secrets.maskText(executable) + " does not exist");
     }
 
-    /** The operating system's process id. */
+    @Override
     public long pid() {
         return process.pid();
     }
 
-    /** {@code jvm N}. */
+    @Override
     public String name() {
         return name;
     }
 
+    @Override
     public boolean isAlive() {
         return process.isAlive();
     }
@@ -198,9 +199,14 @@ public final class ApplicationProcess {
         }
     }
 
-    /** Completes with the exit code once the process has ended and its output is logged. */
+    @Override
     public CompletableFuture<Integer> onExit() {
         return exit.copy();
+    }
+
+    @Override
+    public CompletableFuture<Void> onProcessEnd() {
+        return process.onExit().handle((ended, error) -> null);
     }
 
     /**
@@ -211,6 +217,7 @@ public final class ApplicationProcess {
      * killing its parent can still escape; the job object of P6.4 closes that gap on Windows.
      * Graceful stops are the stop strategies' job (P3.4, P7).
      */
+    @Override
     public void terminateTree() {
         Deque<ProcessHandle> pending = new ArrayDeque<>(process.toHandle().descendants().toList());
         process.destroyForcibly();

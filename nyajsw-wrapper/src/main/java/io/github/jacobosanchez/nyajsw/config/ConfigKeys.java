@@ -50,6 +50,8 @@ public final class ConfigKeys {
     private static final String P9_BACKLOG = "P9";
     private static final List<String> LOG_LEVELS = names(LogLevel.class);
     private static final List<String> EXIT_ACTIONS = names(ExitAction.class);
+    private static final String STOP_ACTION_NOTE = "STOP keeps the wrapper running only when wrapper.control is LOOSE"
+            + " or APPLICATION; otherwise it ends the wrapper like SHUTDOWN (D20)";
 
     // ---- configuration file ----
 
@@ -359,61 +361,71 @@ public final class ConfigKeys {
     // ---- lifecycle ----
 
     public static final KeySpec CONTROL = yajsw("wrapper.control", ENUM, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Coupling between the lifetimes of the wrapper and the application")
             .values(names(ControlMode.class))
             .defaultValue("TIGHT")
+            .notes("The exit action STOP keeps the wrapper running only under LOOSE and APPLICATION; a stop of the"
+                    + " wrapper leaves the application running under LOOSE and WRAPPER (D20)")
             .build();
 
     public static final KeySpec ON_EXIT_DEFAULT = yajsw("wrapper.on_exit.default", ENUM, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Action when the application exits with a code that has no wrapper.on_exit.<code>")
             .values(EXIT_ACTIONS)
             .defaultValue("SHUTDOWN")
+            .notes(STOP_ACTION_NOTE)
             .build();
 
     public static final KeySpec ON_EXIT_0 = yajsw("wrapper.on_exit.0", ENUM, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Action when the application exits with code 0; when absent, wrapper.on_exit.default"
                     + " applies")
             .values(EXIT_ACTIONS)
+            .notes(STOP_ACTION_NOTE)
             .build();
 
     public static final KeySpec ON_EXIT = yajsw("wrapper.on_exit.<code>", ENUM, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Action when the application exits with this exit code")
             .values(EXIT_ACTIONS)
+            .notes(STOP_ACTION_NOTE)
             .build();
 
     public static final KeySpec RESTART_DELAY = yajsw("wrapper.restart.delay", DURATION, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Pause between the end of one invocation and the next start")
             .defaultValue("5")
             .build();
 
     public static final KeySpec MAX_FAILED_INVOCATIONS = yajsw("wrapper.max_failed_invocations", INTEGER, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Failed invocations in a row after which the wrapper gives up")
             .defaultValue("5")
+            .notes("N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures"
+                    + " (D20). An invocation fails when it cannot be started, does not become ready within"
+                    + " wrapper.startup.timeout, or ends within wrapper.successful_invocation_time; a launch error is retried whatever wrapper.on_exit says."
+                    + " Values below 1 count as 1")
             .build();
 
     public static final KeySpec SUCCESSFUL_INVOCATION_TIME =
             yajsw("wrapper.successful_invocation_time", DURATION, LIFECYCLE)
-                    .status(PLANNED, "P3")
+                    .status(SUPPORTED)
                     .description("Run time after which an invocation counts as successful")
                     .defaultValue("60")
                     .build();
 
     public static final KeySpec STARTUP_DELAY = yajsw("wrapper.startup.delay", DURATION, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Pause before the application is started for the first time")
             .defaultValue("0")
             .build();
 
     public static final KeySpec STARTUP_TIMEOUT = yajsw("wrapper.startup.timeout", DURATION, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Time the application has to become ready")
             .defaultValue("30")
+            .notes("0 means no limit, as in the Tanuki format")
             .build();
 
     public static final KeySpec SHUTDOWN_TIMEOUT = yajsw("wrapper.shutdown.timeout", DURATION, LIFECYCLE)
@@ -421,17 +433,18 @@ public final class ConfigKeys {
             .description("Time the application has to stop gracefully before it is terminated")
             .defaultValue("30")
             .notes("YAJSW documents no default and bounds the stop by this and wrapper.jvm_exit.timeout together."
-                    + " In console mode it is the time the application has after Ctrl+C, which it receives too")
+                    + " In console mode that sum is the time the application has after Ctrl+C, which it receives too")
             .toVerify(DEFAULT)
             .build();
 
     public static final KeySpec JVM_EXIT_TIMEOUT = yajsw("wrapper.jvm_exit.timeout", DURATION, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Time added to wrapper.shutdown.timeout before the application is terminated")
+            .notes("When not set it adds nothing")
             .build();
 
     public static final KeySpec PIDFILE = yajsw("wrapper.pidfile", PATH, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("File the wrapper writes its process id to")
             .build();
 
@@ -441,7 +454,7 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec JAVA_PIDFILE = yajsw("wrapper.java.pidfile", PATH, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("File the wrapper writes the application's process id to")
             .build();
 
@@ -611,10 +624,12 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec STOP_STRATEGY = nyajsw("wrapper.stop.strategy", LIST, LIFECYCLE)
-            .status(PLANNED, "P3")
+            .status(SUPPORTED)
             .description("Ordered stop strategies tried before the application is terminated")
             .derivedDefault("agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate")
-            .notes("Strategies and their order: implementation plan, section 4.6")
+            .notes("Names ignore case; unknown ones are skipped with a warning and terminate is always the last"
+                    + " step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout;"
+                    + " when both are 0 they are skipped. Strategies: implementation plan, section 4.6")
             .build();
 
     public static final KeySpec STOP_COMMAND = nyajsw("wrapper.stop.command", STRING, LIFECYCLE)

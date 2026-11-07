@@ -111,7 +111,9 @@ public class WrapperConfigTest {
         assertEquals(log.maxSizeBytes(), Optional.of(10L * 1024 * 1024));
         assertEquals(log.logfileLevel(), Optional.of(LogLevel.INFO));
 
-        assertEquals(config.probes().readinessTypes(), List.of("tcp", "http"));
+        // Planned until P7: what applies is the default, whatever the file says.
+        assertEquals(config.probes().readinessTypes(),
+                ConfigKeys.READINESS_TYPE.status().takesEffect() ? List.of("tcp", "http") : List.of("process"));
         assertEquals(config.probes().tcpPort(), Optional.of(8080));
         assertEquals(config.file(), dir.resolve("wrapper.conf"));
     }
@@ -133,7 +135,10 @@ public class WrapperConfigTest {
         assertEquals(lifecycle.exitAction(0), ExitAction.SHUTDOWN);
         assertEquals(lifecycle.maxFailedInvocations(), 5);
         assertEquals(lifecycle.successfulInvocationTime(), Duration.ofSeconds(60));
+        assertEquals(lifecycle.startupDelay(), Duration.ZERO);
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(30));
+        assertEquals(lifecycle.jvmExitTimeout(), Duration.ZERO);
+        assertEquals(lifecycle.stopBudget(), Duration.ofSeconds(30));
         assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
         // The agent is enabled by default but not implemented yet (P7), so the defaults do without it.
         assertEquals(lifecycle.stopStrategies(), List.of("terminate"));
@@ -207,8 +212,7 @@ public class WrapperConfigTest {
     public void exitCodeZeroComesFromItsOwnKey() throws IOException {
         WrapperConfig config = load("wrapper.on_exit.0=RESTART", "wrapper.on_exit.00=STOP", "wrapper.on_exit.-0=STOP",
                 "wrapper.on_exit.-1=STOP", "wrapper.on_exit.7=STOP", "wrapper.on_exit.07=RESTART",
-                "wrapper.on_exit.99999999999=STOP", "wrapper.on_exit.3221225477=SHUTDOWN",
-                "wrapper.on_exit.5=SOMETIMES");
+                "wrapper.on_exit.3221225477=SHUTDOWN");
 
         assertEquals(config.lifecycle().exitActions(), Map.of(-1073741819, ExitAction.SHUTDOWN, -1, ExitAction.STOP,
                 0, ExitAction.RESTART, 7, ExitAction.RESTART));
@@ -218,9 +222,20 @@ public class WrapperConfigTest {
         List<String> messages = messages(config);
         assertTrue(messages.contains("wrapper.on_exit.00 means exit code 0, which wrapper.on_exit.0 sets; write that"
                 + " key instead. Ignored"), messages.toString());
-        assertTrue(messages.contains("wrapper.on_exit.99999999999: number out of range; ignored"), messages.toString());
         assertTrue(messages.stream().anyMatch(m -> m.startsWith("wrapper.on_exit.07 has the same index as")),
                 messages.toString());
+    }
+
+    @Test
+    public void anExitCodeOutOfRangeOrAnInvalidActionIsAnErrorNowThatExitActionsTakeEffect() {
+        ConfigException error = expectThrows(ConfigException.class,
+                () -> load("wrapper.on_exit.99999999999=STOP", "wrapper.on_exit.5=SOMETIMES"));
+
+        List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
+        assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.on_exit.99999999999: number out of range")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(p -> p.contains("invalid value 'SOMETIMES' for wrapper.on_exit.5")),
+                problems.toString());
     }
 
     @Test
@@ -255,20 +270,39 @@ public class WrapperConfigTest {
     }
 
     @Test
-    public void laterInvalidExitActionLeavesTheCodeToTheDefault() throws IOException {
-        WrapperConfig config = load("wrapper.on_exit.default=SHUTDOWN", "wrapper.on_exit.7=STOP", "wrapper.on_exit.07=NOPE");
+    public void laterInvalidExitActionIsAnError() {
+        ConfigException error = expectThrows(ConfigException.class, () -> load("wrapper.on_exit.default=SHUTDOWN",
+                "wrapper.on_exit.7=STOP", "wrapper.on_exit.07=NOPE"));
 
-        assertEquals(config.lifecycle().exitAction(7), ExitAction.SHUTDOWN);
+        assertTrue(error.getMessage().contains("invalid value 'NOPE' for wrapper.on_exit.07"), error.getMessage());
     }
 
     @Test
     public void invalidValueOfAPlannedKeyFallsBackToTheDefaultWithWarning() throws IOException {
-        WrapperConfig config = load("wrapper.startup.timeout=soon", "wrapper.control=SOMETIMES");
+        WrapperConfig config = load("wrapper.readiness.interval=soon", "wrapper.liveness.action=SOMETIMES");
 
-        assertEquals(config.lifecycle().startupTimeout(), Duration.ofSeconds(30));
-        assertEquals(config.lifecycle().control(), ControlMode.TIGHT);
+        assertEquals(config.probes().readinessInterval(), Duration.ofSeconds(1));
+        assertEquals(config.probes().livenessAction(), FailureAction.RESTART);
         assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'soon'")),
                 messages(config).toString());
+    }
+
+    @Test
+    public void invalidValuesOfTheSupervisionKeysAreErrorsNowThatTheyTakeEffect() {
+        ConfigException error = expectThrows(ConfigException.class,
+                () -> load("wrapper.startup.timeout=soon", "wrapper.control=SOMETIMES"));
+
+        assertEquals(error.problems().size(), 2, error.getMessage());
+        assertTrue(error.getMessage().contains("wrapper.startup.timeout"), error.getMessage());
+        assertTrue(error.getMessage().contains("wrapper.control"), error.getMessage());
+    }
+
+    @Test
+    public void aValidReadinessSettingHasNoEffectBeforeItsPhase() throws IOException {
+        WrapperConfig config = load("wrapper.readiness.interval=7");
+
+        assertEquals(config.probes().readinessInterval(), ConfigKeys.READINESS_INTERVAL.status().takesEffect()
+                ? Duration.ofSeconds(7) : Duration.ofSeconds(1));
     }
 
     @Test
@@ -427,6 +461,16 @@ public class WrapperConfigTest {
 
     private static List<String> messages(WrapperConfig config) {
         return config.warnings().stream().map(ConfigWarning::message).toList();
+    }
+
+    @Test
+    public void theStopBudgetAddsTheJvmExitTimeoutToTheShutdownTimeout() throws IOException {
+        LifecycleConfig lifecycle = load("wrapper.java.app.mainclass=Main", "wrapper.shutdown.timeout=20",
+                "wrapper.jvm_exit.timeout=15", "wrapper.startup.delay=3").lifecycle();
+
+        assertEquals(lifecycle.jvmExitTimeout(), Duration.ofSeconds(15));
+        assertEquals(lifecycle.stopBudget(), Duration.ofSeconds(35));
+        assertEquals(lifecycle.startupDelay(), Duration.ofSeconds(3));
     }
 
     private WrapperConfig load(String... lines) throws IOException {

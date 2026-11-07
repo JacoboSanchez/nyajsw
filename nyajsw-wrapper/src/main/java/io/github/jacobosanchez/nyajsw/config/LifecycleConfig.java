@@ -2,6 +2,7 @@ package io.github.jacobosanchez.nyajsw.config;
 
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.CONTROL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JAVA_PIDFILE;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JVM_EXIT_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.MAX_FAILED_INVOCATIONS;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT_0;
@@ -11,6 +12,7 @@ import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_INTERVAL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.RESTART_DELAY;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.SHUTDOWN_TIMEOUT;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STARTUP_DELAY;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STARTUP_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STOP_COMMAND;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STOP_STRATEGY;
@@ -37,8 +39,11 @@ import java.util.TreeMap;
  * @param restartDelay             {@code wrapper.restart.delay}
  * @param maxFailedInvocations     {@code wrapper.max_failed_invocations}
  * @param successfulInvocationTime {@code wrapper.successful_invocation_time}
+ * @param startupDelay             {@code wrapper.startup.delay}
  * @param startupTimeout           {@code wrapper.startup.timeout}
  * @param shutdownTimeout          {@code wrapper.shutdown.timeout}
+ * @param jvmExitTimeout           {@code wrapper.jvm_exit.timeout}; zero when not set, since YAJSW
+ *                                 documents no default
  * @param pidFile                  {@code wrapper.pidfile}, if set
  * @param javaPidFile              {@code wrapper.java.pidfile}, if set
  * @param stopStrategies           {@code wrapper.stop.strategy}; by default {@code agent,terminate} when
@@ -49,9 +54,9 @@ import java.util.TreeMap;
  * @param pingTimeout              {@code wrapper.ping.timeout}, if set
  */
 public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exitActions, ExitAction defaultExitAction,
-        Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime,
-        Duration startupTimeout, Duration shutdownTimeout, Optional<Path> pidFile, Optional<Path> javaPidFile,
-        List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
+        Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime, Duration startupDelay,
+        Duration startupTimeout, Duration shutdownTimeout, Duration jvmExitTimeout, Optional<Path> pidFile,
+        Optional<Path> javaPidFile, List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
         Optional<Duration> pingTimeout) {
 
     public LifecycleConfig {
@@ -60,8 +65,10 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
         Objects.requireNonNull(defaultExitAction, "defaultExitAction");
         Objects.requireNonNull(restartDelay, "restartDelay");
         Objects.requireNonNull(successfulInvocationTime, "successfulInvocationTime");
+        Objects.requireNonNull(startupDelay, "startupDelay");
         Objects.requireNonNull(startupTimeout, "startupTimeout");
         Objects.requireNonNull(shutdownTimeout, "shutdownTimeout");
+        Objects.requireNonNull(jvmExitTimeout, "jvmExitTimeout");
         Objects.requireNonNull(pidFile, "pidFile");
         Objects.requireNonNull(javaPidFile, "javaPidFile");
         stopStrategies = List.copyOf(stopStrategies);
@@ -79,13 +86,21 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
         return "LifecycleConfig[values hidden; see ConfigDump]";
     }
 
+    /**
+     * The time a stop may take before the application is terminated: {@code wrapper.shutdown.timeout}
+     * plus {@code wrapper.jvm_exit.timeout}, as YAJSW bounds the stop by both together.
+     */
+    public Duration stopBudget() {
+        return shutdownTimeout.plus(jvmExitTimeout);
+    }
+
     /** The action for {@code exitCode}. */
     public ExitAction exitAction(int exitCode) {
         return exitActions.getOrDefault(exitCode, defaultExitAction);
     }
 
     static LifecycleConfig from(ConfigValues values, boolean agentInEffect) {
-        List<String> stopStrategies = values.list(STOP_STRATEGY);
+        List<String> stopStrategies = stopStrategies(values);
         return new LifecycleConfig(
                 values.required(values.enumeration(CONTROL, ControlMode.class), CONTROL),
                 exitActions(values),
@@ -93,14 +108,32 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 values.required(values.duration(RESTART_DELAY), RESTART_DELAY),
                 values.required(values.integer(MAX_FAILED_INVOCATIONS), MAX_FAILED_INVOCATIONS),
                 values.required(values.duration(SUCCESSFUL_INVOCATION_TIME), SUCCESSFUL_INVOCATION_TIME),
+                values.required(values.duration(STARTUP_DELAY), STARTUP_DELAY),
                 values.required(values.duration(STARTUP_TIMEOUT), STARTUP_TIMEOUT),
                 values.required(values.duration(SHUTDOWN_TIMEOUT), SHUTDOWN_TIMEOUT),
+                values.duration(JVM_EXIT_TIMEOUT).orElse(Duration.ZERO),
                 values.path(PIDFILE),
                 values.path(JAVA_PIDFILE),
                 stopStrategies.isEmpty() ? defaultStopStrategies(agentInEffect) : stopStrategies,
                 values.text(STOP_COMMAND),
                 values.duration(PING_INTERVAL),
                 values.duration(PING_TIMEOUT));
+    }
+
+    /**
+     * {@code wrapper.stop.strategy} as configured, or nothing (the default applies) when the value
+     * holds a secret copied in with <code>${...}</code>: a secret names no strategy, and once the
+     * value is split into names, a secret with a comma would reach the log in pieces that no masker
+     * recognises. The warning does not echo the value.
+     */
+    private static List<String> stopStrategies(ConfigValues values) {
+        Optional<String> raw = values.string(STOP_STRATEGY);
+        if (raw.isPresent() && !values.masker().maskText(raw.get()).equals(raw.get())) {
+            values.location(STOP_STRATEGY).ifPresent(location -> values.warn(location, STOP_STRATEGY.name()
+                    + " contains a secret, which cannot name a stop strategy; ignored, the default applies"));
+            return List.of();
+        }
+        return values.list(STOP_STRATEGY);
     }
 
     /** The derived default of {@code wrapper.stop.strategy}, as its registry description states. */
@@ -122,9 +155,10 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
      * spelling of a code in file order wins: for {@code 7} and {@code 07} the collector has warned;
      * spellings that only agree after normalising ({@code -1} and {@code 4294967295}) warn here.
      * Code 0 comes only from the exact {@code wrapper.on_exit.0}, so another spelling of 0 is ignored
-     * with a warning; without it, code 0 takes the default action like any other code. An invalid
-     * action (reported by the validator) leaves the code to the default action, and so does a later
-     * spelling set to nothing. "Later" is precedence order ({@link ConfigValues#familyInFileOrder}):
+     * with a warning; without it, code 0 takes the default action like any other code. A later
+     * spelling set to nothing leaves the code to the default action. An invalid action is a
+     * configuration error (the validator reports it) since the keys take effect (P3.6); it is
+     * skipped here so that all errors are collected. "Later" is precedence order ({@link ConfigValues#familyInFileOrder}):
      * a system property counts as the latest.
      */
     private static Map<Integer, ExitAction> exitActions(ConfigValues values) {
