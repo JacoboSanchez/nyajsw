@@ -254,6 +254,7 @@ public class WindowsServiceControllerTest {
         assertEquals(failure.errorCode(), Win32Errors.SERVICE_EXISTS);
         verify(scm).close(MANAGER);
         verify(scm, never()).close(SERVICE);
+        verify(scm, never()).deleteService(any()); // the service of that name is someone else's
     }
 
     @Test

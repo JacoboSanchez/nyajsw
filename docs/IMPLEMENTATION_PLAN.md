@@ -1186,7 +1186,18 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       `JnaScmApi.failure`, one place for the system text. The right stays when the service is
       removed, as the Services console leaves it.
 - [ ] P5.6 `windows-integration` tests: install → query → remove a throwaway service (start/stop
-      come with P6), cleanup in `@AfterMethod(alwaysRun = true)`.
+      come with P6), cleanup in `@AfterMethod(alwaysRun = true)`. **Status:** written
+      (`platform.windows.WindowsServiceIntegrationTest`, group `windows-integration`): install a
+      `nyajsw-test-<random>` demand-start service, query it as `STOPPED` without a pid, read the
+      registration back from `HKLM\SYSTEM\CurrentControlSet\Services\<name>` (binary path, display
+      name, description, `LocalSystem`, own process, start type, both dependencies, pre-shutdown
+      timeout), remove it and see it gone; a delayed one is automatic with `DelayedAutostart=1`; a
+      second install is refused with 1073 and keeps the first; a service that is not installed has
+      no status. Run unelevated on Windows 10, the query and the access-denied path work against the
+      real SCM (install is refused with 5 and the Administrator hint); `CreateService`,
+      `ChangeServiceConfig2` and `DeleteService` are proven only by the elevated run (`mvn -q verify
+      -Pwindows-integration` as Administrator), still to be done before this box is ticked. The LSA
+      grant needs a real local user and is not covered.
 Done when: unit tests cover every `ScmApi` interaction with mocks; integration job green on Windows.
 
 ### P6 — Service host (running as the service)
@@ -1366,14 +1377,15 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `bin\javaw.exe` default and the `;` separator), and the D19 unquoting it shares lives as a public
   static on the builder; a small `launch` helper could hold both if a third caller appears. A bad
   `wrapper.ntservice.additional.N` fails as a `LaunchException` (exit 1); P5.4 may want to report it
-  as a configuration error. Confirm in the P5.6 integration test that the SCM expands `%NAME%` in
-  the stored binary path (the warning assumes it).
+  as a configuration error. The stored binary path is the unexpanded string, so whether the SCM
+  expands `%NAME%` at start (the warning assumes it) can only be confirmed once P6 starts a service.
 - P5.2 (review): `platform.windows.StateWait.Pause` repeats `log.RollingFileSink.Pause` (a pause
   that tests replace); extract one shared type when a third user appears. `WindowsServiceController`
   reads `lifecycle.Supervisor.longestStop`, a new edge from `platform` to `lifecycle` that the P6
-  service host needs anyway. In P5.6, read the installed configuration back
-  (`QueryServiceConfig`/`QueryServiceConfig2`: dependencies, delayed start, pre-shutdown timeout).
-  System error texts are localised, so integration tests must not compare them.
+  service host needs anyway. P5.6 reads the installed configuration back from the registry instead
+  of `QueryServiceConfig`/`QueryServiceConfig2`, which `ScmApi` does not have; `-q` will need them
+  to show configuration. System error texts are localised, so integration tests must not compare
+  them.
 - P5.4 (review): the service commands report through `WrapperLog.console`, the log for before
   the configuration is read: it masks nothing itself (each call site masks), ignores
   `wrapper.console.format`/`loglevel` and never shows debug output. A console-only log built from

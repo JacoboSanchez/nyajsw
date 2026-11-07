@@ -94,7 +94,8 @@ public final class ServiceCommandLine {
         return new ServiceCommandLine(Path.of(System.getProperty("java.home")), classpath, nativeCharset());
     }
 
-    private static Charset nativeCharset() {
+    /** The ANSI code page the Java launcher reads its command line in, else the default charset. */
+    static Charset nativeCharset() {
         try {
             return Charset.forName(System.getProperty("native.encoding"));
         } catch (IllegalArgumentException | NullPointerException e) { // not set, or not a charset this JVM has
