@@ -1,6 +1,8 @@
 package io.github.jacobosanchez.nyajsw.log;
 
+import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
+import io.github.jacobosanchez.nyajsw.config.KeyDefault;
 import io.github.jacobosanchez.nyajsw.config.LineFormat;
 import io.github.jacobosanchez.nyajsw.config.LogConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
@@ -8,6 +10,8 @@ import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -15,7 +19,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
+import java.util.logging.ErrorManager;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -29,8 +36,8 @@ import java.util.logging.Logger;
  *
  * <p>Each sink has its own threshold ({@code wrapper.console.loglevel}, {@code
  * wrapper.logfile.loglevel}); a message is built and passed on when at least one sink would write
- * it. An instance is immutable: the command-line entry point builds a bootstrap log first and a new,
- * configured one once the configuration is read, instead of reconfiguring a log in place.
+ * it. An instance is immutable: the command-line entry point builds an early console log first and a
+ * new, configured one once the configuration is read, instead of reconfiguring a log in place.
  *
  * <p>Debug messages also carry a {@link DebugDetail}; a log writes those up to its own detail
  * ({@code wrapper.debug.level}), shared with its views. Captured application output is logged at
@@ -49,6 +56,9 @@ public final class WrapperLog implements AutoCloseable {
 
     /** The source of the wrapper's own messages. */
     public static final String WRAPPER_SOURCE = "wrapper";
+
+    /** How the names of {@link #bootstrapFile} logs begin. */
+    static final String BOOTSTRAP_PREFIX = "nyajsw-bootstrap-";
 
     private final Logger logger;
     private final String source;
@@ -101,11 +111,23 @@ public final class WrapperLog implements AutoCloseable {
     }
 
     /**
-     * The log {@code config} describes, with times and dates in the system's zone; see {@link
-     * #open(LogConfig, PrintStream, SecretMasker, Clock)}.
+     * The log {@code config} describes, with times and dates in the system's zone, for console mode:
+     * what goes wrong with the log file goes to the console; see {@link #open(LogConfig, PrintStream,
+     * SecretMasker, Consumer)}.
      */
     public static WrapperLog open(LogConfig config, PrintStream console, SecretMasker secrets) {
-        return open(config, console, secrets, Clock.systemDefaultZone());
+        return open(config, console, secrets, null, Clock.systemDefaultZone(), System.err);
+    }
+
+    /**
+     * The log {@code config} describes, with what goes wrong with the log file (it cannot be opened,
+     * a roll fails, the disk is full) sent to {@code fileProblems}, masked, instead of the console:
+     * for service mode (P6), which has no console and passes the {@link #bootstrap} log.
+     */
+    public static WrapperLog open(LogConfig config, PrintStream console, SecretMasker secrets,
+            Consumer<String> fileProblems) {
+        Objects.requireNonNull(fileProblems, "fileProblems");
+        return open(config, console, secrets, fileProblems, Clock.systemDefaultZone(), System.err);
     }
 
     /**
@@ -114,26 +136,33 @@ public final class WrapperLog implements AutoCloseable {
      * <ul>
      *   <li>the console ({@code console}, never closed) in {@code wrapper.console.format} from {@code
      *       wrapper.console.loglevel} up, or no console output when the format is blank;
-     *   <li>the log file ({@code wrapper.logfile}, rolled by size) in {@code wrapper.logfile.format}
-     *       from {@code wrapper.logfile.loglevel} up, or none when either is blank or the level is
-     *       {@code NONE}; a file that cannot be opened is reported as an error on the console, and
-     *       the log goes on without it;
+     *   <li>the log file ({@code wrapper.logfile}, rolled as {@link RollingFileSink} says) in {@code
+     *       wrapper.logfile.format} from {@code wrapper.logfile.loglevel} up, or none when either is
+     *       blank or the level is {@code NONE}; a file that cannot be opened is reported, and the log
+     *       goes on without it;
      *   <li>debug messages up to {@code wrapper.debug.level}.
      * </ul>
      *
-     * Times on the lines are in {@code clock}'s zone, and so is the date of a {@code YYYYMMDD} file
-     * name. File names in messages are masked with {@code secrets}.
+     * What goes wrong with the file goes to {@code fileProblems}, or, when that is {@code null}, to
+     * the console as an {@code ERROR} line where the console shows those, and to {@code stderr}
+     * otherwise. Times on the lines are in {@code clock}'s zone, and so is the date of a {@code
+     * YYYYMMDD} file name. File names in messages are masked with {@code secrets}.
      */
-    static WrapperLog open(LogConfig config, PrintStream console, SecretMasker secrets, Clock clock) {
+    static WrapperLog open(LogConfig config, PrintStream console, SecretMasker secrets,
+            Consumer<String> fileProblems, Clock clock, PrintStream stderr) {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(console, "console");
         Objects.requireNonNull(secrets, "secrets");
         Objects.requireNonNull(clock, "clock");
+        Objects.requireNonNull(stderr, "stderr");
         ZoneId zone = clock.getZone();
         List<Handler> sinks = new ArrayList<>();
-        config.consoleFormat().ifPresent(format -> sinks.add(
-                consoleSink(console, format, zone, config.consoleThreshold())));
-        String fileProblem = null;
+        Handler consoleSink = config.consoleFormat()
+                .map(format -> consoleSink(console, format, zone, config.consoleThreshold())).orElse(null);
+        if (consoleSink != null) {
+            sinks.add(consoleSink);
+        }
+        Consumer<String> problems = fileProblems != null ? fileProblems : reporter(consoleSink, clock, stderr);
         if (config.logfile().isPresent() && config.logfileFormat().isPresent()
                 && config.logfileThreshold() != LogLevel.NONE) {
             try {
@@ -141,17 +170,81 @@ public final class WrapperLog implements AutoCloseable {
                         config.maxSizeBytes().orElse(0L), config.maxFiles().orElse(0), config.encoding(),
                         config.rollMode(), config.maxDays());
                 sinks.add(RollingFileSink.open(settings, new LineFormatter(config.logfileFormat().get(), zone),
-                        WrapperLevel.threshold(config.logfileThreshold()), clock, secrets::maskText));
+                        WrapperLevel.threshold(config.logfileThreshold()), clock, secrets::maskText,
+                        new ForwardingErrorManager(problems)));
             } catch (IOException | RuntimeException e) {
-                fileProblem = secrets.maskText("cannot open the log file " + config.logfile().get() + ": " + e)
-                        + "; logging to the console only";
+                problems.accept(secrets.maskText("cannot open the log file " + config.logfile().get() + ": " + e)
+                        + "; the log goes on without it");
             }
         }
-        WrapperLog log = of(clock, config.debugDetail(), sinks.toArray(Handler[]::new));
-        if (fileProblem != null) {
-            log.error(fileProblem);
+        return of(clock, config.debugDetail(), sinks.toArray(Handler[]::new));
+    }
+
+    /**
+     * Where the log file's own failures go in console mode: straight to the console sink, past the
+     * logger, which would hand them to the failing file again, when the console shows {@code ERROR}
+     * lines; to {@code stderr} when it does not or there is no console.
+     */
+    static Consumer<String> reporter(Handler console, Clock clock, PrintStream stderr) {
+        return message -> {
+            LogRecord record = record(LogLevel.ERROR, WRAPPER_SOURCE, message, clock);
+            if (console != null && console.isLoggable(record)) {
+                console.publish(record);
+            } else {
+                stderr.println("nyajsw: " + message);
+            }
+        };
+    }
+
+    /**
+     * A log that writes only to {@code file}, for the wrapper before its configuration is read and
+     * for the problems of the configured log file, where there is no console (service mode, P6):
+     * YAJSW's default file format and level (the registry's defaults of {@code
+     * wrapper.logfile.format} and {@code wrapper.logfile.loglevel}), UTF-8. It never rolls: it is
+     * written rarely, and its usual place, the temporary directory, is writable by every user, where
+     * moving and deleting files by a predictable name is best avoided. When the file cannot be
+     * opened either, the reason goes to standard error and the log writes nowhere; it never fails
+     * its caller.
+     */
+    public static WrapperLog bootstrap(Path file) {
+        return bootstrap(file, Clock.systemDefaultZone(), System.err);
+    }
+
+    static WrapperLog bootstrap(Path file, Clock clock, PrintStream stderr) {
+        Objects.requireNonNull(file, "file");
+        Objects.requireNonNull(clock, "clock");
+        ErrorManager errors = new ForwardingErrorManager(reporter(null, clock, stderr));
+        LogLevel level = LogLevel.valueOf(
+                ((KeyDefault.Constant) ConfigKeys.LOGFILE_LOGLEVEL.defaultValue()).value());
+        try {
+            RollingFileSink sink = RollingFileSink.open(
+                    new RollingFileSink.Settings(file, 0, 0, StandardCharsets.UTF_8),
+                    new LineFormatter(LineFormat.LOGFILE_DEFAULT, clock.getZone()), WrapperLevel.threshold(level),
+                    clock, UnaryOperator.identity(), errors);
+            return of(clock, DebugDetail.ALL, sink);
+        } catch (IOException | RuntimeException e) {
+            errors.error("cannot open the bootstrap log " + file + ": " + e, null, ErrorManager.OPEN_FAILURE);
+            return of(clock, DebugDetail.ALL);
         }
-        return log;
+    }
+
+    /**
+     * The bootstrap log's usual place for {@code name} (a service name), {@code
+     * nyajsw-bootstrap-<name>.log} in the JVM's temporary directory ({@code %TEMP%}; for {@code
+     * LocalSystem}, the system's): one file per service, so that services do not share one.
+     * Characters other than letters, digits, {@code .}, {@code _} and {@code -} become {@code _}.
+     */
+    public static Path bootstrapFile(String name) {
+        Objects.requireNonNull(name, "name");
+        String safe = name.replaceAll("[^A-Za-z0-9._-]", "_");
+        return Path.of(System.getProperty("java.io.tmpdir"), BOOTSTRAP_PREFIX + safe + ".log");
+    }
+
+    private static LogRecord record(LogLevel level, String source, String message, Clock clock) {
+        LogRecord record = new WrapperRecord(WrapperLevel.of(level), message);
+        record.setLoggerName(source);
+        record.setInstant(clock.instant());
+        return record;
     }
 
     private static Handler consoleSink(PrintStream out, LineFormat format, ZoneId zone, LogLevel threshold) {
@@ -225,9 +318,7 @@ public final class WrapperLog implements AutoCloseable {
     }
 
     private void write(LogLevel level, String message, Throwable error) {
-        LogRecord record = new WrapperRecord(WrapperLevel.of(level), message);
-        record.setInstant(clock.instant());
-        record.setLoggerName(source);
+        LogRecord record = record(level, source, message, clock);
         record.setThrown(error);
         logger.log(record);
     }

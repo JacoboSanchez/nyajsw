@@ -73,9 +73,15 @@ public class RollingFileSinkTest {
     }
 
     private RollingFileSink sink(RollingFileSink.Settings settings) throws IOException {
-        RollingFileSink sink = RollingFileSink.open(settings,
+        ErrorManager recording = new ErrorManager() {
+            @Override
+            public synchronized void error(String message, Exception error, int code) {
+                errors.add(message + (error == null ? "" : " / " + error));
+            }
+        };
+        return RollingFileSink.open(settings,
                 new LineFormatter(new LineFormat(List.of(LineFormat.Field.MESSAGE), "\n"), ZoneOffset.UTC),
-                Level.ALL, clock, text -> text.replace("hunter2", "****"),
+                Level.ALL, clock, text -> text.replace("hunter2", "****"), recording,
                 new RollingFileSink.Seams(
                         (from, to) -> {
                             moves.add(from);
@@ -88,13 +94,6 @@ public class RollingFileSinkTest {
                             Files.deleteIfExists(file);
                         },
                         pauses::add, () -> nanos));
-        sink.setErrorManager(new ErrorManager() {
-            @Override
-            public synchronized void error(String message, Exception error, int code) {
-                errors.add(message + (error == null ? "" : " / " + error));
-            }
-        });
-        return sink;
     }
 
     private void fail(Path file) throws AccessDeniedException {
@@ -140,6 +139,20 @@ public class RollingFileSinkTest {
         assertEquals(read("wrapper.log"), "jvm 2\n");
         assertEquals(read("wrapper.log.1"), "start\njvm 1\n");
         assertEquals(read("wrapper.log.2"), "last run\n");
+    }
+
+    @Test
+    public void aStartRollThatFailsIsReportedToTheErrorManagerGivenToOpen() throws IOException {
+        Files.writeString(dir.resolve("wrapper.log"), "last run\n");
+        Path current = dir.resolve("wrapper.log");
+        failing = current::equals;
+        try (RollingFileSink sink = sink("wrapper.log", 0, RollMode.WRAPPER, -1)) {
+            write(sink, "start");
+        }
+
+        assertEquals(errors.size(), 1, errors.toString());
+        assertTrue(errors.get(0).startsWith("cannot roll the log file " + current), errors.get(0));
+        assertEquals(read("wrapper.log"), "last run\nstart\n", "written on in the file it could not roll");
     }
 
     @Test

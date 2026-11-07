@@ -50,8 +50,14 @@ public record LineFormat(List<Field> fields, String lineSeparator) {
     private static final String LF = "\\n";
 
     /** YAJSW's default console format, the registry's default of {@code wrapper.console.format}. */
-    public static final LineFormat CONSOLE_DEFAULT = parse(
-            ((KeyDefault.Constant) ConfigKeys.CONSOLE_FORMAT.defaultValue()).value()).format().orElseThrow();
+    public static final LineFormat CONSOLE_DEFAULT = registryDefault(ConfigKeys.CONSOLE_FORMAT);
+
+    /** YAJSW's default log file format, the registry's default of {@code wrapper.logfile.format}. */
+    public static final LineFormat LOGFILE_DEFAULT = registryDefault(ConfigKeys.LOGFILE_FORMAT);
+
+    private static LineFormat registryDefault(KeySpec spec) {
+        return parse(((KeyDefault.Constant) spec.defaultValue()).value()).format().orElseThrow();
+    }
 
     public LineFormat {
         fields = List.copyOf(fields);

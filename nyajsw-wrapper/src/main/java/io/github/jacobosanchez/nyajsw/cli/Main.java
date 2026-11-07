@@ -68,14 +68,14 @@ public final class Main {
 
     private static int console(String file, PrintStream out) {
         WrapperConfig config;
-        try (WrapperLog bootstrap = WrapperLog.console(out, LogLevel.INFO)) {
+        try (WrapperLog early = WrapperLog.console(out, LogLevel.INFO)) {
             try {
                 config = WrapperConfig.from(ConfigLoader.forCurrentProcess().load(Path.of(file)));
             } catch (ConfigException e) {
-                e.problems().forEach(problem -> bootstrap.error(problem.getMessage()));
+                e.problems().forEach(problem -> early.error(problem.getMessage()));
                 return ExitCode.CONFIGURATION_ERROR.code();
             } catch (InvalidPathException e) {
-                bootstrap.error("not a valid path for the configuration file: " + file);
+                early.error("not a valid path for the configuration file: " + file);
                 return ExitCode.CONFIGURATION_ERROR.code();
             }
         }
