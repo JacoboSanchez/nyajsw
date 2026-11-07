@@ -1324,7 +1324,24 @@ Goal: the wrapper itself runs under the SCM.
       a debug line, not an error; the tree is read before the job is ended; the user guide says
       that under `TIGHT`/`APPLICATION` everything the application started ends with supervision.
 - [ ] P6.5 `windows-integration` end-to-end: install → start → `RUNNING` → stop → `STOPPED` →
-      remove, with a test application and the wrapper log attached on failure.
+      remove, with a test application and the wrapper log attached on failure. **Status:** written
+      (`platform.windows.WindowsServiceEndToEndTest`, group `windows-integration`): the service's
+      binary path runs `--service` on the test JVM's full classpath (surefire's
+      `surefire.test.class.path`: the wrapper's classes, JNA, the test application); a
+      `TestApplication` service is started until `RUNNING` with a pid, its log shows the service
+      name and `-Xrs` in the application's JVM options, it is stopped until `STOPPED` with Win32
+      exit code 0 and both processes gone; an application that ends with 3 stops the service with
+      1066 and `dwServiceSpecificExitCode` (`sc query`'s `SERVICE_EXIT_CODE`) 3; a configuration
+      broken after the install stops it with 1066 and 2, its error in the bootstrap log beside the
+      configuration. A failed test prints the wrapper log and both bootstrap logs into the report
+      (the service's `java.io.tmpdir` is in the test's directory, so the fallback one is too).
+      After each test the service is stopped (a pending one is waited for, then killed as a last
+      resort) and removed, and the directory is deleted once the wrapper's process has let go of
+      the JNA library it unpacked there. The configuration is a minimal generated one; the phase's
+      "unmodified YAJSW-style `wrapper.conf`" needs a real fixture (P8.3). Unelevated on Windows 10, the registered command line, run from a console, starts
+      the wrapper, which refuses with 1063 and the hint, exit code 3, in the bootstrap log named
+      after the configuration file; install is refused with 5. The elevated run (`mvn -q verify
+      -Pwindows-integration` as Administrator) is still to be done before this box is ticked.
 Done when: a real service runs a test application from an unmodified YAJSW-style `wrapper.conf`.
 
 ### P7 — Probes and agent
@@ -1526,6 +1543,11 @@ entry names the commit/plan item it came from; remove entries when addressed.
   short. Not tested: a stop control that arrives between the handler's registration and the first
   `START_PENDING`, which Windows cannot send (nothing is accepted yet); the final `STOPPED` is not
   retried before `run` gives up.
+- P6.5 (review): `WindowsServiceEndToEndTest` and `WindowsServiceIntegrationTest` repeat the
+  throwaway-service fixture (directory, random name, controller, stop and remove, delete); extract
+  it into one test helper, which would also give the older test the real classpath instead of its
+  `target/classes` placeholder and the end-to-end test's robust teardown. The older test's comments
+  that starting and stopping "follow in P6" are stale.
 - P6.4 (review): without `JOB_OBJECT_LIMIT_BREAKAWAY_OK`, a helper the application starts with
   `CREATE_BREAKAWAY_FROM_JOB` cannot leave the job; decide when a user needs it (until then
   `LOOSE`/`WRAPPER` or a helper started outside the tree). With a script as `wrapper.java.command`,
