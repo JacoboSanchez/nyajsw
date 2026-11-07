@@ -19,6 +19,7 @@ import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -80,8 +81,17 @@ public class MainTest {
 
         assertEquals(code, 7, output());
         assertTrue(output().contains("jvm 1    | to stderr"), output());
+        assertTrue(output().contains("jvm 1    | stdin-ended=true"), output()); // standard output too
         assertTrue(output().contains("wrapper  | jvm 1 exited with code 7"), output());
         assertTrue(output().contains("wrapper  | warning: "), output()); // the unsupported wrapper.tray
+        // and the default log file beside the configuration, in YAJSW's default file format
+        String file = Files.readString(dir.resolve("wrapper.log"), Charset.defaultCharset());
+        assertTrue(file.lines().anyMatch(line -> line.startsWith("STATUS | wrapper  | ")
+                && line.endsWith(" | jvm 1 exited with code 7")), file);
+        assertTrue(file.lines().anyMatch(line -> line.startsWith("INFO   | jvm 1    | ")
+                && line.endsWith(" | to stderr")), file);
+        assertTrue(file.lines().anyMatch(line -> line.startsWith("INFO   | jvm 1    | ")
+                && line.endsWith(" | stdin-ended=true")), file);
     }
 
     @Test
@@ -111,12 +121,18 @@ public class MainTest {
     public void consoleModeRestartsAsTheExitActionsSayAndGivesUpAtTheLimit() throws Exception {
         Path conf = conf("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=5",
                 "wrapper.on_exit.default=RESTART", "wrapper.restart.delay=0", "wrapper.max_failed_invocations=2",
-                "wrapper.pidfile=run/wrapper.pid", "wrapper.java.pidfile=run/java.pid");
+                "wrapper.pidfile=run/wrapper.pid", "wrapper.java.pidfile=run/java.pid", "wrapper.logfile.rollmode=JVM");
 
         int code = Main.run(new String[] {"-c", conf.toString()}, out);
 
         assertEquals(code, 5, output());
+        // the JVM roll mode starts a new file for the restarted application
+        Charset charset = Charset.defaultCharset();
+        assertTrue(Files.readString(dir.resolve("wrapper.log.1"), charset).contains("| jvm 1 exited with code 5"));
+        assertTrue(Files.readString(dir.resolve("wrapper.log"), charset).contains("| jvm 2 exited with code 5"));
         assertTrue(output().contains("launching jvm 2"), output());
+        assertTrue(output().contains("jvm 2    | to stderr"), output()); // the restarted run's output is jvm 2
+        assertTrue(Files.readString(dir.resolve("wrapper.log"), charset).contains("| jvm 2    | "));
         assertFalse(output().contains("launching jvm 3"), output());
         assertTrue(output().contains("supervision ended FAILED; exit code 5 is the application's"), output());
         assertFalse(Files.exists(dir.resolve("run/wrapper.pid")), "removed at the end");
@@ -140,15 +156,32 @@ public class MainTest {
         assertTrue(output().contains("-i is not implemented yet"), output());
     }
 
-    @Test
-    public void debugRaisesTheConsoleLevel() throws Exception {
-        WrapperConfig plain = load(conf());
-        WrapperConfig quiet = load(conf("wrapper.console.loglevel=ERROR"));
-        WrapperConfig debug = load(conf("wrapper.console.loglevel=ERROR", "wrapper.debug=true"));
+    @Test(timeOut = 120_000)
+    public void theConsoleUsesTheConfiguredFormat() throws Exception {
+        Path conf = conf("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=0", "wrapper.console.format=LM");
 
-        assertEquals(Main.consoleLevel(plain.log()), LogLevel.INFO);
-        assertEquals(Main.consoleLevel(quiet.log()), LogLevel.ERROR);
-        assertEquals(Main.consoleLevel(debug.log()), LogLevel.DEBUG);
+        assertEquals(Main.run(new String[] {"-c", conf.toString()}, out), 0, output());
+
+        assertTrue(output().contains("STATUS | supervision ended STOPPED"), output());
+        assertFalse(output().contains("wrapper  |"), output());
+    }
+
+    @Test(timeOut = 120_000)
+    public void debugWritesTheDebugMessagesUpToTheDebugLevel() throws Exception {
+        ByteArrayOutputStream supervision = new ByteArrayOutputStream();
+        List<String> settings = List.of("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=0",
+                "wrapper.console.loglevel=ERROR", "wrapper.debug=true", "wrapper.pidfile=run/wrapper.pid");
+
+        Path conf = conf(withLine(settings, "wrapper.debug.level=1"));
+        assertEquals(Main.run(new String[] {"-c", conf.toString()}, out), 0, output());
+        conf = conf(withLine(settings, "wrapper.debug.level=2"));
+        assertEquals(Main.run(new String[] {"-c", conf.toString()},
+                new PrintStream(supervision, true, StandardCharsets.UTF_8)), 0);
+
+        assertTrue(output().contains("wrapper  | state IDLE -> STARTING"), output()); // APPLICATION detail
+        assertFalse(output().contains("wrote "), output()); // the pid file's message is SUPERVISION detail
+        assertTrue(supervision.toString(StandardCharsets.UTF_8).contains("wrapper  | wrote "),
+                supervision.toString(StandardCharsets.UTF_8));
     }
 
     @Test(timeOut = 120_000)
@@ -256,6 +289,12 @@ public class MainTest {
             assertEquals(mode.run(), 0);
         }
         assertFalse(output().contains("launching"), output());
+    }
+
+    private static String[] withLine(List<String> lines, String line) {
+        List<String> all = new ArrayList<>(lines);
+        all.add(line);
+        return all.toArray(String[]::new);
     }
 
     private static WrapperConfig load(Path conf) {

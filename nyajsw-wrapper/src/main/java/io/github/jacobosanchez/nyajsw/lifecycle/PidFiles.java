@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
+import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
@@ -150,7 +151,7 @@ public final class PidFiles {
             } finally {
                 Files.deleteIfExists(temporary);
             }
-            log.debug(() -> "wrote " + pid + " to " + shown(file) + " (" + key + ")");
+            log.debug(DebugDetail.SUPERVISION, () -> "wrote " + pid + " to " + shown(file) + " (" + key + ")");
         } catch (IOException | RuntimeException e) {
             log.error("cannot write the pid file " + shown(file) + " (" + key + "): " + reason(e));
         }
@@ -173,7 +174,7 @@ public final class PidFiles {
                 return;
             }
             Files.delete(file);
-            log.debug(() -> "removed " + shown(file) + " (" + key + ")");
+            log.debug(DebugDetail.SUPERVISION, () -> "removed " + shown(file) + " (" + key + ")");
         } catch (NoSuchFileException e) {
             // already gone
         } catch (IOException | RuntimeException e) {

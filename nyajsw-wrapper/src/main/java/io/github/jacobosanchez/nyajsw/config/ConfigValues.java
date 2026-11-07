@@ -61,6 +61,20 @@ final class ConfigValues {
         return typed(spec, value -> value);
     }
 
+    /**
+     * Whether {@code spec} is written with a blank value. For most types that leaves the key unset,
+     * so its default applies; a few keys, such as {@code wrapper.logfile}, read it as "off" instead.
+     */
+    boolean isBlank(KeySpec spec) {
+        return entry(spec).map(entry -> entry.value().isBlank()).orElse(false);
+    }
+
+    /** Where {@code spec} is written, by the file or a system property; empty when only its default applies. */
+    Optional<ConfigLocation> writtenAt(KeySpec spec) {
+        return entry(spec).filter(entry -> config.layer(entry.key()).orElseThrow() != ConfigLayer.DEFAULT)
+                .map(ConfigEntry::location);
+    }
+
     /** Where {@code spec} is set, if a layer sets it. */
     Optional<ConfigLocation> location(KeySpec spec) {
         return entry(spec).map(ConfigEntry::location);
