@@ -1101,11 +1101,27 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       `WindowsServiceController` (install with start type, dependencies as `\0`-separated list with
       a test, account, description, delayed start, pre-shutdown timeout with margin; remove; start; stop; status
       with pid), minimal access rights per command, wait-for-state helper, `Win32Errors` mapping.
-- [ ] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
+- [x] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
       (default `java.class.path`; integration tests pass the real jars because surefire's
       `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.additional.N`,
       `-Djna.tmpdir` from `wrapper.tmp.path`, quoting (D12); `wrapper.ntservice.java.command` (a
-      Java 21 only).
+      Java 21 only). **Done:** `platform.windows.ServiceCommandLine.build` gives a `ServiceCommand`:
+      the arguments (`javaw.exe` of the given `java.home`, the JVM options, `-Djna.tmpdir`, `-cp`,
+      `cli.Main`, `--service`, the absolute configuration file), warnings, the binary path joined
+      by `WindowsArguments` (the C runtime's quoting, which the Java launcher's parser follows) and
+      a loggable form masked argument by argument. Classpath entries and paths are absolute and
+      normal, since the service does not start in the installing directory. The JVM options are
+      unquoted like `wrapper.java.additional.N` (`JavaCommandBuilder.unquote`, now public), an
+      empty one is skipped with a warning, and `-Djna.tmpdir` comes after them so it is the one in
+      effect. The Java launcher reads its command line in the ANSI code page (`native.encoding`), so
+      an argument that code page cannot hold is a configuration error, not a service that finds
+      `?` in its paths; a `%NAME%` gives a warning, since Windows expands the stored binary path.
+      `wrapper.ntservice.java.command` (`ServiceConfig.javaCommand`, read like
+      `wrapper.java.command` through `JavaConfig.executable`, with a directory resolved against the
+      configuration directory) must have a directory and exist; a Java older than 21 by its
+      installation's `release` file (followed through links, and above a JDK 8's `jre`) is a
+      configuration error, an unknown version a warning (D12). The keys stay `PLANNED` until `-i`
+      writes the binary path (P5.4).
 - [ ] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes.
 - [ ] P5.4a (blocked on §10 Q8, D17) Migration entry point: `WrapperServiceBooter` alias class, mode
       detection when `--service` is absent, and the Java 21 binPath rewrite in a migration command.
@@ -1288,6 +1304,12 @@ entry names the commit/plan item it came from; remove entries when addressed.
   as text; a registry flag that leaves the type check to the key's view would keep "integer". The
   same conditional rule would suit `wrapper.logfile.maxdays`, which only warns without `DATE` but
   whose non-numeric value is still an error through the validator's type check.
+- P5.3 (review): `ServiceCommandLine` repeats two small pieces of `JavaCommandBuilder` (the
+  `bin\javaw.exe` default and the `;` separator), and the D19 unquoting it shares lives as a public
+  static on the builder; a small `launch` helper could hold both if a third caller appears. A bad
+  `wrapper.ntservice.additional.N` fails as a `LaunchException` (exit 1); P5.4 may want to report it
+  as a configuration error. Confirm in the P5.6 integration test that the SCM expands `%NAME%` in
+  the stored binary path (the warning assumes it).
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -1350,7 +1372,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
 | D11 | groupId and base package `io.github.jacobosanchez.nyajsw` | Matches the GitHub owner; Maven Central-compatible | Proposed (§10 Q2) |
-| D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.additional.N` (YAJSW's key for these options) + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM, `wrapper.ntservice.java.command` (YAJSW: default the application's Java command) may replace the installing JVM's `javaw.exe` if it is a Java 21 | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
+| D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.additional.N` (YAJSW's key for these options) + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM, `wrapper.ntservice.java.command` (YAJSW: default the application's Java command) may replace the installing JVM's `javaw.exe` if it is a Java 21; it must be given with its directory, and one known to be older than 21 is an error at install rather than a silent fallback to the installing JVM (P5.3) | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
 | D13 | The default working directory and relative wrapper-side paths (log file, pid files, temporary directory, probe files) resolve against the configuration file's directory; relative application-side paths (jar, library path, image, a Java command with a directory, classpath entries) resolve against the working directory, as the application sees them (P1.6b) | Services start in `System32`; configuration-relative is predictable for the wrapper, while the application's own paths must agree with what the child JVM resolves (usual YAJSW layout: `conf/wrapper.conf` with `wrapper.working.dir=..`) | Proposed (verify YAJSW, P1.9) |
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
 | D15 | Probe SPI, probe registry and stop-strategy registry are introduced in P3 with `process`/`terminate`; later probes and strategies are additions | Avoid rewriting the supervisor when P7 lands | Accepted |
