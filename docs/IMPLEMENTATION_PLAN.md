@@ -1003,8 +1003,8 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       message and the stack trace. `WrapperLog.open(LogConfig, console)` builds the configured log:
       `wrapper.console.format` (blank: no console output), its level and the debug detail.
       `wrapper.logfile.format` takes effect with the file sink (P4.3). With the console off and no
-      log file, configuration warnings (format ones included) are seen nowhere; the log file of P4.3
-      and the bootstrap log of P4.3a are where they go then.
+      log file, configuration warnings (format ones included) are seen nowhere; the log file of
+      P4.3 is where they go then, and in service mode (P6) the bootstrap log of P4.3a.
 - [x] P4.3 Rolling log file: rolling by size, `ROLLNUM`/`YYYYMMDD` names, `maxsize`, `maxfiles`,
       Windows rename retries, `wrapper.log.encoding`. **Done:** `RollingFileSink` (the plan's
       `RollingFileHandler`) appends to `wrapper.logfile` (directories created; not set: `wrapper.log`
@@ -1048,9 +1048,25 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       current file; a clock that jumps ahead deletes the files of the days it skips (registry
       note). The clean-up skips directories and also runs when the day's file cannot be opened.
       `maxdays` without `DATE` is a warning.
-- [ ] P4.3a Bootstrap log for failures before the configuration is read (and when the configured log
+- [x] P4.3a Bootstrap log for failures before the configuration is read (and when the configured log
       file cannot be opened): `%TEMP%\nyajsw-bootstrap.log` through the file sink of P4.3, for the
-      service mode of P6, where there is no console.
+      service mode of P6, where there is no console. **Done:** `WrapperLog.bootstrap(file)` writes
+      only to that file in YAJSW's default file format and level (`LPTM`, `INFO`, from the
+      registry), UTF-8, and never rolls it: it is written rarely, and the temporary directory is
+      writable by every user, where moving and deleting files of a predictable name is best avoided.
+      `WrapperLog.bootstrapFile(name)` is `nyajsw-bootstrap-<name>.log` in `java.io.tmpdir`, one
+      per service, so services do not share (and roll) one file. When it cannot be opened either,
+      the reason goes to standard error and the log writes nowhere, without failing its caller.
+      What goes wrong with the configured log file (it cannot be opened, a roll or clean-up fails,
+      the disk is full) goes, masked, to the `fileProblems` that `WrapperLog.open(config, console,
+      secrets, fileProblems)` takes, which P6 points at the bootstrap log; console mode keeps
+      `open(config, console, secrets)`, where those problems are `ERROR` lines on the console when
+      it shows them and standard error otherwise. They pass through `ForwardingErrorManager`,
+      which replaces the JDK's default (it prints only a sink's first failure, ever): every failure
+      is passed on, a repeated one again only after 10 minutes with the count held back, and
+      exceptions are shown by class only (their messages could repeat a masked file name); it is
+      set before the file is opened, so a failed start roll is heard too. Console mode keeps
+      reporting configuration errors on the console.
 - [ ] P4.4 Application output logged with `jvm N` prefix.
 Done when: rotation and formatting are tested against temp directories; no third-party logging dep.
 
@@ -1223,10 +1239,13 @@ entry names the commit/plan item it came from; remove entries when addressed.
   them), and in console mode it shares the console and its Ctrl+C. P6 must decide (P3.6 left it
   as is): redirect its output, detach it from the console, and keep it out of the kill-on-close
   job of P6.4.
-- P4.3: the sink reports its failures (a locked file, a full disk) to the JDK's default
-  `ErrorManager`, which writes only the sink's first failure, to standard error; as a service (P6)
-  that is lost. P4.3a/P6 should give the sink an error manager that writes to the bootstrap log
-  and does not stop after the first failure. The file name in messages is masked as text, while a
+- P4.3a (review): P6 must open the configured log with `WrapperLog.open(…, fileProblems)` pointed
+  at the bootstrap log, and use the bootstrap log for errors before the configuration is read. The
+  bootstrap file lives in the temporary directory, which for `LocalSystem` is `C:\Windows\Temp`,
+  where any user may create a file of that name first (and so read the wrapper's early errors,
+  or keep it from being written); decide in P6 whether a directory with a restricted ACL (beside
+  the configuration, or under `%ProgramData%\nyajsw`) suits better.
+- P4.3: the file name in messages is masked as text, while a
   secret copied into `wrapper.logfile` reaches the path normalised (`/` turned into `\` on Windows,
   `.` and `..` resolved), so a password such as `pa/ss` would not be recognised; register the
   normalised form with `SecretMasker` if secrets in log file names ever matter. A roll that is
@@ -1235,8 +1254,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
   the file sink opens, so any process that opens the configured log rolls the live file. Today
   only console mode does; the P5 commands (`-q`, `-i`, …) must not open the file sink (or must
   open it without the start roll, e.g. through an explicit `wrapperStarting()`), or a query beside
-  a running service would try to move its log. Failures there are reported before a caller could
-  set an error manager (see the P4.3 entry). The `DATE` clean-up lists the directory and retries
+  a running service would try to move its log. The `DATE` clean-up lists the directory and retries
   deletes while holding the sink's lock, which can block the application's output for a moment
   at the first record of a day; move it off the lock if that shows. Under `DATE` the start day's
   file is created even when the first record falls on the next day.

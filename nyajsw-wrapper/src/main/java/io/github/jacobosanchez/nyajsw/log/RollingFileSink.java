@@ -136,7 +136,8 @@ final class RollingFileSink extends Handler implements AutoCloseable {
     private boolean rollBlocked;
 
     private RollingFileSink(Settings settings, Formatter formatter, Level threshold, Clock clock,
-            UnaryOperator<String> mask, Seams seams) throws IOException {
+            UnaryOperator<String> mask, ErrorManager errors, Seams seams) throws IOException {
+        setErrorManager(Objects.requireNonNull(errors, "errors")); // before the start roll can fail
         this.settings = Objects.requireNonNull(settings, "settings");
         this.mask = Objects.requireNonNull(mask, "mask");
         this.seams = Objects.requireNonNull(seams, "seams");
@@ -161,21 +162,21 @@ final class RollingFileSink extends Handler implements AutoCloseable {
 
     /**
      * Opens (or creates, with its directories) the log file for appending; the date in a {@code
-     * YYYYMMDD} name is today's in {@code clock}'s zone. What the sink reports to its error manager
-     * goes through {@code mask}, since the file name may hold a secret copied in with
-     * <code>${...}</code>.
+     * YYYYMMDD} name is today's in {@code clock}'s zone. What the sink reports to {@code errors} goes
+     * through {@code mask}, since the file name may hold a secret copied in with <code>${...}</code>;
+     * {@code errors} is in place before the file is opened, so it also hears of a failed start roll.
      *
      * @throws IOException              when the file cannot be opened
      * @throws IllegalArgumentException when the file name breaks the rules of {@link LogFileNames}
      */
     static RollingFileSink open(Settings settings, Formatter formatter, Level threshold, Clock clock,
-            UnaryOperator<String> mask) throws IOException {
-        return open(settings, formatter, threshold, clock, mask, Seams.REAL);
+            UnaryOperator<String> mask, ErrorManager errors) throws IOException {
+        return open(settings, formatter, threshold, clock, mask, errors, Seams.REAL);
     }
 
     static RollingFileSink open(Settings settings, Formatter formatter, Level threshold, Clock clock,
-            UnaryOperator<String> mask, Seams seams) throws IOException {
-        return new RollingFileSink(settings, formatter, threshold, clock, mask, seams);
+            UnaryOperator<String> mask, ErrorManager errors, Seams seams) throws IOException {
+        return new RollingFileSink(settings, formatter, threshold, clock, mask, errors, seams);
     }
 
     /** The file written to. */
