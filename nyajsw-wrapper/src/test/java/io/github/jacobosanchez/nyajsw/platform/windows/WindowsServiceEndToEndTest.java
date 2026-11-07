@@ -5,35 +5,27 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
-import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.TestApplication;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
-import io.github.jacobosanchez.nyajsw.platform.HostOs;
 import io.github.jacobosanchez.nyajsw.platform.ServiceException;
 import io.github.jacobosanchez.nyajsw.platform.ServiceState;
 import io.github.jacobosanchez.nyajsw.platform.ServiceStatus;
 
-import java.io.File;
 import java.io.IOException;
-import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.testng.ITestResult;
-import org.testng.Reporter;
-import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -45,155 +37,37 @@ import org.testng.annotations.Test;
  * STOPPED}, and remove it. Excluded by default; run with {@code mvn -q verify -Pwindows-integration}
  * in an elevated shell.
  *
- * <p>The service is named {@code nyajsw-test-<random>} and removed after each test, also when it
- * fails; a failed test prints the wrapper log and the bootstrap logs into the test report. A test
- * JVM killed in between can leave one behind, with its wrapper running as {@code LocalSystem}:
- * {@code sc query state= all | findstr nyajsw-test-} finds it, {@code sc stop <name>} and {@code sc
- * delete <name>} remove it.
+ * <p>Each test gets a {@link ThrowawayService}, removed after it also when it fails; a failed test
+ * prints the wrapper log and the bootstrap logs into the test report.
  */
 @Test(groups = "windows-integration")
 public class WindowsServiceEndToEndTest {
 
-    private static final Duration WAIT = Duration.ofSeconds(60);
+    private static final Duration WAIT = ThrowawayService.WAIT;
 
+    private ThrowawayService service;
     private Path dir;
     private String name;
-    private ServiceCommandLine commandLine;
     private WindowsServiceController controller;
 
     @BeforeMethod(alwaysRun = true)
     public void setUp() throws IOException {
-        dir = null; // one instance runs every method: nothing may be left from the one before
-        name = null;
-        commandLine = null;
-        controller = null;
-        if (!HostOs.isWindows()) {
-            throw new SkipException("the Service Control Manager exists on Windows only");
-        }
-        dir = Files.createTempDirectory("nyajsw-e2e").toRealPath();
-        Files.createDirectories(dir.resolve("tmp"));
-        name = "nyajsw-test-" + UUID.randomUUID().toString().substring(0, 8);
-        commandLine = new ServiceCommandLine(Path.of(System.getProperty("java.home")), serviceClasspath(),
-                ServiceCommandLine.nativeCharset());
-        controller = new WindowsServiceController(new JnaScmApi(), new JnaLsaApi(), commandLine, StateWait.REAL);
-    }
-
-    /** The test JVM's full classpath (surefire runs it from a manifest-only jar): the wrapper, JNA, the test application. */
-    private static List<Path> serviceClasspath() {
-        String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
-        List<Path> entries = Arrays.stream(classpath.split(File.pathSeparator)).filter(entry -> !entry.isBlank())
-                .map(entry -> Path.of(entry).toAbsolutePath()).toList();
-        assertTrue(entries.stream().anyMatch(entry -> entry.getFileName().toString().startsWith("jna-platform"))
-                && entries.contains(Path.of(locationOf(WindowsServiceController.class))), "the service needs the"
-                + " wrapper's classes and JNA: " + entries);
-        return entries;
+        service = null; // one instance runs every method: nothing may be left from the one before
+        service = ThrowawayService.create();
+        dir = service.dir;
+        name = service.name;
+        controller = service.controller;
     }
 
     @AfterMethod(alwaysRun = true)
-    public void tearDown(ITestResult result) throws Exception {
-        try {
-            if (controller != null && name != null) {
-                stopQuietly();
-                try {
-                    controller.remove(name);
-                } catch (ServiceException e) {
-                    int code = e.errorCode();
-                    if (code != Win32Errors.SERVICE_DOES_NOT_EXIST && code != Win32Errors.SERVICE_MARKED_FOR_DELETE) {
-                        throw e;
-                    }
-                }
-            }
-        } finally {
-            if (dir != null) {
-                if (!result.isSuccess()) {
-                    report();
-                }
-                deleteDirectory();
-            }
+    public void tearDown(ITestResult result) throws InterruptedException {
+        if (service != null) {
+            service.close(!result.isSuccess());
         }
-    }
-
-    /**
-     * Stops the service, also one that is still pending (which takes no stop request: it is waited
-     * for), and kills its process as a last resort, so that nothing holds the test's directory.
-     */
-    private void stopQuietly() throws InterruptedException {
-        try {
-            Optional<ServiceStatus> status = controller.status(name);
-            if (status.isEmpty() || status.get().state() == ServiceState.STOPPED) {
-                return;
-            }
-            if (status.get().state() == ServiceState.RUNNING) {
-                controller.stop(name, WAIT);
-                return;
-            }
-            long deadline = System.nanoTime() + WAIT.toNanos();
-            while (System.nanoTime() < deadline) {
-                status = controller.status(name);
-                if (status.isEmpty() || status.get().state() == ServiceState.STOPPED) {
-                    return;
-                }
-                if (status.get().state() == ServiceState.RUNNING) {
-                    controller.stop(name, WAIT);
-                    return;
-                }
-                Thread.sleep(200); // the real SCM, no event to wait on
-            }
-            status.flatMap(found -> found.pid().isPresent() ? ProcessHandle.of(found.pid().getAsLong())
-                    : Optional.empty()).ifPresent(process -> {
-                        Reporter.log("killing the process " + process.pid() + " of " + name + ", which did not stop",
-                                true);
-                        process.destroyForcibly();
-                    });
-        } catch (ServiceException e) {
-            Reporter.log("could not stop " + name + ": " + e.getMessage(), true);
-        }
-    }
-
-    /**
-     * Deletes the test's directory once the wrapper's process lets go of it: the JNA library it
-     * unpacked there stays in use until that process has ended, which comes a moment after {@code
-     * STOPPED}. One that is still held is left behind with a warning, not a failure.
-     */
-    private void deleteDirectory() throws InterruptedException {
-        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
-        while (true) {
-            try {
-                TestConfigs.delete(dir);
-                return;
-            } catch (IOException e) {
-                if (System.nanoTime() > deadline) {
-                    Reporter.log("left " + dir + " behind: " + e, true);
-                    return;
-                }
-                Thread.sleep(200); // no event says when the process has let go of its files
-            }
-        }
-    }
-
-    /** The logs of a failed run, into the test report and its output; one that cannot be read is said so. */
-    private void report() {
-        List<Path> logs = List.of(dir.resolve("wrapper.log"), WrapperLog.bootstrapFile(dir, name),
-                WrapperLog.bootstrapFile(dir.resolve("tmp"), name));
-        for (Path log : logs) {
-            if (Files.exists(log)) {
-                Reporter.log("----- " + log + " -----", true);
-                try {
-                    Reporter.log(read(log), true);
-                } catch (IOException e) {
-                    Reporter.log("cannot read it: " + e, true);
-                }
-            }
-        }
-    }
-
-    /** {@code file} as UTF-8, the wrapper log's default encoding on Java 18 and later; bad bytes replaced. */
-    private static String read(Path file) throws IOException {
-        return new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
     }
 
     private WrapperConfig config(String... application) throws IOException {
-        String classes = Path.of(locationOf(TestApplication.class)).toString().replace('\\', '/');
+        String classes = ThrowawayService.locationOf(TestApplication.class).toString().replace('\\', '/');
         List<String> lines = new ArrayList<>(List.of(
                 "wrapper.ntservice.name=" + name,
                 "wrapper.ntservice.description=nyajsw end-to-end test; safe to delete",
@@ -210,17 +84,9 @@ public class WindowsServiceEndToEndTest {
         return WrapperConfig.from(new ConfigLoader(Map.of(), Map.of(), false, ConfigKeys.registry()).load(conf));
     }
 
-    private static String locationOf(Class<?> type) {
-        try {
-            return Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
-        } catch (URISyntaxException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
     private String log() throws IOException {
         Path log = dir.resolve("wrapper.log");
-        return Files.exists(log) ? read(log) : "";
+        return Files.exists(log) ? ThrowawayService.read(log) : "";
     }
 
     /** What the Service Control Manager reports, with the exit codes {@link ServiceStatus} leaves out. */
@@ -243,7 +109,8 @@ public class WindowsServiceEndToEndTest {
     public void theRegisteredCommandLineRunsTheWrapperWhichRefusesToRunOutsideTheServiceManager() throws Exception {
         // Needs no elevation: the command line -i registers, run from here instead of by the SCM.
         WrapperConfig config = config("wrapper.app.parameter.1=park");
-        Process wrapper = new ProcessBuilder(commandLine.build(config).arguments()).redirectErrorStream(true).start();
+        Process wrapper = new ProcessBuilder(service.commandLine.build(config).arguments()).redirectErrorStream(true)
+                .start();
         try {
             assertTrue(wrapper.waitFor(1, TimeUnit.MINUTES), "the wrapper did not end");
         } finally {

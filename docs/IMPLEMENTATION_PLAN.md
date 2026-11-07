@@ -1337,7 +1337,8 @@ Goal: the wrapper itself runs under the SCM.
       (the service's `java.io.tmpdir` is in the test's directory, so the fallback one is too).
       After each test the service is stopped (a pending one is waited for, then killed as a last
       resort) and removed, and the directory is deleted once the wrapper's process has let go of
-      the JNA library it unpacked there. The configuration is a minimal generated one; the phase's
+      the JNA library it unpacked there; that fixture, `ThrowawayService`, is shared with the P5.6
+      test, which now also installs the real classpath. The configuration is a minimal generated one; the phase's
       "unmodified YAJSW-style `wrapper.conf`" needs a real fixture (P8.3). Unelevated on Windows 10, the registered command line, run from a console, starts
       the wrapper, which refuses with 1063 and the hint, exit code 3, in the bootstrap log named
       after the configuration file; install is refused with 5. The elevated run (`mvn -q verify
@@ -1543,11 +1544,6 @@ entry names the commit/plan item it came from; remove entries when addressed.
   short. Not tested: a stop control that arrives between the handler's registration and the first
   `START_PENDING`, which Windows cannot send (nothing is accepted yet); the final `STOPPED` is not
   retried before `run` gives up.
-- P6.5 (review): `WindowsServiceEndToEndTest` and `WindowsServiceIntegrationTest` repeat the
-  throwaway-service fixture (directory, random name, controller, stop and remove, delete); extract
-  it into one test helper, which would also give the older test the real classpath instead of its
-  `target/classes` placeholder and the end-to-end test's robust teardown. The older test's comments
-  that starting and stopping "follow in P6" are stale.
 - P6.4 (review): without `JOB_OBJECT_LIMIT_BREAKAWAY_OK`, a helper the application starts with
   `CREATE_BREAKAWAY_FROM_JOB` cannot leave the job; decide when a user needs it (until then
   `LOOSE`/`WRAPPER` or a helper started outside the tree). With a script as `wrapper.java.command`,
