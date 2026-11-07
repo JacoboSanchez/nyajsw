@@ -16,4 +16,7 @@ public interface Platform {
 
     /** The service commands of this host; on a host without services, every operation fails. */
     ServiceController serviceController();
+
+    /** Runs this process as a service ({@code --service}); on a host without services, it fails. */
+    ServiceHost serviceHost();
 }

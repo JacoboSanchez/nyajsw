@@ -29,6 +29,13 @@ public class Win32ErrorsTest {
     }
 
     @Test
+    public void aServiceRunOutsideTheServiceManagerIsToldWhatToRunInstead() {
+        assertEquals(Win32Errors.describe(1063, ""), "the process was not started as a service (Win32 error 1063);"
+                + " --service is for the Service Control Manager: start the installed service with -t, or run the"
+                + " application in the console with -c");
+    }
+
+    @Test
     public void anUnknownErrorKeepsItsSystemTextOrIsJustAnError() {
         assertEquals(Win32Errors.describe(87, "The parameter is incorrect."), "The parameter is incorrect (Win32 error 87)");
         assertEquals(Win32Errors.describe(12345, " "), "error (Win32 error 12345)");

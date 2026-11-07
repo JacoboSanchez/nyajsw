@@ -25,6 +25,7 @@ final class Win32Errors {
     static final int PROCESS_ABORTED = WinError.ERROR_PROCESS_ABORTED;
     static final int SERVICE_DEPENDENCY_FAIL = WinError.ERROR_SERVICE_DEPENDENCY_FAIL;
     static final int SERVICE_LOGON_FAILED = WinError.ERROR_SERVICE_LOGON_FAILED;
+    static final int FAILED_SERVICE_CONTROLLER_CONNECT = WinError.ERROR_FAILED_SERVICE_CONTROLLER_CONNECT;
     static final int SERVICE_MARKED_FOR_DELETE = WinError.ERROR_SERVICE_MARKED_FOR_DELETE;
     static final int SERVICE_EXISTS = WinError.ERROR_SERVICE_EXISTS;
     static final int DUPLICATE_SERVICE_NAME = WinError.ERROR_DUPLICATE_SERVICE_NAME;
@@ -57,6 +58,9 @@ final class Win32Errors {
                     "check the services in wrapper.ntservice.dependency.<n>")),
             Map.entry(SERVICE_LOGON_FAILED, new Known("the service could not log on",
                     "check wrapper.ntservice.password and that the account may log on as a service")),
+            Map.entry(FAILED_SERVICE_CONTROLLER_CONNECT, new Known("the process was not started as a service",
+                    "--service is for the Service Control Manager: start the installed service with -t, or run"
+                            + " the application in the console with -c")),
             Map.entry(SERVICE_MARKED_FOR_DELETE, new Known("the service is marked for deletion",
                     "close the Services console and any other program that has the service open, then try"
                             + " again")),

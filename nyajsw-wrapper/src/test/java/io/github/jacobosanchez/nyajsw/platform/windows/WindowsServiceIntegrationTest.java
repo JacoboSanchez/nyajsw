@@ -8,7 +8,11 @@ import static org.testng.Assert.expectThrows;
 import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.platform.HostOs;
+import io.github.jacobosanchez.nyajsw.platform.ServiceBody;
+import io.github.jacobosanchez.nyajsw.platform.ServiceContext;
+import io.github.jacobosanchez.nyajsw.platform.ServiceControl;
 import io.github.jacobosanchez.nyajsw.platform.ServiceException;
+import io.github.jacobosanchez.nyajsw.platform.ServiceExit;
 import io.github.jacobosanchez.nyajsw.platform.ServiceState;
 import io.github.jacobosanchez.nyajsw.platform.ServiceStatus;
 
@@ -151,6 +155,23 @@ public class WindowsServiceIntegrationTest {
     @Test
     public void aServiceThatIsNotInstalledHasNoStatus() {
         assertFalse(controller.status(name).isPresent());
+    }
+
+    @Test
+    public void aProcessTheServiceControlManagerDidNotStartCannotRunAsAService() {
+        ServiceException failure = expectThrows(ServiceException.class,
+                () -> new WindowsServiceHost(new JnaServiceHostApi()).run(new ServiceBody() {
+                    @Override
+                    public ServiceExit run(ServiceContext context) {
+                        throw new AssertionError("the service must not run");
+                    }
+
+                    @Override
+                    public void stop(ServiceControl control) {
+                    }
+                }));
+
+        assertEquals(failure.errorCode(), Win32Errors.FAILED_SERVICE_CONTROLLER_CONNECT);
     }
 
     /** Whether the service is gone; Windows deletes it once every handle to it is closed. */
