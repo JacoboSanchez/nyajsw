@@ -106,6 +106,18 @@ public class MainTest {
     }
 
     @Test
+    public void anUnknownProbeTypeIsAConfigurationErrorBeforeAnythingStarts() throws Exception {
+        Path conf = conf("wrapper.liveness.type=process, telepathy");
+
+        int code = Main.run(new String[] {"-c", conf.toString()}, out);
+
+        assertEquals(code, ExitCode.CONFIGURATION_ERROR.code(), output());
+        assertTrue(output().contains("wrapper.liveness.type: unknown probe type telepathy; known: [process]"),
+                output());
+        assertFalse(output().contains("launching jvm 1"), output());
+    }
+
+    @Test
     public void launchErrorsEndSupervisionWithoutAStackTrace() throws Exception {
         Path conf = conf("wrapper.java.command=" + dir.resolve("missing/java").toString().replace('\\', '/'),
                 "wrapper.max_failed_invocations=1");

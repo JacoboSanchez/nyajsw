@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 50 |
-| planned | 22 |
+| supported | 56 |
+| planned | 16 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -193,8 +193,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
-| `wrapper.readiness.type` | Readiness probes that must all pass before the service reports RUNNING | list | `process` | **planned** (P7)<br>nyajsw extension | Probe types and their settings: implementation plan, section 4.7 |
-| `wrapper.readiness.interval` | Pause between readiness checks | seconds | `1` | **planned** (P7)<br>nyajsw extension |  |
+| `wrapper.readiness.type` | Readiness probes that must all pass before the service reports RUNNING | list | `process` | **supported**<br>nyajsw extension | Probe types and their settings: implementation plan, section 4.7; an unknown type is an error when the wrapper starts the application |
+| `wrapper.readiness.interval` | Pause between readiness checks | seconds | `1` | **supported**<br>nyajsw extension |  |
 | `wrapper.readiness.tcp.host` | Host the tcp readiness probe connects to | text | `127.0.0.1` | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.readiness.tcp.port` | Port the tcp readiness probe connects to | integer | — | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.readiness.http.url` | URL the http readiness probe requests | text | — | **planned** (P7)<br>nyajsw extension |  |
@@ -208,10 +208,10 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.readiness.jmx.url` | JMX service URL the jmx readiness probe connects to | text | — | **unsupported** (P9)<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.attribute` | MBean attribute the jmx readiness probe reads | text | — | **unsupported** (P9)<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.value` | Attribute value the jmx readiness probe waits for | text | — | **unsupported** (P9)<br>nyajsw extension |  |
-| `wrapper.liveness.type` | Liveness probes checked while the application runs | list | agent when wrapper.agent.enabled is true (from P7), otherwise none (D16) | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.liveness.interval` | Pause between liveness checks | seconds | `10` | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.liveness.failures` | Consecutive liveness failures before wrapper.liveness.action is taken | integer | `3` | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.liveness.action` | Action when the liveness probes keep failing | one of `RESTART`, `SHUTDOWN` | `RESTART` | **planned** (P7)<br>nyajsw extension |  |
+| `wrapper.liveness.type` | Liveness probes checked while the application runs | list | agent when wrapper.agent.enabled is true (from P7), otherwise none (D16) | **supported**<br>nyajsw extension | An unknown type is an error when the wrapper starts the application |
+| `wrapper.liveness.interval` | Pause between liveness checks | seconds | `10` | **supported**<br>nyajsw extension |  |
+| `wrapper.liveness.failures` | Consecutive liveness failures before wrapper.liveness.action is taken | integer | `3` | **supported**<br>nyajsw extension |  |
+| `wrapper.liveness.action` | Action when the liveness probes keep failing | one of `RESTART`, `SHUTDOWN` | `RESTART` | **supported**<br>nyajsw extension |  |
 | `wrapper.agent.enabled` | Load the nyajsw agent into the application JVM | boolean | `true` | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.port` | Port of the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |
 | `wrapper.port.min` | Lowest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |

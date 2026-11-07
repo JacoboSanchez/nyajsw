@@ -6,9 +6,10 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * Checks a set of probes that must all pass (plan §4.7: {@code wrapper.readiness.type} lists them),
- * and knows how often to repeat the check. When to check is the supervisor's business, which polls
- * at {@link #interval()} until the check passes or {@code wrapper.startup.timeout} runs out. Immutable.
+ * Checks a set of probes that must all pass (plan §4.7: {@code wrapper.readiness.type} or {@code
+ * wrapper.liveness.type} lists them), and knows how often to repeat the check. When to check is the
+ * supervisor's business: it polls readiness at {@link #interval()} until the check passes or {@code
+ * wrapper.startup.timeout} runs out, and liveness at its interval while the application runs. Immutable.
  */
 public final class ProbeRunner {
 
@@ -30,6 +31,11 @@ public final class ProbeRunner {
     /** The pause between two checks. */
     public Duration interval() {
         return interval;
+    }
+
+    /** Whether there is no probe, so that every check passes. */
+    public boolean isEmpty() {
+        return probes.isEmpty();
     }
 
     /** The probe type names, in order, for log messages. */

@@ -28,8 +28,8 @@ import java.util.Optional;
  * Readiness, liveness and the agent as configured (plan §4.7).
  *
  * @param readinessTypes        {@code wrapper.readiness.type}, the probes that apply, all of which must
- *                              pass; its default until the key takes effect (P7)
- * @param readinessInterval     {@code wrapper.readiness.interval}, likewise
+ *                              pass
+ * @param readinessInterval     {@code wrapper.readiness.interval}, at least 1 s
  * @param tcpHost               {@code wrapper.readiness.tcp.host}
  * @param tcpPort               {@code wrapper.readiness.tcp.port}, if set
  * @param httpUrl               {@code wrapper.readiness.http.url}, if set
@@ -42,8 +42,8 @@ import java.util.Optional;
  * @param commandTimeout        {@code wrapper.readiness.command.timeout}, if set
  * @param livenessTypes         {@code wrapper.liveness.type}; by default {@code agent} when the agent is
  *                              enabled and implemented, else none (D16; see {@link #agentInEffect})
- * @param livenessInterval      {@code wrapper.liveness.interval}
- * @param livenessFailures      {@code wrapper.liveness.failures}
+ * @param livenessInterval      {@code wrapper.liveness.interval}, at least 1 s
+ * @param livenessFailures      {@code wrapper.liveness.failures}, at least 1
  * @param livenessAction        {@code wrapper.liveness.action}
  * @param agentEnabled          {@code wrapper.agent.enabled} as configured
  */
@@ -82,16 +82,13 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
 
     static ProbeConfig from(ConfigValues values) {
         boolean agentEnabled = values.required(values.bool(AGENT_ENABLED), AGENT_ENABLED);
-        List<String> livenessTypes = values.list(LIVENESS_TYPE);
+        List<String> livenessTypes = values.names(LIVENESS_TYPE, "probe type");
+        List<String> readinessTypes = values.names(READINESS_TYPE, "probe type");
         boolean agentInEffect = agentInEffect(agentEnabled);
-        // The supervisor uses these from P3 on, but the keys take effect only in P7: until then their
-        // defaults apply, whatever the file says (it is warned about).
         return new ProbeConfig(
-                READINESS_TYPE.status().takesEffect() ? values.list(READINESS_TYPE)
-                        : values.constantDefault(READINESS_TYPE, ValueParser::parseList),
-                READINESS_INTERVAL.status().takesEffect()
-                        ? values.required(values.duration(READINESS_INTERVAL), READINESS_INTERVAL)
-                        : values.constantDefault(READINESS_INTERVAL, ValueParser::parseDuration),
+                readinessTypes.isEmpty() ? values.constantDefault(READINESS_TYPE, ValueParser::parseList)
+                        : readinessTypes,
+                positive(values, READINESS_INTERVAL),
                 values.required(values.string(READINESS_TCP_HOST), READINESS_TCP_HOST),
                 values.integer(READINESS_TCP_PORT),
                 values.text(READINESS_HTTP_URL),
@@ -103,10 +100,36 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
                 values.text(READINESS_COMMAND),
                 values.duration(READINESS_COMMAND_TIMEOUT),
                 livenessTypes.isEmpty() ? defaultLivenessTypes(agentInEffect) : livenessTypes,
-                values.required(values.duration(LIVENESS_INTERVAL), LIVENESS_INTERVAL),
-                values.required(values.integer(LIVENESS_FAILURES), LIVENESS_FAILURES),
+                positive(values, LIVENESS_INTERVAL),
+                atLeastOne(values, LIVENESS_FAILURES),
                 values.required(values.enumeration(LIVENESS_ACTION, FailureAction.class), LIVENESS_ACTION),
                 agentEnabled);
+    }
+
+    /**
+     * A probe interval: 0 would check without pause, so it is a problem, and the default stands in
+     * for it so that the other values can still be judged.
+     */
+    private static Duration positive(ConfigValues values, KeySpec spec) {
+        Duration interval = values.required(values.duration(spec), spec);
+        if (interval.isPositive()) {
+            return interval;
+        }
+        values.problem(spec, values.location(spec).orElseThrow(), spec.name() + " must be at least 1 s");
+        return values.constantDefault(spec, ValueParser::parseDuration);
+    }
+
+    /**
+     * A count of failed checks: below 1 nothing could trigger the action, so it is a problem; the
+     * default stands in.
+     */
+    private static int atLeastOne(ConfigValues values, KeySpec spec) {
+        int count = values.required(values.integer(spec), spec);
+        if (count >= 1) {
+            return count;
+        }
+        values.problem(spec, values.location(spec).orElseThrow(), spec.name() + " must be at least 1");
+        return values.constantDefault(spec, ValueParser::parseInteger);
     }
 
     /**

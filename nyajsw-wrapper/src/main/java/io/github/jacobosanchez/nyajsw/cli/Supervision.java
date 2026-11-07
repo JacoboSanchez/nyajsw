@@ -1,6 +1,9 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
+import io.github.jacobosanchez.nyajsw.config.ConfigException;
+import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigWarning;
+import io.github.jacobosanchez.nyajsw.config.KeySpec;
 import io.github.jacobosanchez.nyajsw.config.ProbeConfig;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationProcess;
@@ -9,6 +12,7 @@ import io.github.jacobosanchez.nyajsw.launch.JavaCommand;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 import io.github.jacobosanchez.nyajsw.lifecycle.ExecutorScheduler;
+import io.github.jacobosanchez.nyajsw.lifecycle.Liveness;
 import io.github.jacobosanchez.nyajsw.lifecycle.PidFiles;
 import io.github.jacobosanchez.nyajsw.lifecycle.State;
 import io.github.jacobosanchez.nyajsw.lifecycle.StopChain;
@@ -29,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The application under a {@link Supervisor}, as console mode and service mode both run it: its
- * restart policy, readiness probes, stop strategies and pid files, each invocation launched with a
+ * restart policy, readiness and liveness probes, stop strategies and pid files, each invocation launched with a
  * freshly expanded classpath. It runs once.
  *
  * <p>When {@code wrapper.control} ends the application with the wrapper ({@code TIGHT}, {@code
@@ -62,7 +66,7 @@ final class Supervision {
      *                       service mode)
      * @param listener       told about every change of the supervisor's state
      * @param processes      the platform's help with processes ({@link ProcessTools#NONE} for none)
-     * @throws IllegalArgumentException when a readiness probe type is not known
+     * @throws ConfigException when a readiness or liveness probe type is not known or cannot be built
      */
     Supervision(WrapperConfig config, WrapperLog log, JavaCommandBuilder builder, ClasspathExpander expander,
             List<String> wrapperOptions, Supervisor.StateListener listener, ProcessTools processes) {
@@ -75,10 +79,23 @@ final class Supervision {
         this.pidFiles = new PidFiles(config.lifecycle(), config.secrets(), log);
         this.processes = Objects.requireNonNull(processes, "processes");
         ProbeConfig probes = config.probes();
-        ProbeRunner readiness = new ProbeRunner(ProbeRegistry.defaults().create(probes.readinessTypes(), probes),
+        ProbeRegistry registry = ProbeRegistry.defaults();
+        ProbeRunner readiness = new ProbeRunner(probes(registry, ConfigKeys.READINESS_TYPE, probes.readinessTypes()),
                 probes.readinessInterval());
-        this.supervisor = new Supervisor(config.lifecycle(), pidFiles.tracking(this::launch), readiness,
+        ProbeRunner livenessProbes = new ProbeRunner(probes(registry, ConfigKeys.LIVENESS_TYPE, probes.livenessTypes()),
+                probes.livenessInterval());
+        Liveness liveness = new Liveness(livenessProbes, probes.livenessFailures(), probes.livenessAction());
+        this.supervisor = new Supervisor(config.lifecycle(), pidFiles.tracking(this::launch), readiness, liveness,
                 probeExecutor, stops, scheduler, log, listener);
+    }
+
+    /** The probes {@code key} lists; one the registry cannot build is a configuration error, shown masked. */
+    private List<ProbeRegistry.NamedProbe> probes(ProbeRegistry registry, KeySpec key, List<String> types) {
+        try {
+            return registry.create(types, config.probes());
+        } catch (IllegalArgumentException e) {
+            throw new ConfigException(config.secrets().maskText(key.name() + ": " + e.getMessage()));
+        }
     }
 
     /**

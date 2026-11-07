@@ -117,7 +117,7 @@ public class SupervisorTest {
     }
 
     private Supervisor supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher) {
-        return new Supervisor(lifecycle, launcher, readiness, Runnable::run, stops, scheduler, log,
+        return new Supervisor(lifecycle, launcher, readiness, Liveness.NONE, Runnable::run, stops, scheduler, log,
                 (from, to) -> transitions.add(from + "->" + to));
     }
 
@@ -768,7 +768,7 @@ public class SupervisorTest {
     @Test
     public void aFailingListenerIsLoggedAndSupervisionGoesOn() {
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, stops, scheduler, log, (from, to) -> {
+                Liveness.NONE, Runnable::run, stops, scheduler, log, (from, to) -> {
             throw new IllegalStateException("listener broke");
         });
 
@@ -876,7 +876,7 @@ public class SupervisorTest {
         AtomicBoolean ready = new AtomicBoolean();
         readinessWhen(ready);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.RESTART, Map.of()), this::launch, readiness,
-                checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+                Liveness.NONE, checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
         supervisor.start();
         supervisor.runPending();
         Runnable firstCheck = checks.get(0); // jvm 1's check, still pending
@@ -910,7 +910,7 @@ public class SupervisorTest {
         readinessWhen(new AtomicBoolean());
         AtomicBoolean shutDown = new AtomicBoolean();
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                task -> {
+                Liveness.NONE, task -> {
                     if (shutDown.get()) {
                         throw new RejectedExecutionException("shut down");
                     }
@@ -1013,7 +1013,7 @@ public class SupervisorTest {
     public void aReadinessResultThatArrivesAfterTheStateChangedIsIgnored() {
         List<Runnable> checks = new ArrayList<>();
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+                Liveness.NONE, checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
         supervisor.start();
         supervisor.runPending();
         assertEquals(checks.size(), 1, "the first check is queued at once");
@@ -1045,7 +1045,7 @@ public class SupervisorTest {
     @Test
     public void aProbeExecutorThatRejectsTheCheckFailsSupervision() {
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                task -> {
+                Liveness.NONE, task -> {
                     throw new RejectedExecutionException("shut down");
                 }, stops, scheduler, log, (from, to) -> { });
         supervisor.start();
@@ -1250,7 +1250,7 @@ public class SupervisorTest {
         CountDownLatch supervisorRunning = new CountDownLatch(1);
         CountDownLatch stopping = new CountDownLatch(1);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, stops, scheduler, log, (from, to) -> {
+                Liveness.NONE, Runnable::run, stops, scheduler, log, (from, to) -> {
             if (to == RUNNING) {
                 supervisorRunning.countDown();
             }
@@ -1292,7 +1292,7 @@ public class SupervisorTest {
         CountDownLatch supervisorRunning = new CountDownLatch(1);
         CountDownLatch stopping = new CountDownLatch(1);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, stops, scheduler, log, (from, to) -> {
+                Liveness.NONE, Runnable::run, stops, scheduler, log, (from, to) -> {
             if (to == RUNNING) {
                 supervisorRunning.countDown();
             }
