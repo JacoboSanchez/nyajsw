@@ -817,9 +817,10 @@ public final class ConfigKeys {
 
     public static final KeySpec NTSERVICE_ACCOUNT = yajsw("wrapper.ntservice.account", STRING, SERVICE)
             .status(SUPPORTED)
-            .description("Account the service runs as")
-            .notes("When absent the service runs as LocalSystem. Until P5.5 grants it, an account other than"
-                    + " the built-in ones must have the right to log on as a service already; -i warns")
+            .description("Account the service runs as; granted the right to log on as a service at install")
+            .notes("When absent the service runs as LocalSystem. The built-in service accounts and virtual"
+                    + " accounts (NT SERVICE\\name) are granted nothing; any other account must be a user, and"
+                    + " a local one is written .\\name")
             .build();
 
     public static final KeySpec NTSERVICE_PASSWORD = yajsw("wrapper.ntservice.password", STRING, SERVICE)

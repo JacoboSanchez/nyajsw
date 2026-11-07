@@ -9,6 +9,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -47,6 +48,7 @@ public class WindowsServiceControllerTest {
 
     private Path dir;
     private ScmApi scm;
+    private LsaApi lsa;
     private ServiceCommandLine commandLine;
     private WindowsServiceController controller;
     private long nanos;
@@ -55,9 +57,11 @@ public class WindowsServiceControllerTest {
     public void setUp() throws IOException {
         dir = Files.createTempDirectory("nyajsw-scm").toRealPath();
         scm = mock(ScmApi.class);
+        lsa = mock(LsaApi.class);
+        when(lsa.userSid(anyString())).thenReturn(new byte[] {1, 2, 3});
         commandLine = new ServiceCommandLine(dir.resolve("jdk"), List.of(dir.resolve("nyajsw.jar")), StandardCharsets.UTF_8);
         nanos = 0;
-        controller = new WindowsServiceController(scm, commandLine, new StateWait(() -> nanos,
+        controller = new WindowsServiceController(scm, lsa, commandLine, new StateWait(() -> nanos,
                 duration -> nanos += duration.toNanos()));
         when(scm.openManager(anyInt())).thenReturn(MANAGER);
         when(scm.openService(eq(MANAGER), anyString(), anyInt())).thenReturn(SERVICE);
@@ -105,6 +109,54 @@ public class WindowsServiceControllerTest {
         assertEquals(registered.dependencies(), List.of("Tcpip", "Afd"));
         assertEquals(registered.account(), Optional.of(".\\svcuser"));
         assertEquals(registered.password().map(Secret::reveal), Optional.of("hunter2"));
+    }
+
+    @Test
+    public void theAccountIsCheckedFirstAndGrantedTheLogonRightOnceTheServiceIsConfigured() throws IOException {
+        controller.install(TestConfigs.load(dir, "wrapper.ntservice.name=svc", "wrapper.ntservice.account=.\\svcuser"));
+
+        InOrder order = inOrder(lsa, scm);
+        order.verify(lsa).userSid(".\\svcuser");
+        order.verify(scm).createService(eq(MANAGER), any(), anyInt());
+        order.verify(scm).setPreshutdownTimeout(eq(SERVICE), any());
+        order.verify(lsa).grantServiceLogon(new byte[] {1, 2, 3});
+        order.verify(scm).close(SERVICE);
+    }
+
+    @Test
+    public void theBuiltInAndVirtualAccountsAreGrantedNothing() throws IOException {
+        controller.install(TestConfigs.load(dir, "wrapper.ntservice.name=svc"));
+        controller.install(TestConfigs.load(dir, "wrapper.ntservice.name=svc",
+                "wrapper.ntservice.account=NT AUTHORITY\\\\LocalService"));
+        controller.install(TestConfigs.load(dir, "wrapper.ntservice.name=svc",
+                "wrapper.ntservice.account=NT SERVICE\\\\svc"));
+
+        verifyNoInteractions(lsa);
+    }
+
+    @Test
+    public void anAccountThatCannotBeFoundStopsTheInstallBeforeAnythingIsCreated() throws IOException {
+        when(lsa.userSid("nobody")).thenThrow(error(Win32Errors.NONE_MAPPED));
+
+        ServiceException failure = expectThrows(ServiceException.class, () -> controller.install(
+                TestConfigs.load(dir, "wrapper.ntservice.name=svc", "wrapper.ntservice.account=nobody")));
+
+        assertEquals(failure.getMessage(), "cannot install the service 'svc' to run as 'nobody': Call: no such account"
+                + " (Win32 error 1332); check wrapper.ntservice.account: a local account is written .\\name, a"
+                + " domain account DOMAIN\\name");
+        verifyNoInteractions(scm);
+    }
+
+    @Test
+    public void aGrantThatFailsDeletesTheServiceAgain() throws IOException {
+        doThrow(error(Win32Errors.ACCESS_DENIED)).when(lsa).grantServiceLogon(any());
+
+        ServiceException failure = expectThrows(ServiceException.class, () -> controller.install(
+                TestConfigs.load(dir, "wrapper.ntservice.name=svc", "wrapper.ntservice.account=DOMAIN\\\\svc")));
+
+        assertTrue(failure.getMessage().endsWith("run the command as Administrator"), failure.getMessage());
+        verify(scm).deleteService(SERVICE);
+        verify(scm).close(SERVICE);
     }
 
     @Test

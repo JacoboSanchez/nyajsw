@@ -193,30 +193,16 @@ public class ServiceCommandsTest {
     }
 
     @Test
-    public void anAccountOtherThanTheBuiltInOnesIsWarnedAboutAtInstall() throws IOException {
-        when(services.install(any())).thenReturn(List.of());
-
-        assertEquals(run("-i", conf("wrapper.ntservice.account=.\\svcuser")), 0);
-        assertTrue(output().contains("warning: wrapper.ntservice.account must have the right to log on as a service"),
-                output());
-    }
-
-    @Test
-    public void theBuiltInAccountsNeedNoWarning() throws IOException {
-        when(services.install(any())).thenReturn(List.of());
-
-        assertEquals(run("-i", conf("wrapper.ntservice.account=NT AUTHORITY\\\\NetworkService")), 0);
-        assertFalse(output().contains("log on as a service"), output());
-    }
-
-    @Test
-    public void builtInAccountsAreRecognisedInTheirSpellings() throws IOException {
+    public void builtInAndVirtualAccountsNeedNoLogonRight() throws IOException {
         for (String account : List.of("LocalSystem", ".\\\\localsystem", "NT AUTHORITY\\\\LocalService",
-                "networkservice")) {
-            assertTrue(load(conf("wrapper.ntservice.account=" + account)).service().runsAsBuiltInAccount(), account);
+                "networkservice", "NT AUTHORITY\\\\SYSTEM", "NT AUTHORITY\\\\Network Service",
+                "NT SERVICE\\\\svc")) {
+            assertFalse(load(conf("wrapper.ntservice.account=" + account)).service().needsServiceLogonRight(), account);
         }
-        assertTrue(load(conf()).service().runsAsBuiltInAccount());
-        assertFalse(load(conf("wrapper.ntservice.account=DOMAIN\\\\svc")).service().runsAsBuiltInAccount());
+        assertFalse(load(conf()).service().needsServiceLogonRight());
+        for (String account : List.of("DOMAIN\\\\svc", ".\\\\svcuser", "DOMAIN\\\\gmsa$")) {
+            assertTrue(load(conf("wrapper.ntservice.account=" + account)).service().needsServiceLogonRight(), account);
+        }
     }
 
     @Test

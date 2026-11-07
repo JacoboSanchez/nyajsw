@@ -22,20 +22,24 @@ import java.util.function.Supplier;
  * ScmApi}. Each command opens the manager and the service with the least access it needs, so that
  * a query works without elevation, and closes both handles whatever happens.
  *
- * <p>Install registers an own-process service running the {@link ServiceCommandLine}'s binary path, then
+ * <p>Install first checks that an account which needs it ({@link ServiceConfig#needsServiceLogonRight})
+ * is a user, registers an own-process service running the {@link ServiceCommandLine}'s binary path, then
  * sets its description, the delayed start of {@code DELAYED_AUTO_START} and, always, the
  * pre-shutdown timeout: as long as a stop may take to end ({@link Supervisor#stopWait}), since the
- * Windows default is only 10 s. A
+ * Windows default is only 10 s, and lets the account log on as a service (the right the Services
+ * console grants when an account is set there; without it the first start fails with 1069). A
  * service that cannot be configured is deleted again, so that a failed install leaves nothing.
  */
 final class WindowsServiceController implements ServiceController {
 
     private final ScmApi scm;
+    private final LsaApi lsa;
     private final ServiceCommandLine commandLine;
     private final StateWait wait;
 
-    WindowsServiceController(ScmApi scm, ServiceCommandLine commandLine, StateWait wait) {
+    WindowsServiceController(ScmApi scm, LsaApi lsa, ServiceCommandLine commandLine, StateWait wait) {
         this.scm = Objects.requireNonNull(scm, "scm");
+        this.lsa = Objects.requireNonNull(lsa, "lsa");
         this.commandLine = Objects.requireNonNull(commandLine, "commandLine");
         this.wait = Objects.requireNonNull(wait, "wait");
     }
@@ -48,6 +52,10 @@ final class WindowsServiceController implements ServiceController {
         ServiceRegistration registration = new ServiceRegistration(name, service.displayName().orElse(name),
                 command.binaryPath(), service.startType(), service.dependencies(), service.account(),
                 service.password());
+        Optional<byte[]> sid = service.needsServiceLogonRight()
+                ? Optional.of(call(() -> lsa.userSid(service.account().orElseThrow()), "install the service '" + name
+                        + "' to run as '" + service.account().orElseThrow() + "'"))
+                : Optional.empty();
         String what = "install the service '" + name + "'";
         ScmHandle manager = call(() -> scm.openManager(ScmApi.SC_MANAGER_CREATE_SERVICE), what);
         try {
@@ -55,6 +63,8 @@ final class WindowsServiceController implements ServiceController {
                     ScmApi.SERVICE_CHANGE_CONFIG | ScmApi.DELETE), what);
             try {
                 configure(created, service, preshutdownTimeout(config));
+                // Last, so that a service that could not be created grants nothing.
+                sid.ifPresent(lsa::grantServiceLogon);
             } catch (RuntimeException e) { // whatever went wrong, a half-configured service is deleted
                 try {
                     scm.deleteService(created);

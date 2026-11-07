@@ -121,7 +121,11 @@ final class JnaScmApi implements ScmApi {
 
     /** The last error of {@code call}, read at once, before any other native call can replace it. */
     private static ServiceException failure(String call) {
-        int code = Native.getLastError();
+        return failure(call, Native.getLastError());
+    }
+
+    /** The failure of {@code call} with Win32 error {@code code}, in the system's words and ours. */
+    static ServiceException failure(String call, int code) {
         String text;
         try {
             text = Kernel32Util.formatMessage(code);

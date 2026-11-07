@@ -50,22 +50,29 @@ public record ServiceConfig(Optional<String> name, Optional<String> displayName,
     }
 
     /**
-     * Whether the service runs as one of Windows' built-in accounts, which may log on as a service
-     * already: no account (LocalSystem), or {@code LocalSystem}, {@code LocalService} or {@code
-     * NetworkService}, alone or after {@code .\} or {@code NT AUTHORITY\}, in any case.
+     * Whether the service's account must be granted the right to log on as a service: not for no
+     * account (LocalSystem), not for Windows' built-in service accounts ({@code LocalSystem}, {@code
+     * SYSTEM}, {@code LocalService}, {@code NetworkService}, the last two also with a space, alone or
+     * after {@code .\} or {@code NT AUTHORITY\}, in any case), and not for a virtual account
+     * ({@code NT SERVICE\<name>}), which has the right through {@code NT SERVICE\ALL SERVICES} and
+     * cannot even be looked up before its service exists.
      */
-    public boolean runsAsBuiltInAccount() {
+    public boolean needsServiceLogonRight() {
         if (account.isEmpty()) {
-            return true;
+            return false;
         }
         String name = account.get().strip().toLowerCase(java.util.Locale.ROOT);
+        if (name.startsWith("nt service\\")) {
+            return false;
+        }
         for (String prefix : List.of(".\\", "nt authority\\")) {
             if (name.startsWith(prefix)) {
                 name = name.substring(prefix.length());
                 break;
             }
         }
-        return List.of("localsystem", "localservice", "networkservice").contains(name);
+        return !List.of("localsystem", "system", "localservice", "local service", "networkservice",
+                "network service").contains(name);
     }
 
     /**
