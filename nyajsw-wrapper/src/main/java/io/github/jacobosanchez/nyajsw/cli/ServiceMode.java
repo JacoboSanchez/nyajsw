@@ -81,7 +81,7 @@ final class ServiceMode implements ServiceBody {
     @Override
     public ServiceExit run(ServiceContext context) {
         serviceName = context.serviceName();
-        try (BootstrapLog bootstrap = new BootstrapLog(bootstrapFile.apply(serviceName))) {
+        try (BootstrapLog bootstrap = bootstrapLog()) {
             context.starting(READING_WAIT_HINT);
             Optional<WrapperConfig> loaded = Main.load(file, bootstrap);
             if (loaded.isEmpty()) {
@@ -167,9 +167,21 @@ final class ServiceMode implements ServiceBody {
         return ended == null ? ExitCode.UNEXPECTED_ERROR.code() : ended.code();
     }
 
-    /** The service's bootstrap log, once {@link #run} has begun and the service manager has named the service. */
-    Optional<Path> bootstrapLog() {
-        return Optional.ofNullable(serviceName).map(bootstrapFile);
+    /**
+     * The service's bootstrap log: named after the service once the service manager has named it,
+     * before that (the process could not even connect) after the configuration file, {@code
+     * wrapper.conf} giving {@code wrapper}.
+     */
+    BootstrapLog bootstrapLog() {
+        String name = serviceName != null ? serviceName : fileStem(file);
+        return new BootstrapLog(bootstrapFile.apply(name), WrapperLog.bootstrapFile(name));
+    }
+
+    /** {@code C:\conf\service.conf} gives {@code service}; worked out on the text, which may not be a valid path. */
+    static String fileStem(String file) {
+        String name = file.substring(Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\')) + 1);
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name.isEmpty() ? "service" : name;
     }
 
     /** {@code text} with the configuration's secrets masked, once it has been read. */

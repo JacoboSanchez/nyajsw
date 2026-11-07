@@ -7,6 +7,7 @@ import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.log.WriteAccess;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -153,7 +154,8 @@ public final class PidFiles {
             }
             log.debug(DebugDetail.SUPERVISION, () -> "wrote " + pid + " to " + shown(file) + " (" + key + ")");
         } catch (IOException | RuntimeException e) {
-            log.error("cannot write the pid file " + shown(file) + " (" + key + "): " + reason(e));
+            log.error("cannot write the pid file " + shown(file) + " (" + key + "): " + reason(e)
+                    + WriteAccess.hint(e, key));
         }
     }
 
@@ -178,7 +180,8 @@ public final class PidFiles {
         } catch (NoSuchFileException e) {
             // already gone
         } catch (IOException | RuntimeException e) {
-            log.error("cannot remove the pid file " + shown(file) + " (" + key + "): " + reason(e));
+            log.error("cannot remove the pid file " + shown(file) + " (" + key + "): " + reason(e)
+                    + WriteAccess.hint(e, key));
         }
     }
 

@@ -568,8 +568,9 @@ output, configuration and a clock; probes are stateless or own their state expli
 * `wrapper.debug=true` raises the wrapper log level to `DEBUG`, and `wrapper.debug.level` (0–3,
   default 3) chooses which debug messages are written by the detail each one names (P4.1). In
   service mode nothing is written to the console; logging initialises to the file as early as the
-  configuration allows, with a bootstrap fallback (`%TEMP%\nyajsw-bootstrap.log`) for errors
-  before the configuration is read (P4.3a).
+  configuration allows, with a bootstrap fallback (`nyajsw-bootstrap-<name>.log` beside the
+  configuration file since P6.3; `%TEMP%` only when that path cannot be parsed) for errors
+  before the configuration is read and for the problems of the log file (P4.3a).
 
 ### 4.9 Command-line interface
 
@@ -1275,8 +1276,26 @@ Goal: the wrapper itself runs under the SCM.
       a graceful step is warned about at start (deferred finding). A start that never becomes ready
       with `wrapper.startup.timeout=0`, or a long `wrapper.startup.delay`, stays `START_PENDING`,
       where Windows refuses a stop (1061).
-- [ ] P6.3 Service-account hardening: working directory default, clear errors for unwritable
-      log/pid paths, documentation of `jna.tmpdir` / `jnidispatch.dll` options.
+- [x] P6.3 Service-account hardening: working directory default, clear errors for unwritable
+      log/pid paths, documentation of `jna.tmpdir` / `jnidispatch.dll` options. **Done:** the
+      working directory needed no change: it defaults to the configuration's directory (D13),
+      wrapper-side relative paths resolve against that directory and application-side ones against
+      the working directory, so the service's own current directory (`C:\Windows\System32`) never
+      matters, and the installed command line names the configuration by its absolute path (D12). A log file or pid file that cannot be written
+      because access is denied says which account the wrapper runs as (`user.name`) and which key
+      chose the place (`log.WriteAccess`); the log file's message reaches the bootstrap log in
+      service mode. The bootstrap log moves beside the configuration file
+      (`WrapperLog.bootstrapFile(directory, name)`; deferred finding P4.3a), which is protected as
+      well as the configuration itself, where `C:\Windows\Temp` lets any user plant a file first;
+      when the account may not create it there, it falls back to the account's temporary directory
+      (`cli.BootstrapLog`), and before Windows has named the service (JNA cannot be loaded, the
+      process cannot connect) it is named after the configuration file. User guide
+      `docs/windows-service.md`: the commands, what needs a reinstall (the registration's keys,
+      the stop timeouts, the file locations, a rename), starting and stopping (the default stop
+      chain, 1066 and `SERVICE_EXIT_CODE`, `-Xrs`), accounts and what they must read and write,
+      protecting the installation, the two logs, the application JVM given with its directory, and
+      `jna.tmpdir` with the `jna.boot.library.path` / `jna.nounpack` fallback for
+      `jnidispatch.dll`.
 - [ ] P6.4 Job object (hand-written binding) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for
       `TIGHT`/`APPLICATION` (the modes in which the application ends with the wrapper, §4.6);
       `TerminateJobObject` used by the `terminate` strategy when present.
@@ -1415,14 +1434,14 @@ entry names the commit/plan item it came from; remove entries when addressed.
   them), and in console mode it shares the console and its Ctrl+C. P6.2 left it as is (a
   service has no console); P6.4 must decide, with its kill-on-close job: redirect its output,
   detach it from the console, and keep it out of the job.
-- P4.3a (review): P6 must open the configured log with `WrapperLog.open(…, fileProblems)` pointed
-  at the bootstrap log, and use the bootstrap log for errors before the configuration is read. The
-  bootstrap file lives in the temporary directory, which for `LocalSystem` is `C:\Windows\Temp`,
-  where any user may create a file of that name first (and so read the wrapper's early errors,
-  or keep it from being written, or plant a link so that the service appends to another file);
-  P6.2 opens it only when there is something to write, so a clean start touches nothing there;
-  P6.3 decides whether a directory with a restricted ACL (beside the configuration, or under
-  `%ProgramData%\nyajsw`) or opening without following links suits better. The bootstrap log masks no
+- P4.3a (review): done in P6.2/P6.3: service mode opens the configured log with the bootstrap log
+  for its problems and uses the bootstrap log before the configuration is read, opened only when
+  there is something to write, beside the configuration file instead of the temporary directory
+  (for `LocalSystem` `C:\Windows\Temp`, where any user may create a file of that name first, or a
+  link). Left: `%TEMP%` is still the fallback for a configuration path that cannot be parsed and
+  for an account that may not create files beside the configuration (for `LocalSystem`, which
+  rarely lacks that right, `C:\Windows\Temp`), and the file is opened following links.
+  The bootstrap log masks no
   stack trace (it may run before any secret is known): once the configuration is read, log
   exceptions only to the configured log, or give `bootstrap` the configuration's mask. Three debug
   messages put exception text into the message unmasked (`Supervisor` cancelling a timer,
@@ -1482,6 +1501,14 @@ entry names the commit/plan item it came from; remove entries when addressed.
   short. Not tested: a stop control that arrives between the handler's registration and the first
   `START_PENDING`, which Windows cannot send (nothing is accepted yet); the final `STOPPED` is not
   retried before `run` gives up.
+- P6.3 (review): a bare `wrapper.java.command` (`java`, YAJSW's default) is found by Windows in
+  the wrapper's own JDK first, before `PATH` (`CreateProcess` searches the parent's directory
+  first), so the application runs on the wrapper's Java 21; the `ApplicationProcess` Javadoc says
+  `PATH`. The guide says to give the command with its directory; resolving bare names against
+  `PATH` in the wrapper would match the documentation. The access hint names `user.name`
+  without its domain, and `-Duser.name` in `wrapper.ntservice.additional.<n>` would change it;
+  P6.5 should show what it is under `LocalSystem`. It covers the log file at open and the pid
+  files, not a later roll or write failure of the log.
 - P6.2 (review): a stop with the default chain (`terminate` alone) waits the whole stop budget
   (`wrapper.shutdown.timeout`, default 30 s), during which nothing asks the application to end,
   since a service receives no Ctrl+C; service mode says so at start. Terminating at once, or a

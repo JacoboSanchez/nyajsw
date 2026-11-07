@@ -183,7 +183,7 @@ public final class WrapperLog implements AutoCloseable {
                         new ForwardingErrorManager(problems)));
             } catch (IOException | RuntimeException e) {
                 problems.accept(secrets.maskText("cannot open the log file " + config.logfile().get() + ": " + e)
-                        + "; the log goes on without it");
+                        + WriteAccess.hint(e, ConfigKeys.LOGFILE.name()) + "; the log goes on without it");
             }
         }
         return of(clock, config.debugDetail(), sinks.toArray(Handler[]::new));
@@ -210,8 +210,8 @@ public final class WrapperLog implements AutoCloseable {
      * for the problems of the configured log file, where there is no console (service mode, P6):
      * YAJSW's default file format and level (the registry's defaults of {@code
      * wrapper.logfile.format} and {@code wrapper.logfile.loglevel}), UTF-8. It never rolls: it is
-     * written rarely, and its usual place, the temporary directory, is writable by every user, where
-     * moving and deleting files by a predictable name is best avoided. When the file cannot be
+     * written rarely, and one of its places, the temporary directory, is writable by every user,
+     * where moving and deleting files by a predictable name is best avoided. When the file cannot be
      * opened either, the reason goes to standard error and the log writes nowhere; it never fails
      * its caller.
      */
@@ -238,15 +238,24 @@ public final class WrapperLog implements AutoCloseable {
     }
 
     /**
-     * The bootstrap log's usual place for {@code name} (a service name), {@code
-     * nyajsw-bootstrap-<name>.log} in the JVM's temporary directory ({@code %TEMP%}; for {@code
-     * LocalSystem}, the system's): one file per service, so that services do not share one.
+     * The bootstrap log of the service {@code name} in {@code directory}, {@code
+     * nyajsw-bootstrap-<name>.log}: one file per service, so that services do not share one.
      * Characters other than letters, digits, {@code .}, {@code _} and {@code -} become {@code _}.
+     * Service mode puts it beside the configuration file (plan P6.3), where the default {@code
+     * wrapper.log} goes (D13): that directory is protected as well as the configuration itself,
+     * which decides what the service runs, while the temporary directory of {@code LocalSystem}
+     * ({@code C:\Windows\Temp}) lets any user create a file of that name first.
      */
-    public static Path bootstrapFile(String name) {
+    public static Path bootstrapFile(Path directory, String name) {
+        Objects.requireNonNull(directory, "directory");
         Objects.requireNonNull(name, "name");
         String safe = name.replaceAll("[^A-Za-z0-9._-]", "_");
-        return Path.of(System.getProperty("java.io.tmpdir"), BOOTSTRAP_PREFIX + safe + ".log");
+        return directory.resolve(BOOTSTRAP_PREFIX + safe + ".log");
+    }
+
+    /** {@link #bootstrapFile(Path, String)} in the JVM's temporary directory, for when there is no other place. */
+    public static Path bootstrapFile(String name) {
+        return bootstrapFile(Path.of(System.getProperty("java.io.tmpdir")), name);
     }
 
     private static LogRecord record(LogLevel level, String source, String message, Clock clock) {

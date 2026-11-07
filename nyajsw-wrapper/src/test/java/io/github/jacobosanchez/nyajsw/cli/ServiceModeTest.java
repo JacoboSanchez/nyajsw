@@ -12,6 +12,7 @@ import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
 import io.github.jacobosanchez.nyajsw.launch.TestApplication;
 import io.github.jacobosanchez.nyajsw.lifecycle.State;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
+import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import io.github.jacobosanchez.nyajsw.platform.FakeServiceHost;
 import io.github.jacobosanchez.nyajsw.platform.ServiceControl;
 import io.github.jacobosanchez.nyajsw.platform.ServiceExit;
@@ -34,6 +35,7 @@ import java.util.OptionalInt;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -230,6 +232,17 @@ public class ServiceModeTest {
     }
 
     @Test
+    public void theBootstrapLogIsBesideTheConfiguration() throws Exception {
+        Path conf = conf();
+
+        assertEquals(Main.bootstrapFiles(conf.toString()).apply("svc"), dir.resolve("nyajsw-bootstrap-svc.log"));
+        assertEquals(Main.bootstrapFiles("wrapper.conf").apply("svc"),
+                Path.of("").toAbsolutePath().resolve("nyajsw-bootstrap-svc.log"), "a relative one");
+        assertEquals(Main.bootstrapFiles("bad\u0000path").apply("svc"), WrapperLog.bootstrapFile("svc"),
+                "a path that cannot be parsed falls back to the temporary directory");
+    }
+
+    @Test
     public void theCommandLineRunsServiceMode() throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 
@@ -240,7 +253,7 @@ public class ServiceModeTest {
     }
 
     @Test
-    public void aHostWithoutServicesIsToldOnTheConsoleWithExitCodeFour() throws Exception {
+    public void aHostWithoutServicesIsToldOnTheConsoleAndInTheBootstrapLogWithExitCodeFour() throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 
         int code = Main.serviceMode(mode(conf()), new PrintStream(bytes, true, StandardCharsets.UTF_8),
@@ -249,6 +262,51 @@ public class ServiceModeTest {
         assertEquals(code, ExitCode.UNSUPPORTED_PLATFORM.code());
         assertTrue(bytes.toString(StandardCharsets.UTF_8).contains("cannot run as a service: nyajsw runs services on"
                 + " Windows only"), bytes.toString(StandardCharsets.UTF_8));
-        assertFalse(Files.exists(dir.resolve("bootstrap-svc.log")), "the service never began");
+        // Windows never named the service, so the file is named after the configuration.
+        assertFalse(Files.exists(dir.resolve("bootstrap-svc.log")));
+        assertTrue(Files.readString(dir.resolve("bootstrap-wrapper.log"), StandardCharsets.UTF_8)
+                .contains("cannot run as a service: nyajsw runs services on Windows only"));
+    }
+
+    @Test
+    public void theBootstrapLogOfAnUnnamedServiceIsNamedAfterTheConfiguration() {
+        assertEquals(ServiceMode.fileStem("C:\\conf\\service.conf"), "service");
+        assertEquals(ServiceMode.fileStem("conf/app/app.service.conf"), "app.service");
+        assertEquals(ServiceMode.fileStem("wrapper"), "wrapper");
+        assertEquals(ServiceMode.fileStem(".conf"), ".conf");
+        assertEquals(ServiceMode.fileStem("conf/"), "service");
+    }
+
+    @Test
+    public void aBootstrapLogThatCannotBeWrittenBesideTheConfigurationGoesToTheFallback() throws Exception {
+        try (BootstrapLog bootstrap = new BootstrapLog(dir.resolve("missing/bootstrap.log"), dir.resolve("fallback.log"))) {
+            bootstrap.accept("the log file cannot be opened");
+        }
+
+        assertFalse(Files.exists(dir.resolve("missing")));
+        assertTrue(Files.readString(dir.resolve("fallback.log"), StandardCharsets.UTF_8)
+                .contains("the log file cannot be opened"));
+    }
+
+    @Test(timeOut = 120_000)
+    public void aLogFileThatMayNotBeWrittenIsReportedInTheBootstrapLogWithTheAccount() throws Exception {
+        Path logfile = Files.writeString(dir.resolve("locked.log"), "");
+        if (!logfile.toFile().setWritable(false) || Files.isWritable(logfile)) {
+            throw new SkipException("this account may write a read-only file");
+        }
+        try {
+            FakeServiceHost host = new FakeServiceHost("svc");
+
+            host.run(mode(conf("wrapper.logfile=locked.log", "wrapper.app.parameter.1=report",
+                    "wrapper.app.parameter.2=0")));
+
+            assertEquals(host.exit(), Optional.of(ServiceExit.SUCCESS));
+            String bootstrap = Files.readString(dir.resolve("bootstrap-svc.log"), StandardCharsets.UTF_8);
+            assertTrue(bootstrap.contains("cannot open the log file"), bootstrap);
+            assertTrue(bootstrap.contains("the wrapper runs as '" + System.getProperty("user.name") + "'"), bootstrap);
+            assertTrue(bootstrap.contains("or change wrapper.logfile; the log goes on without it"), bootstrap);
+        } finally {
+            logfile.toFile().setWritable(true);
+        }
     }
 }
