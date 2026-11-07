@@ -61,6 +61,11 @@ final class ConfigValues {
         return typed(spec, value -> value);
     }
 
+    /** Where {@code spec} is set, if a layer sets it. */
+    Optional<ConfigLocation> location(KeySpec spec) {
+        return entry(spec).map(ConfigEntry::location);
+    }
+
     /**
      * A text value that means something only when it is not empty (a name, a command, a URL): an
      * empty value gives an empty result, so a derived default computed by the caller applies. A

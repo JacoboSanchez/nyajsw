@@ -71,7 +71,8 @@ public class SupervisorTest {
 
     @BeforeMethod
     public void setUp() {
-        stops = StopStrategyRegistry.defaults().chain(lifecycle(ExitAction.SHUTDOWN, Map.of()));
+        stops = new StopChain(List.of(), new StopChain.Step(TerminateStopStrategy.NAME, new TerminateStopStrategy()),
+                List.of());
         readiness = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe(ProcessProbe.TYPE, new ProcessProbe())),
                 READINESS_INTERVAL);
         scheduler = new FakeScheduler();
@@ -470,6 +471,52 @@ public class SupervisorTest {
 
         assertEquals(supervisor.outcome(), new Supervisor.Outcome(FAILED, OptionalInt.of(1)));
         assertEquals(launched.size(), 3);
+    }
+
+    @Test
+    public void theRunTimeEndsWhenTheProcessEndsNotWhenItsOutputIsDrained() {
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 1,
+                Duration.ZERO));
+
+        advance(supervisor, SUCCESSFUL_TIME.minusSeconds(1));
+        launched.get(0).endProcess(); // a grandchild keeps the output open
+        supervisor.runPending();
+        advance(supervisor, Duration.ofSeconds(2)); // the exit is reported after the 60 s mark
+        launched.get(0).exit(1);
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), FAILED, "59 s of run time is a failure, however late the exit came");
+        assertEquals(launched.size(), 1);
+    }
+
+    @Test
+    public void anExitReportedBeforeTheProcessEndCountsTheRunTimeToTheExit() {
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 1,
+                Duration.ZERO));
+
+        advance(supervisor, SUCCESSFUL_TIME);
+        launched.get(0).reportExitOnly(1);
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), RESTART_WAIT, "60 s is a success, so the limit of 1 is not reached");
+    }
+
+    @Test
+    public void aLateProcessEndOfAnEarlierInvocationDoesNotCountForTheNext() {
+        Supervisor supervisor = running(lifecycle(ControlMode.TIGHT, ExitAction.RESTART, Map.of(), 2,
+                Duration.ZERO));
+        launched.get(0).reportExitOnly(1); // failure 1 of 2; its process end comes later
+        supervisor.runPending();
+        advance(supervisor, RESTART_DELAY);
+
+        launched.get(0).endProcess(); // jvm 1's, during jvm 2
+        supervisor.runPending();
+        advance(supervisor, SUCCESSFUL_TIME);
+        launched.get(1).exit(1);
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), RESTART_WAIT, "jvm 2 ran 60 s, a success; jvm 1's end time is not its own");
+        assertTrue(logged().contains("failed invocations in a row: 0 of 2"), logged());
     }
 
     @Test

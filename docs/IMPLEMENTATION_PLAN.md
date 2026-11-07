@@ -856,7 +856,10 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       `wrapper.control`, and whether `STOP` keeps the wrapper alive under every `wrapper.control`.
       **Done:** `ExitActionResolver` turns the action into restart, end or wait: `STOP` waits in
       `IDLE` only under `LOOSE`/`APPLICATION` (D20). `RestartPolicy` counts failures in a row on
-      the scheduler's clock (`Scheduler.now()`): an invocation that ends before
+      the scheduler's clock (`Scheduler.now()`). An invocation's run time ends when its process
+      ends (`RunningApplication.onProcessEnd()`), not when the exit is reported, which waits for
+      the output to drain (up to 2 s when a grandchild holds it) and for the pid file to go. It
+      fails when it ends before
       `wrapper.successful_invocation_time` (at exactly that time it is a success) or cannot be
       started; at `wrapper.max_failed_invocations` (values below 1 count as 1; N failures in a
       row, so at most N-1 restarts, D20) the supervisor gives up `FAILED` with an error naming both
@@ -900,7 +903,10 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       `StopChain` from `wrapper.stop.strategy` and never fails, since a stop must always be
       possible: names ignore case, unknown names (such as `agent` before P7), repetitions and
       strategies that cannot be built are skipped, and `terminate` is moved or added to the end,
-      each with a warning for the log (P3.6 logs them). The stop budget is
+      each with a warning for the log (P3.6 logs them). The warnings show configured names through
+      the `SecretMasker`, as written (before lower-casing), and a value that holds a secret copied
+      in with `${...}` is ignored as a whole with a warning that does not echo it, since once split
+      at commas a secret with a comma would reach the log in pieces no masker recognises. The stop budget is
       `LifecycleConfig.stopBudget()` = `wrapper.shutdown.timeout` + `wrapper.jvm_exit.timeout`
       (unset: 0, as YAJSW documents no default), counted to a deadline: each graceful step gets an
       equal share of the time left, so a step that does not apply (or throws, logged) hands its
@@ -1104,6 +1110,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
   carry them.
 - P2.5: usage messages and "not implemented yet" go to standard output with everything else; standard
   error would suit scripts better.
+- P3.6 (review of PR #5): the supervisor logs unexpected exceptions with their stack traces
+  (`fail`, a failing stop strategy or listener, a lost exit), which `LineFormatter` prints
+  unmasked; today's launch code wraps its errors in masked `LaunchException`s, but give the
+  supervisor the `SecretMasker`, or mask throwables centrally in the log layer (P4).
 - P3.6: `ConsoleMode` assembles the whole supervision stack (stop chain, pid files, readiness
   runner, scheduler, probe executor, launcher); the service host (P6) needs the same, so extract a
   lifecycle-level assembly then instead of copying it. Launch errors that cannot fix themselves (a
@@ -1124,7 +1134,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `wrapper.jvm_exit.timeout` of 0 means "wait forever"; nyajsw reads a budget of 0 as "terminate at
   once", since a service stop must end; unconfirmed for YAJSW (§10 Q1).
 - P3.3: when P7 makes `wrapper.readiness.type` supported, an unknown type must be a
-  `ConfigException` naming the key, not the registry's `IllegalArgumentException`; the probe
+  `ConfigException` naming the key, not the registry's `IllegalArgumentException`, and a value
+  holding a secret must be refused whole, as `wrapper.stop.strategy` is (list items cut a secret
+  into pieces the masker does not know); the same holds for every list key whose items are
+  echoed; the probe
   factories will also change when `ProbeConfig` is split per probe (see the P1.6b entry).
   `ProbeContext` hands probes the whole `RunningApplication`, `terminateTree()` included; a
   narrower view would suit probes that are not ours. The meaning of `wrapper.startup.timeout=0`

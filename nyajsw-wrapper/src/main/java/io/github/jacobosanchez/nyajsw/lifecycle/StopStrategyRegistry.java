@@ -2,6 +2,7 @@ package io.github.jacobosanchez.nyajsw.lifecycle;
 
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
+import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -43,10 +44,14 @@ public final class StopStrategyRegistry {
      * Builds the chain that {@code wrapper.stop.strategy} ({@link LifecycleConfig#stopStrategies()})
      * names, ignoring case. It never fails, since a stop must always be possible: a name that is not
      * registered (such as {@code agent} before P7), is repeated or cannot be built is skipped, and
-     * {@code terminate} is moved or added to the end; each with a warning.
+     * {@code terminate} is moved or added to the end; each with a warning. The warnings show the
+     * configured names masked, as written: {@code ${...}} can copy a secret into the list.
+     *
+     * @param secrets hides secrets in the warnings
      */
-    public StopChain chain(LifecycleConfig config) {
+    public StopChain chain(LifecycleConfig config, SecretMasker secrets) {
         Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(secrets, "secrets");
         String key = ConfigKeys.STOP_STRATEGY.name();
         List<String> warnings = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -55,13 +60,15 @@ public final class StopStrategyRegistry {
         boolean movedBeforeTerminate = false;
         for (String listed : config.stopStrategies()) {
             String name = listed.strip().toLowerCase(Locale.ROOT);
+            // Masked before lower-casing, which would hide a secret from the masker.
+            String shown = secrets.maskText(listed.strip());
             if (!seen.add(name)) {
-                warnings.add(key + " lists " + name + " more than once; the repetition is ignored");
+                warnings.add(key + " lists " + shown + " more than once; the repetition is ignored");
                 continue;
             }
             Function<LifecycleConfig, StopStrategy> factory = factories.get(name);
             if (factory == null) {
-                warnings.add(key + ": unknown stop strategy " + name + ", skipped; known: " + names());
+                warnings.add(key + ": unknown stop strategy " + shown + ", skipped; known: " + names());
                 continue;
             }
             if (name.equals(TerminateStopStrategy.NAME)) {

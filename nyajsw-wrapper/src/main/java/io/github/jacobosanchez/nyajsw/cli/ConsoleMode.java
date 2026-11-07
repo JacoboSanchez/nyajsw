@@ -67,7 +67,7 @@ public final class ConsoleMode {
         this.log = Objects.requireNonNull(log, "log");
         this.builder = Objects.requireNonNull(builder, "builder");
         this.expander = Objects.requireNonNull(expander, "expander");
-        this.stops = StopStrategyRegistry.defaults().chain(config.lifecycle());
+        this.stops = StopStrategyRegistry.defaults().chain(config.lifecycle(), config.secrets());
         this.pidFiles = new PidFiles(config.lifecycle(), config.secrets(), log);
         ProbeConfig probes = config.probes();
         ProbeRunner readiness = new ProbeRunner(ProbeRegistry.defaults().create(probes.readinessTypes(), probes),

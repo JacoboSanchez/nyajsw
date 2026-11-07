@@ -101,7 +101,11 @@ public final class Supervisor {
         void changed(State from, State to);
     }
 
-    private sealed interface Event permits Start, Exited, StopRequested, ReadinessChecked, TimerFired {
+    private sealed interface Event permits Start, ProcessEnded, Exited, StopRequested, ReadinessChecked, TimerFired {
+    }
+
+    /** The process of invocation {@code invocation} ended at {@code at}, on the scheduler's clock; its exit follows. */
+    private record ProcessEnded(int invocation, Duration at) implements Event {
     }
 
     private record Start() implements Event {
@@ -139,6 +143,8 @@ public final class Supervisor {
     private RunningApplication application;
     /** When the current invocation was started, on the scheduler's clock. */
     private Duration launchedAt;
+    /** When its process ended, if known yet: the end of its run time, before its output was drained. */
+    private Duration processEndedAt;
     private Integer lastExitCode;
     /** What the last readiness check of the current invocation found. */
     private String lastReadiness;
@@ -273,6 +279,11 @@ public final class Supervisor {
                     begin();
                 }
             }
+            case ProcessEnded ended -> {
+                if (ended.invocation() == invocation && processEndedAt == null) {
+                    processEndedAt = ended.at();
+                }
+            }
             case Exited exited -> exited(exited);
             case StopRequested request -> stopRequested();
             case ReadinessChecked checked -> readinessChecked(checked);
@@ -311,8 +322,13 @@ public final class Supervisor {
             return;
         }
         launchedAt = scheduler.now();
+        processEndedAt = null;
         application = launched;
         int current = invocation;
+        // The time is read when the process ends, not when the event is handled, nor when the exit
+        // comes, which waits for the output to drain.
+        launched.onProcessEnd().whenComplete((ignored, error) -> events.add(new ProcessEnded(current,
+                scheduler.now())));
         launched.onExit().whenComplete((code, error) -> events.add(new Exited(current, code, error)));
         if (!lifecycle.startupTimeout().isZero()) { // 0: no limit, as in the Tanuki format YAJSW files inherit
             startTimer(lifecycle.startupTimeout(), this::notReady);
@@ -416,7 +432,9 @@ public final class Supervisor {
     }
 
     private void applyExitAction(String name, int code) {
-        restarts.ended(scheduler.now().minus(launchedAt));
+        // Run time to the end of the process: draining its output, or removing a pid file, is not run time.
+        Duration ended = processEndedAt != null ? processEndedAt : scheduler.now();
+        restarts.ended(ended.minus(launchedAt));
         ExitActionResolver.Decision decision = exits.resolve(code);
         log.status(name + " exit code " + code + " means " + decision.action());
         switch (decision.next()) {

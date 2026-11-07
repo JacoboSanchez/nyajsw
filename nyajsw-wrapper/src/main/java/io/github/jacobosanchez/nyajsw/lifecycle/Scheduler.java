@@ -11,7 +11,8 @@ public interface Scheduler {
 
     /**
      * The time on a monotonic clock, from an arbitrary origin: only differences between two
-     * readings mean something.
+     * readings mean something. Callable from any thread: the supervisor reads it where a process
+     * ends.
      */
     Duration now();
 
