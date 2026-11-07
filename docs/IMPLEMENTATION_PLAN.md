@@ -1185,19 +1185,20 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       account" has a hint, 5 the Administrator one); `JnaLsaApi` words its errors through
       `JnaScmApi.failure`, one place for the system text. The right stays when the service is
       removed, as the Services console leaves it.
-- [ ] P5.6 `windows-integration` tests: install → query → remove a throwaway service (start/stop
-      come with P6), cleanup in `@AfterMethod(alwaysRun = true)`. **Status:** written
-      (`platform.windows.WindowsServiceIntegrationTest`, group `windows-integration`): install a
-      `nyajsw-test-<random>` demand-start service, query it as `STOPPED` without a pid, read the
+- [x] P5.6 `windows-integration` tests: install → query → remove a throwaway service (start/stop
+      come with P6), cleanup in `@AfterMethod(alwaysRun = true)`. **Done:**
+      `platform.windows.WindowsServiceIntegrationTest` (group `windows-integration`) installs a
+      `nyajsw-test-<random>` demand-start service, queries it as `STOPPED` without a pid, reads the
       registration back from `HKLM\SYSTEM\CurrentControlSet\Services\<name>` (binary path, display
       name, description, `LocalSystem`, own process, start type, both dependencies, pre-shutdown
-      timeout), remove it and see it gone; a delayed one is automatic with `DelayedAutostart=1`; a
+      timeout), removes it and sees it gone; a delayed one is automatic with `DelayedAutostart=1`; a
       second install is refused with 1073 and keeps the first; a service that is not installed has
-      no status. Run unelevated on Windows 10, the query and the access-denied path work against the
-      real SCM (install is refused with 5 and the Administrator hint); `CreateService`,
-      `ChangeServiceConfig2` and `DeleteService` are proven only by the elevated run (`mvn -q verify
-      -Pwindows-integration` as Administrator), still to be done before this box is ticked. The LSA
-      grant needs a real local user and is not covered.
+      no status. All four pass on Windows 10 in a local elevated shell (`mvn -q verify
+      -Pwindows-integration` as Administrator; the CI job waits for P0.3) and leave no
+      `nyajsw-test-` service behind. That run proves `CreateService`, `ChangeServiceConfig2` and
+      `DeleteService` against the real SCM. An earlier unelevated run was refused at install with 5
+      and the Administrator hint (no test asserts it). The LSA grant needs a real local user and is
+      not covered.
 Done when: unit tests cover every `ScmApi` interaction with mocks; integration job green on Windows.
 
 ### P6 — Service host (running as the service)
