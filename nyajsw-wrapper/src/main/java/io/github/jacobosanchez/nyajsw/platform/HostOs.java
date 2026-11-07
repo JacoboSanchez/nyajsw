@@ -3,8 +3,8 @@ package io.github.jacobosanchez.nyajsw.platform;
 import java.util.Locale;
 
 /**
- * Which operating system the wrapper runs on, decided in one place. The {@code Platform} factory of
- * plan P5.1 builds on it; until then it only answers whether this is Windows.
+ * Whether the wrapper runs on Windows, decided in one place: for the few launch and configuration
+ * details that differ by host, and for the Windows entry of {@link Platforms}.
  */
 public final class HostOs {
 

@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 39 |
-| planned | 33 |
+| supported | 49 |
+| planned | 23 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -68,7 +68,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.java.maxmemory.relative` | Maximum heap as a percentage of physical memory | integer | — | **unsupported** (P9) |  |
 | `wrapper.app.env.<variable>` | Environment variable set for the application | text | — | **supported** | An empty value removes the inherited variable; on Windows every spelling of the name is replaced |
 | `wrapper.working.dir` | Working directory of the application | path | the directory of the configuration file (D13) | **supported** | *Verify:* default |
-| `wrapper.tmp.path` | Temporary directory of the wrapper, also used as jna.tmpdir | path | — | **planned** (P5) | Not passed to the application<br>*Verify:* default |
+| `wrapper.tmp.path` | Temporary directory of the wrapper, also used as jna.tmpdir | path | — | **supported** | Not passed to the application. Written into the service's command line as -Djna.tmpdir, and set as jna.tmpdir for the service commands unless their command line sets it<br>*Verify:* default |
 | `wrapper.cleanup_tmp` | Delete the wrapper's leftover output-buffer files from the temporary directory at start | boolean | — | **unsupported** | YAJSW default: true |
 | `wrapper.image` | Non-Java executable to run instead of a JVM | path | — | **planned** (P2) | Optional plan item P2.6 |
 | `wrapper.priority` | Process priority of the application | text | — | **unsupported** (P9) |  |
@@ -169,17 +169,17 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
-| `wrapper.ntservice.name` | Service name | text | the simple name of the application main class | **planned** (P5) | *Verify:* default |
-| `wrapper.ntservice.displayname` | Display name of the service | text | — | **planned** (P5) |  |
-| `wrapper.ntservice.description` | Description of the service | text | — | **planned** (P5) |  |
-| `wrapper.ntservice.starttype` | Start type of the service | one of `AUTO_START`, `DEMAND_START`, `DELAYED_AUTO_START`, `DISABLED`; alias `DELAY_START` = `DELAYED_AUTO_START` | `AUTO_START` | **planned** (P5) |  |
-| `wrapper.ntservice.dependency.<n>` | Service that must run before this one | text | — | **planned** (P5) |  |
-| `wrapper.ntservice.account` | Account the service runs as; granted the right to log on as a service at install | text | — | **planned** (P5) | When absent the service runs as LocalSystem |
-| `wrapper.ntservice.password` | Password of wrapper.ntservice.account | text | — | **planned** (P5) | Secret: never logged or shown. |
+| `wrapper.ntservice.name` | Service name | text | the simple name of the application main class | **supported** | *Verify:* default |
+| `wrapper.ntservice.displayname` | Display name of the service | text | — | **supported** |  |
+| `wrapper.ntservice.description` | Description of the service | text | — | **supported** |  |
+| `wrapper.ntservice.starttype` | Start type of the service | one of `AUTO_START`, `DEMAND_START`, `DELAYED_AUTO_START`, `DISABLED`; alias `DELAY_START` = `DELAYED_AUTO_START` | `AUTO_START` | **supported** |  |
+| `wrapper.ntservice.dependency.<n>` | Service that must run before this one | text | — | **supported** |  |
+| `wrapper.ntservice.account` | Account the service runs as; granted the right to log on as a service at install | text | — | **supported** | When absent the service runs as LocalSystem. The built-in service accounts and virtual accounts (NT SERVICE\\name) are granted nothing; any other account must be a user, and a local one is written .\\name |
+| `wrapper.ntservice.password` | Password of wrapper.ntservice.account | text | — | **supported** | Secret: never logged or shown. |
 | `wrapper.ntservice.interactive` | Let the service interact with the desktop | boolean | — | **ignored** | Obsolete since Windows Vista isolated services in session 0 |
 | `wrapper.ntservice.failure_actions.<setting>` | SCM recovery actions (reset_period, reboot_msg, command, actions, actions_delay) | text | — | **unsupported** (P9) |  |
-| `wrapper.ntservice.additional.<n>` | JVM option for the wrapper JVM, written into the service binary path (D12) | text | — | **planned** (P5) |  |
-| `wrapper.ntservice.java.command` | Java executable of the wrapper JVM that runs the service | path | javaw from the java.home of the JVM that installs the service (D12) | **planned** (P5) | YAJSW defaults to the application's Java command; nyajsw needs Java 21 here |
+| `wrapper.ntservice.additional.<n>` | JVM option for the wrapper JVM, written into the service binary path (D12) | text | — | **supported** |  |
+| `wrapper.ntservice.java.command` | Java executable of the wrapper JVM that runs the service | path | javaw from the java.home of the JVM that installs the service (D12) | **supported** | YAJSW defaults to the application's Java command; nyajsw needs Java 21 here. Give it with its directory (resolved against the configuration file's); a bare name, a missing file or a Java older than 21 (told by its installation's release file) is an error at install, and a Java whose version cannot be told a warning |
 | `wrapper.ntservice.java.customProcName` | Run the service from a renamed copy of the Java executable | text | — | **unsupported** (P9) |  |
 | `wrapper.ntservice.autoreport.startup` | Report the service as running as soon as the application starts | boolean | — | **unsupported** | Readiness probes decide when nyajsw reports RUNNING (wrapper.readiness.type); with false, YAJSW waits for the application to report through YAJSW's API |
 | `wrapper.ntservice.autoreport.waitready` | Show the service as waiting in the tray icon until the application reports | boolean | — | **unsupported** |  |

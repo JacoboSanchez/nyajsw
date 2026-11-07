@@ -150,10 +150,12 @@ public class MainTest {
         assertEquals(Main.run(new String[] {}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-c"}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-x", "a"}, out), ExitCode.UNEXPECTED_ERROR.code());
-        assertEquals(Main.run(new String[] {"-i", "wrapper.conf"}, out), ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(Main.run(new String[] {"--service", "wrapper.conf"}, out), ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(Main.run(new String[] {"-q"}, out), ExitCode.UNEXPECTED_ERROR.code());
 
         assertTrue(output().contains("usage: nyajsw -c <wrapper.conf>"), output());
-        assertTrue(output().contains("-i is not implemented yet"), output());
+        assertTrue(output().contains("--service is not implemented yet"), output());
+        assertTrue(output().contains("nyajsw -i <wrapper.conf>    install the Windows service"), output());
     }
 
     @Test(timeOut = 120_000)
