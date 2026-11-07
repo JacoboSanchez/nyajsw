@@ -998,9 +998,10 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       a trailing `\n` or `\r\n` (written as those characters, YAJSW's extension) chooses the line
       ending; spaces are ignored and other characters skipped with a configuration warning at their
       line; a format without letters, like a blank one, writes nothing. `log.LineFormatter` renders
-      the fields joined by ` | `: `L` level padded to 6, `P` source padded to 8 (longer ones are not
-      cut), `D` thread name (recorded by `WrapperRecord` when the message is logged), `T` local time
-      `yyyy/MM/dd HH:mm:ss`, `Z` the same with milliseconds (YAJSW does not document its time
+      the fields joined by ` | ` (an empty field keeps its separator, so fields stay in place): `L`
+      level padded to 6, `P` source padded to 8 (longer ones are not cut), `D` thread name (recorded
+      by `WrapperRecord` when the message is logged), `T` local time `yyyy/MM/dd HH:mm:ss`, `Z` the
+      same with milliseconds (YAJSW does not document its time
       formats; these are ours), `M` message; a chosen line ending also ends the lines inside the
       message and the stack trace. `WrapperLog.open(LogConfig, console)` builds the configured log:
       `wrapper.console.format` (blank: no console output), its level and the debug detail.
