@@ -767,9 +767,10 @@ public final class ConfigKeys {
                     + " debug messages are written")
             .build();
 
-    public static final KeySpec DEBUG_LEVEL = yajsw("wrapper.debug.level", INTEGER, LOGGING)
+    // A string, not an integer: a word in it must only warn while wrapper.debug is false (LogConfig).
+    public static final KeySpec DEBUG_LEVEL = yajsw("wrapper.debug.level", STRING, LOGGING)
             .status(SUPPORTED)
-            .description("Detail of the wrapper.debug output, from 0 (least) to 3 (all)")
+            .description("Detail of the wrapper.debug output, a whole number from 0 (least) to 3 (all)")
             .defaultValue("3")
             .notes("Read only when wrapper.debug is true. 0: no debug messages; 1: starting and stopping the"
                     + " application; 2: also the steps of supervision (stop steps, readiness checks, pid files);"

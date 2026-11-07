@@ -981,10 +981,12 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       names were mapped in P2.1 (`LogLevel`, `WrapperLevel`). `wrapper.debug` raises the console
       level to `DEBUG` (`LogConfig.consoleThreshold()`; the log file's follows in P4.3).
       `wrapper.debug.level` is supported on YAJSW's documented scale (`DebugDetail`): it is read only
-      under `wrapper.debug`, where a value outside 0–3 is an error (a warning while `wrapper.debug`
-      is false, so a leftover cannot stop the wrapper). 0 writes no debug message (YAJSW's level
-      0 is the application's pid and stop, which nyajsw logs above `DEBUG`), 1 starting and stopping
-      the application (state changes, an exit during a stop, the stack trace of an unexpected error),
+      under `wrapper.debug`, where a value that is not a whole number from 0 to 3 is an error (a
+      warning while `wrapper.debug` is false, so a leftover cannot stop the wrapper; the key is
+      declared as text so that the validator's type check does not make a word fatal there). 0
+      writes no debug message (YAJSW's level 0 is the application's pid and stop, which nyajsw logs
+      above `DEBUG`), 1 starting and stopping the application (state changes, an exit during a stop,
+      the stack trace of an unexpected error),
       2 the steps of supervision as well (stop steps, readiness checks, pid files), 3 everything.
       Every debug message names its detail (`WrapperLog.debug(DebugDetail, …)`); one logged without
       a detail has the most. The bootstrap log moved to P4.3a, since it needs the file sink. So
@@ -1271,6 +1273,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
   deletes while holding the sink's lock, which can block the application's output for a moment
   at the first record of a day; move it off the lock if that shows. Under `DATE` the start day's
   file is created even when the first record falls on the next day.
+- P4.1 (PR review): declaring `wrapper.debug.level` as text makes `COMPATIBILITY.md` show its type
+  as text; a registry flag that leaves the type check to the key's view would keep "integer". The
+  same conditional rule would suit `wrapper.logfile.maxdays`, which only warns without `DATE` but
+  whose non-numeric value is still an error through the validator's type check.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
