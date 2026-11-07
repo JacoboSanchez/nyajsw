@@ -7,7 +7,6 @@ import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
-import io.github.jacobosanchez.nyajsw.platform.HostOs;
 import io.github.jacobosanchez.nyajsw.platform.ServiceBody;
 import io.github.jacobosanchez.nyajsw.platform.ServiceContext;
 import io.github.jacobosanchez.nyajsw.platform.ServiceControl;
@@ -20,15 +19,12 @@ import com.sun.jna.platform.win32.Advapi32Util;
 import com.sun.jna.platform.win32.WinReg;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
-import java.util.UUID;
 
-import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -38,12 +34,10 @@ import org.testng.annotations.Test;
  * P5.6), and read what was registered back from the registry, where the Service Control Manager
  * keeps it ({@code HKLM\SYSTEM\CurrentControlSet\Services\<name>}): only this test sees whether the
  * native calls stored what the configuration says. Excluded by default; run with {@code mvn -q
- * verify -Pwindows-integration} in an elevated shell. Starting and stopping the service follow in P6,
- * once {@code --service} runs it.
+ * verify -Pwindows-integration} in an elevated shell. Starting and stopping the service are in
+ * {@link WindowsServiceEndToEndTest}.
  *
- * <p>Every service is named {@code nyajsw-test-<random>} and removed after the test, also when it
- * fails. A test JVM killed in between can leave one behind: {@code sc query state= all | findstr
- * nyajsw-test-} finds it, {@code sc delete <name>} removes it.
+ * <p>Each test gets a {@link ThrowawayService}, removed after it also when it fails.
  */
 @Test(groups = "windows-integration")
 public class WindowsServiceIntegrationTest {
@@ -52,6 +46,7 @@ public class WindowsServiceIntegrationTest {
     private static final int SERVICE_AUTO_START = 2;
     private static final int SERVICE_DEMAND_START = 3;
 
+    private ThrowawayService service;
     private Path dir;
     private String name;
     private ServiceCommandLine commandLine;
@@ -59,36 +54,18 @@ public class WindowsServiceIntegrationTest {
 
     @BeforeMethod(alwaysRun = true)
     public void setUp() throws IOException {
-        dir = null; // one instance runs every method: nothing may be left from the one before
-        name = null;
-        controller = null;
-        if (!HostOs.isWindows()) {
-            throw new SkipException("the Service Control Manager exists on Windows only");
-        }
-        dir = Files.createTempDirectory("nyajsw-it").toRealPath();
-        name = "nyajsw-test-" + UUID.randomUUID().toString().substring(0, 8);
-        // The test JVM's java.class.path is surefire's booter jar; the service would need the real jars,
-        // which do not matter until P6 starts the service.
-        commandLine = new ServiceCommandLine(Path.of(System.getProperty("java.home")),
-                List.of(Path.of("target", "classes")), ServiceCommandLine.nativeCharset());
-        controller = new WindowsServiceController(new JnaScmApi(), new JnaLsaApi(), commandLine, StateWait.REAL);
+        service = null; // one instance runs every method: nothing may be left from the one before
+        service = ThrowawayService.create();
+        dir = service.dir;
+        name = service.name;
+        commandLine = service.commandLine;
+        controller = service.controller;
     }
 
     @AfterMethod(alwaysRun = true)
-    public void tearDown() throws IOException {
-        try {
-            if (controller != null && name != null) {
-                controller.remove(name);
-            }
-        } catch (ServiceException e) {
-            int code = e.errorCode();
-            if (code != Win32Errors.SERVICE_DOES_NOT_EXIST && code != Win32Errors.SERVICE_MARKED_FOR_DELETE) {
-                throw e;
-            }
-        } finally {
-            if (dir != null) {
-                TestConfigs.delete(dir);
-            }
+    public void tearDown() throws InterruptedException {
+        if (service != null) {
+            service.close();
         }
     }
 
