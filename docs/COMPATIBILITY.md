@@ -162,7 +162,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.console.use_interpolated` | Whether Java options of the wrapper JVM are passed on to the application | boolean | — | **unsupported** |  |
 | `wrapper.app.status.log.lines` | Application output lines logged at the STATUS level | integer | — | **unsupported** |  |
 | `wrapper.debug` | Raise the wrapper log level to DEBUG | boolean | `false` | **supported** | Raises wrapper.console.loglevel and wrapper.logfile.loglevel; wrapper.debug.level chooses which debug messages are written |
-| `wrapper.debug.level` | Detail of the wrapper.debug output, from 0 (least) to 3 (all) | integer | `3` | **supported** | Read only when wrapper.debug is true. 0: no debug messages; 1: starting and stopping the application; 2: also the steps of supervision (stop steps, readiness checks, pid files); 3: everything. Another value is an error while wrapper.debug is true, a warning otherwise |
+| `wrapper.debug.level` | Detail of the wrapper.debug output, a whole number from 0 (least) to 3 (all) | text | `3` | **supported** | Read only when wrapper.debug is true. 0: no debug messages; 1: starting and stopping the application; 2: also the steps of supervision (stop steps, readiness checks, pid files); 3: everything. Another value is an error while wrapper.debug is true, a warning otherwise |
 | `wrapper.syslog.<setting>` | Logging to syslog (facility, ident, loglevel) | text | — | **unsupported** |  |
 
 ## Windows service

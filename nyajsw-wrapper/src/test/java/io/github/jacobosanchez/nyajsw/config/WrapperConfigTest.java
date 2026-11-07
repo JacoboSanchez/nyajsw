@@ -432,26 +432,38 @@ public class WrapperConfigTest {
         assertEquals(load("wrapper.debug.level=2").log().debugLevel(), DebugDetail.SUPERVISION);
     }
 
+    private static final List<String> NOT_A_DEBUG_LEVEL = List.of("-1", "4", "garbage", "99999999999");
+
     @Test
     public void aDebugLevelOutsideZeroToThreeIsAnErrorUnderDebug() {
-        for (String level : List.of("-1", "4")) {
+        for (String level : NOT_A_DEBUG_LEVEL) {
             ConfigException error = expectThrows(ConfigException.class,
                     () -> load("wrapper.debug=true", "wrapper.debug.level=" + level));
 
             List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
-            assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.debug.level=" + level
-                    + " is not between 0 and 3")), problems.toString());
+            assertEquals(problems.size(), 1, problems.toString());
+            assertTrue(problems.get(0).contains("wrapper.debug.level=" + level
+                    + " is not a whole number from 0 to 3"), problems.toString());
         }
     }
 
     @Test
     public void aDebugLevelOutsideZeroToThreeOnlyWarnsWhileDebugIsOff() throws IOException {
-        WrapperConfig config = load("wrapper.debug.level=4");
+        for (String level : NOT_A_DEBUG_LEVEL) {
+            WrapperConfig config = load("wrapper.debug.level=" + level);
+
+            assertEquals(config.log().debugLevel(), DebugDetail.ALL, level);
+            assertTrue(config.warnings().stream().map(ConfigWarning::toString).anyMatch(w -> w.contains(
+                    "wrapper.debug.level=" + level + " is not a whole number from 0 to 3; it has no effect while"
+                            + " wrapper.debug is false")), config.warnings().toString());
+        }
+    }
+
+    @Test
+    public void aBlankDebugLevelIsTheDefault() throws IOException {
+        WrapperConfig config = load("wrapper.debug=true", "wrapper.debug.level=");
 
         assertEquals(config.log().debugLevel(), DebugDetail.ALL);
-        assertTrue(config.warnings().stream().map(ConfigWarning::toString).anyMatch(w -> w.contains(
-                "wrapper.debug.level=4 is not between 0 and 3; it has no effect while wrapper.debug is false")),
-                config.warnings().toString());
     }
 
     @Test

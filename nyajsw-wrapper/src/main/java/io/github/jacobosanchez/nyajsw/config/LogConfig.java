@@ -173,22 +173,36 @@ public record LogConfig(Optional<Path> logfile, Optional<LineFormat> logfileForm
     }
 
     /**
-     * {@code wrapper.debug.level}; a value outside the scale is an error only where it would take
-     * effect, under {@code wrapper.debug}, so that a leftover in a file that does not debug cannot
-     * stop the wrapper.
+     * {@code wrapper.debug.level}; a value that is not a level of the scale is an error only where it
+     * would take effect, under {@code wrapper.debug}, so that a leftover in a file that does not debug
+     * cannot stop the wrapper. The key is declared as a string so that this method, not the
+     * validator's type check, judges every value, a word as much as a number out of range.
      */
     private static DebugDetail debugLevel(ConfigValues values, boolean debug) {
-        int level = values.required(values.integer(DEBUG_LEVEL), DEBUG_LEVEL);
-        if (DebugDetail.isLevel(level)) {
-            return DebugDetail.ofLevel(level);
+        Optional<String> text = values.text(DEBUG_LEVEL);
+        if (text.isEmpty()) {
+            return defaultLevel(values);
+        }
+        try {
+            int level = ValueParser.parseInteger(text.get());
+            if (DebugDetail.isLevel(level)) {
+                return DebugDetail.ofLevel(level);
+            }
+        } catch (IllegalArgumentException e) {
+            // not a whole number: reported below like a number off the scale
         }
         ConfigLocation location = values.location(DEBUG_LEVEL).orElseThrow();
-        String problem = DEBUG_LEVEL.name() + "=" + level + " is not between 0 and " + DebugDetail.ALL.ordinal();
+        String problem = DEBUG_LEVEL.name() + "=" + values.shown(DEBUG_LEVEL.name(), text.get())
+                + " is not a whole number from 0 to " + DebugDetail.ALL.ordinal();
         if (debug) {
             values.problem(DEBUG_LEVEL, location, problem);
         } else {
             values.warn(location, problem + "; it has no effect while " + DEBUG.name() + " is false");
         }
+        return defaultLevel(values);
+    }
+
+    private static DebugDetail defaultLevel(ConfigValues values) {
         return values.constantDefault(DEBUG_LEVEL, text -> DebugDetail.ofLevel(ValueParser.parseInteger(text)));
     }
 
