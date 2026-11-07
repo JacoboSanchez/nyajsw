@@ -5,7 +5,12 @@ import io.github.jacobosanchez.nyajsw.config.RollMode;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.Charset;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CoderResult;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -14,6 +19,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,7 +35,9 @@ import java.util.logging.LogRecord;
  * Writes log records to the wrapper's log file ({@code wrapper.logfile}) and rolls it by size
  * ({@code wrapper.logfile.maxsize}), keeping at most {@code wrapper.logfile.maxfiles} rolled copies
  * named as {@link LogFileNames} says (plan §4.8). Every record is flushed when written, so that
- * nothing is lost when the JVM halts (D21) and a reader sees each line at once.
+ * nothing is lost when the JVM halts (D21) and a reader sees each line at once. One encoder serves
+ * each file from the moment it is opened, so that an encoding with a byte-order mark ({@code UTF-16})
+ * writes the mark once, at the start of the file, not before every record.
  *
  * <p>A record that would take the file past the limit rolls it first: the copies below the first
  * free number move up one (when none is free, the oldest copy the limit allows is deleted to make
@@ -129,6 +137,8 @@ final class RollingFileSink extends Handler implements AutoCloseable {
     private LocalDate date;
     private Path file;
     private OutputStream out;
+    /** The encoder of the open file, which keeps its state from one record to the next. */
+    private CharsetEncoder encoder;
     private long size;
     private boolean closed;
     /** While a roll is blocked, the ticker reading from which it is tried again. */
@@ -190,9 +200,9 @@ final class RollingFileSink extends Handler implements AutoCloseable {
         if (closed || !isLoggable(record)) {
             return;
         }
-        byte[] bytes;
+        String text;
         try {
-            bytes = getFormatter().format(record).getBytes(settings.charset());
+            text = getFormatter().format(record);
         } catch (RuntimeException e) {
             reportError(null, e, ErrorManager.FORMAT_FAILURE);
             return;
@@ -209,8 +219,10 @@ final class RollingFileSink extends Handler implements AutoCloseable {
             if (out == null) {
                 open(); // an earlier reopen failed
             }
+            byte[] bytes = encode(text);
             if (isFull(bytes.length)) {
                 roll();
+                bytes = encode(text); // a new file starts with a new encoder, and its byte-order mark
             }
             out.write(bytes);
             out.flush();
@@ -344,9 +356,53 @@ final class RollingFileSink extends Handler implements AutoCloseable {
         }
     }
 
+    /** Opens the file with its own encoder; the stream is set last, so a failure leaves nothing half open. */
     private void open() throws IOException {
-        out = Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        size = Files.size(file);
+        OutputStream stream = Files.newOutputStream(file, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        try {
+            size = Files.size(file);
+        } catch (IOException e) {
+            try {
+                stream.close();
+            } catch (IOException suppressed) {
+                e.addSuppressed(suppressed);
+            }
+            throw e;
+        }
+        encoder = settings.charset().newEncoder()
+                .onMalformedInput(CodingErrorAction.REPLACE).onUnmappableCharacter(CodingErrorAction.REPLACE);
+        if (size > 0) {
+            encode(" "); // spends what an encoder writes first, such as a byte-order mark: the file has its own
+        }
+        out = stream;
+    }
+
+    /**
+     * {@code text} in the file's encoding, by the file's encoder, which is never reset or told that
+     * the input ends, so that it goes on from one record to the next as through one text. A record
+     * ends with its line separator, so the encoder holds nothing back; should a record end with half
+     * a surrogate pair, the encoding's replacement stands for it, as with {@link String#getBytes}.
+     */
+    private byte[] encode(String text) {
+        CharBuffer chars = CharBuffer.wrap(text);
+        ByteBuffer bytes = ByteBuffer.allocate((int) (text.length() * encoder.averageBytesPerChar()) + 16);
+        for (CoderResult result = encoder.encode(chars, bytes, false); !result.isUnderflow();
+                result = encoder.encode(chars, bytes, false)) {
+            // Errors are replaced, so a result other than underflow is an overflow.
+            bytes = grow(bytes, bytes.capacity());
+        }
+        if (chars.hasRemaining()) {
+            byte[] replacement = encoder.replacement();
+            if (bytes.remaining() < replacement.length) {
+                bytes = grow(bytes, replacement.length);
+            }
+            bytes.put(replacement);
+        }
+        return Arrays.copyOf(bytes.array(), bytes.position());
+    }
+
+    private static ByteBuffer grow(ByteBuffer bytes, int more) {
+        return ByteBuffer.allocate(bytes.capacity() + more).put(bytes.flip());
     }
 
     @Override

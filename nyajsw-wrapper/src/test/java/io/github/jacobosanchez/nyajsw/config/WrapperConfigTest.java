@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -451,6 +452,19 @@ public class WrapperConfigTest {
         assertTrue(config.warnings().stream().map(ConfigWarning::toString).anyMatch(w -> w.contains(
                 "wrapper.debug.level=4 is not between 0 and 3; it has no effect while wrapper.debug is false")),
                 config.warnings().toString());
+    }
+
+    @Test
+    public void anEncodingThatCanOnlyBeReadIsAnError() {
+        if (!Charset.isSupported("ISO-2022-CN")) {
+            throw new SkipException("this runtime has no ISO-2022-CN (module jdk.charsets)");
+        }
+        ConfigException error = expectThrows(ConfigException.class, () -> load("wrapper.log.encoding=ISO-2022-CN"));
+
+        List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
+        assertTrue(problems.stream().anyMatch(p -> p.contains(
+                "the character encoding 'ISO-2022-CN' for wrapper.log.encoding can be read but not written")),
+                problems.toString());
     }
 
     @Test

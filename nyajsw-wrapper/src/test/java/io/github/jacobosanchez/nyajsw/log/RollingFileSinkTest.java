@@ -329,6 +329,36 @@ public class RollingFileSinkTest {
     }
 
     @Test
+    public void aByteOrderMarkIsWrittenOnceAtTheStartOfEachFile() throws IOException {
+        // Java's UTF-16 writes big-endian after a mark; read as UTF-16BE, the mark shows as U+FEFF.
+        RollingFileSink.Settings utf16 = new RollingFileSink.Settings(dir.resolve("w.log"), 37, 1,
+                StandardCharsets.UTF_16);
+        try (RollingFileSink sink = sink(utf16)) {
+            write(sink, "one", "two"); // 2 + 8 + 8 bytes
+        }
+        try (RollingFileSink sink = sink(utf16)) { // appending to a file that has its mark
+            write(sink, "six"); // 26 bytes
+            write(sink, "seven"); // 38 bytes, the mark counted: rolls, and the new file has its own mark
+        }
+
+        assertEquals(Files.readString(dir.resolve("w.log.1"), StandardCharsets.UTF_16BE), "\uFEFFone\ntwo\nsix\n");
+        assertEquals(Files.readString(dir.resolve("w.log"), StandardCharsets.UTF_16BE), "\uFEFFseven\n");
+        assertEquals(Files.readString(dir.resolve("w.log"), StandardCharsets.UTF_16), "seven\n");
+    }
+
+    @Test
+    public void aRollThatFailsWritesNoByteOrderMarkInTheMiddleOfTheFile() throws IOException {
+        failing = file -> file.equals(dir.resolve("w.log"));
+        try (RollingFileSink sink = sink(new RollingFileSink.Settings(dir.resolve("w.log"), 20, 1,
+                StandardCharsets.UTF_16))) {
+            write(sink, "one", "two", "three"); // the third would pass the limit, and the roll fails
+        }
+
+        assertEquals(Files.readString(dir.resolve("w.log"), StandardCharsets.UTF_16BE), "\uFEFFone\ntwo\nthree\n");
+        assertTrue(errors.get(0).startsWith("cannot roll the log file"), errors.toString());
+    }
+
+    @Test
     public void theFileAndItsDirectoriesAreCreated() throws IOException {
         try (RollingFileSink sink = sink("logs/deep/wrapper.log", 0, 0)) {
             write(sink, "aaaaa");
