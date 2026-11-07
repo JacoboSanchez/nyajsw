@@ -113,7 +113,7 @@ public class MainTest {
 
         assertEquals(code, ExitCode.CONFIGURATION_ERROR.code(), output());
         assertTrue(output().contains("wrapper.liveness.type: unknown probe type telepathy;"
-                + " known: [process, tcp, http, file, command]"), output());
+                + " known: [process, tcp, http, file, command, log]"), output());
         assertFalse(output().contains("launching jvm 1"), output());
     }
 

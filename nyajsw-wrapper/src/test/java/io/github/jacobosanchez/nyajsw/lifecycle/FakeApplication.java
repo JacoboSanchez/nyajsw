@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
+import io.github.jacobosanchez.nyajsw.launch.OutputLines;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 
 import java.util.concurrent.CompletableFuture;
@@ -19,6 +20,7 @@ final class FakeApplication implements RunningApplication {
     private volatile Integer codeOnTermination = 1;
     private volatile boolean failingTermination;
     private volatile boolean failingOnExit;
+    private final OutputLines output = new OutputLines();
 
     FakeApplication(int invocation) {
         this.name = ApplicationLauncher.nameOf(invocation);
@@ -99,6 +101,11 @@ final class FakeApplication implements RunningApplication {
     @Override
     public CompletableFuture<Void> onProcessEnd() {
         return processEnd.copy();
+    }
+
+    @Override
+    public OutputLines output() {
+        return output;
     }
 
     @Override

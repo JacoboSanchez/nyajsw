@@ -38,4 +38,10 @@ public interface RunningApplication {
 
     /** Kills the process and everything it started, at once, without waiting for them to end. */
     void terminateTree();
+
+    /**
+     * Its recent output lines, as logged, for probes that look for a line. The same object on every
+     * call, so that a wrapper that forgets to pass it on is noticed rather than showing no output.
+     */
+    OutputLines output();
 }

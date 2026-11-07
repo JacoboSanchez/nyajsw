@@ -75,6 +75,22 @@ public class OutputPumpTest {
     }
 
     @Test
+    public void everyLineLoggedIsPassedOnMaskedAndInPieces() {
+        List<String> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        byte[] bytes = ("x " + SECRET + " y\n" + "z".repeat(OutputPump.MAX_LINE + 3))
+                .getBytes(StandardCharsets.US_ASCII);
+        try (WrapperLog log = WrapperLog.console(new PrintStream(new ByteArrayOutputStream(), true,
+                StandardCharsets.UTF_8), LogLevel.INFO)) {
+            new OutputPump(new ByteArrayInputStream(bytes), StandardCharsets.US_ASCII, log.forSource("jvm 1"),
+                    LogLevel.INFO, secrets(), seen::add).run();
+        }
+
+        assertEquals(seen.get(0), "x **** y");
+        assertTrue(seen.size() >= 3, "the long line comes in pieces: " + seen.size());
+        assertTrue(seen.get(seen.size() - 1).startsWith(OutputPump.CONTINUED + "zzz"), seen.get(seen.size() - 1));
+    }
+
+    @Test
     public void everyLineBreakEndsALine() {
         assertEquals(pump("a\nb\r\nc\rd".getBytes(StandardCharsets.US_ASCII), StandardCharsets.US_ASCII),
                 List.of("a", "b", "c", "d"));

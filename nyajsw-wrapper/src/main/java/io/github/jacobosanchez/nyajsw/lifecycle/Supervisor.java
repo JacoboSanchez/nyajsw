@@ -375,6 +375,8 @@ public final class Supervisor {
         lastExitCode = null; // the outcome reports this invocation's exit, not an earlier one's
         lastReadiness = "not checked yet";
         moveTo(State.STARTING);
+        readiness.beforeLaunch();
+        liveness.probes().beforeLaunch();
         RunningApplication launched;
         try {
             launched = launcher.launch(invocation);

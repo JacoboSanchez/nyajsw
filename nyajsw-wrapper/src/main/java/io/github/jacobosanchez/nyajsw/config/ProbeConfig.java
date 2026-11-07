@@ -28,6 +28,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Readiness, liveness and the agent as configured (plan §4.7).
@@ -41,8 +43,9 @@ import java.util.Optional;
  *                              {@code https} URL with a host
  * @param httpStatus            {@code wrapper.readiness.http.status}, e.g. {@code 200-399}
  * @param httpTimeout           {@code wrapper.readiness.http.timeout}, at least 1 s
- * @param logPattern            {@code wrapper.readiness.log.pattern}, if set
- * @param logFile               {@code wrapper.readiness.log.file}; empty means the captured output
+ * @param logPattern            {@code wrapper.readiness.log.pattern}, if set: a valid regular expression
+ * @param logFile               {@code wrapper.readiness.log.file}, relative to the working directory;
+ *                              empty means the captured output
  * @param filePath              {@code wrapper.readiness.file.path}, if set; relative to the working
  *                              directory, as the application sees it
  * @param command               {@code wrapper.readiness.command} split into the program and its
@@ -59,7 +62,7 @@ import java.util.Optional;
  */
 public record ProbeConfig(List<String> readinessTypes, Duration readinessInterval, String tcpHost,
         Optional<Integer> tcpPort, Optional<String> httpUrl, StatusRanges httpStatus, Duration httpTimeout,
-        Optional<String> logPattern, Optional<Path> logFile, Optional<Path> filePath, List<String> command,
+        Optional<Pattern> logPattern, Optional<Path> logFile, Optional<Path> filePath, List<String> command,
         Duration commandTimeout, Path workingDir, List<String> livenessTypes, Duration livenessInterval,
         int livenessFailures, FailureAction livenessAction, boolean agentEnabled) {
 
@@ -106,8 +109,8 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
                 httpUrl(values),
                 httpStatus(values),
                 positive(values, READINESS_HTTP_TIMEOUT),
-                values.text(READINESS_LOG_PATTERN),
-                values.path(READINESS_LOG_FILE),
+                logPattern(values),
+                values.path(READINESS_LOG_FILE, workingDir),
                 values.path(READINESS_FILE_PATH, workingDir),
                 command(values, workingDir),
                 positive(values, READINESS_COMMAND_TIMEOUT),
@@ -117,6 +120,25 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
                 atLeastOne(values, LIVENESS_FAILURES),
                 values.required(values.enumeration(LIVENESS_ACTION, FailureAction.class), LIVENESS_ACTION),
                 agentEnabled);
+    }
+
+    /**
+     * {@code wrapper.readiness.log.pattern} compiled; one that is not a valid regular expression is
+     * a problem and left out. The message gives the reason, not the whole pattern; the reason may
+     * quote a name from it (an unknown group or property).
+     */
+    private static Optional<Pattern> logPattern(ConfigValues values) {
+        Optional<String> pattern = values.text(READINESS_LOG_PATTERN);
+        if (pattern.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Pattern.compile(pattern.get()));
+        } catch (PatternSyntaxException e) {
+            values.problem(READINESS_LOG_PATTERN, values.location(READINESS_LOG_PATTERN).orElseThrow(),
+                    READINESS_LOG_PATTERN.name() + " is not a valid regular expression: " + e.getDescription());
+            return Optional.empty();
+        }
     }
 
     /**

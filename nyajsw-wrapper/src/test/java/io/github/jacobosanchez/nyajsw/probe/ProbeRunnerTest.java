@@ -103,18 +103,50 @@ public class ProbeRunnerTest {
         List<ProbeRegistry.NamedProbe> probes = registry.create(config.readinessTypes(), config);
 
         assertEquals(List.copyOf(registry.types()), List.of(ProcessProbe.TYPE, TcpProbe.TYPE, HttpProbe.TYPE,
-                FileProbe.TYPE, CommandProbe.TYPE));
+                FileProbe.TYPE, CommandProbe.TYPE, LogPatternProbe.TYPE));
         assertEquals(probes.size(), 1);
         assertEquals(probes.get(0).type(), ProcessProbe.TYPE);
         assertEquals(probes.get(0).probe().getClass(), ProcessProbe.class);
         IllegalArgumentException unknown = expectThrows(IllegalArgumentException.class,
                 () -> registry.create(List.of("telepathy"), config));
-        assertEquals(unknown.getMessage(), "unknown probe type telepathy; known: [process, tcp, http, file, command]");
+        assertEquals(unknown.getMessage(), "unknown probe type telepathy; known: [process, tcp, http, file, command, log]");
         IllegalArgumentException incomplete = expectThrows(IllegalArgumentException.class,
                 () -> registry.create(List.of("tcp"), config));
         assertEquals(incomplete.getMessage(), "the tcp probe needs wrapper.readiness.tcp.port");
         List<ProbeRegistry.NamedProbe> spelled = registry.create(List.of(" Process "), config);
         assertEquals(spelled.get(0).type(), ProcessProbe.TYPE, "case and blanks do not matter");
+    }
+
+    @Test
+    public void everyProbeHearsOfALaunchEvenAfterOneThatThrows() {
+        List<String> told = new ArrayList<>();
+        Probe throwing = new Probe() {
+            @Override
+            public ProbeResult check(ProbeContext context) {
+                return ProbeResult.pass("ok");
+            }
+
+            @Override
+            public void beforeLaunch() {
+                told.add("throwing");
+                throw new IllegalStateException("broken");
+            }
+        };
+        Probe listening = new Probe() {
+            @Override
+            public ProbeResult check(ProbeContext context) {
+                return ProbeResult.pass("ok");
+            }
+
+            @Override
+            public void beforeLaunch() {
+                told.add("listening");
+            }
+        };
+
+        new ProbeRunner(List.of(probe("a", throwing), probe("b", listening)), SECOND).beforeLaunch();
+
+        assertEquals(told, List.of("throwing", "listening"));
     }
 
     @Test

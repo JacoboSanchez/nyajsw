@@ -44,6 +44,20 @@ public final class ProbeRunner {
     }
 
     /**
+     * Tells every probe that an invocation is about to be launched ({@link Probe#beforeLaunch}); one
+     * that throws is passed over.
+     */
+    public void beforeLaunch() {
+        for (ProbeRegistry.NamedProbe named : probes) {
+            try {
+                named.probe().beforeLaunch();
+            } catch (RuntimeException e) {
+                // The probe's own business; its checks will tell what it lacks.
+            }
+        }
+    }
+
+    /**
      * Checks the probes in order and stops at the first that does not pass. A probe that throws, or
      * returns nothing, fails; its exception is named by class only, since its message may quote a
      * configured value.

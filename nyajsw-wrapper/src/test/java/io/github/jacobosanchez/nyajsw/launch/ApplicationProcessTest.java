@@ -138,6 +138,9 @@ public class ApplicationProcessTest {
         assertTrue(lines.contains("jvm 3    | to stderr"), lines.toString());
         assertTrue(lines.stream().anyMatch(line -> line.startsWith("wrapper  | launching jvm 3: ")), lines.toString());
         assertTrue(lines.contains("wrapper  | jvm 3 exited with code 7"), lines.toString());
+        // Probes see the lines as they were logged, both streams.
+        List<String> captured = process.output().since(0).lines();
+        assertTrue(captured.contains("args=[a b]") && captured.contains("to stderr"), captured.toString());
         // The exit is logged once, however often it is waited for.
         assertEquals(process.waitFor(), 7);
         assertEquals(process.onExit().get(1, TimeUnit.MINUTES), 7);

@@ -5,6 +5,7 @@ import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
+import io.github.jacobosanchez.nyajsw.launch.OutputLines;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import io.github.jacobosanchez.nyajsw.log.WriteAccess;
@@ -123,6 +124,11 @@ public final class PidFiles {
                 });
             }
             return exit.copy();
+        }
+
+        @Override
+        public OutputLines output() {
+            return application.output();
         }
 
         @Override

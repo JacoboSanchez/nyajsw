@@ -54,14 +54,16 @@ public final class ApplicationProcess implements RunningApplication {
     private final Optional<ProcessJob> job;
     /** Completes once, with the exit code, after the output is drained and the exit logged. */
     private final CompletableFuture<Integer> exit;
+    private final OutputLines output;
 
     private ApplicationProcess(Process process, String name, List<Thread> pumps, WrapperLog log,
-            Optional<ProcessJob> job) {
+            Optional<ProcessJob> job, OutputLines output) {
         this.process = process;
         this.name = name;
         this.pumps = pumps;
         this.log = log;
         this.job = job;
+        this.output = output;
         // Draining may block for DRAIN, so it runs on its own thread, not on the JDK's process reaper.
         this.exit = process.onExit().thenApplyAsync(this::ended,
                 task -> Thread.ofPlatform().daemon().name("nyajsw-" + name.replace(' ', '-') + "-exit").start(task));
@@ -122,13 +124,14 @@ public final class ApplicationProcess implements RunningApplication {
             log.debug(() -> "cannot close the standard input of " + name + ": " + e.getMessage());
         }
         WrapperLog output = log.forSource(name);
+        OutputLines lines = new OutputLines();
         List<Thread> pumps = List.of(
                 pump(new OutputPump(process.getInputStream(), command.stdoutCharset(), output, LogLevel.INFO,
-                        secrets), name, "stdout"),
+                        secrets, lines::add), name, "stdout"),
                 pump(new OutputPump(process.getErrorStream(), command.stderrCharset(), output, LogLevel.INFO,
-                        secrets), name, "stderr"));
+                        secrets, lines::add), name, "stderr"));
         log.status(name + " started, pid " + process.pid());
-        return new ApplicationProcess(process, name, pumps, log, joined);
+        return new ApplicationProcess(process, name, pumps, log, joined, lines);
     }
 
     /** Puts {@code process} in {@code job}; whether it is in it. */
@@ -239,6 +242,11 @@ public final class ApplicationProcess implements RunningApplication {
     @Override
     public CompletableFuture<Void> onProcessEnd() {
         return process.onExit().handle((ended, error) -> null);
+    }
+
+    @Override
+    public OutputLines output() {
+        return output;
     }
 
     /**
