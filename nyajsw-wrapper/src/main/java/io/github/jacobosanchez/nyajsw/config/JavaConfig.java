@@ -87,7 +87,7 @@ public record JavaConfig(Optional<String> command, boolean javaw, Optional<Strin
     static JavaConfig from(ConfigValues values) {
         Path workingDir = values.path(WORKING_DIR).orElse(values.directory());
         return new JavaConfig(
-                command(values, workingDir),
+                executable(values, JAVA_COMMAND, workingDir),
                 values.required(values.bool(JAVA_COMMAND_JAVAW), JAVA_COMMAND_JAVAW),
                 values.text(JAVA_APP_MAINCLASS),
                 values.path(JAVA_APP_JAR, workingDir),
@@ -103,13 +103,21 @@ public record JavaConfig(Optional<String> command, boolean javaw, Optional<Strin
                 values.path(IMAGE, workingDir));
     }
 
-    /** A bare executable name stays for a PATH lookup; anything with a directory becomes a path. */
-    private static Optional<String> command(ConfigValues values, Path workingDir) {
-        Optional<String> text = values.text(JAVA_COMMAND).map(ValueParser::normalisePath);
-        if (text.isEmpty() || (text.get().indexOf('/') < 0 && text.get().indexOf('\\') < 0)) {
+    /**
+     * An executable key: a bare name stays for a PATH lookup, anything with a directory becomes a
+     * path resolved against {@code base}.
+     */
+    static Optional<String> executable(ConfigValues values, KeySpec spec, Path base) {
+        Optional<String> text = values.text(spec).map(ValueParser::normalisePath);
+        if (text.isEmpty() || isBareName(text.get())) {
             return text;
         }
-        return values.path(JAVA_COMMAND, workingDir).map(Path::toString);
+        return values.path(spec, base).map(Path::toString);
+    }
+
+    /** Whether {@code executable} is a name without a directory, such as {@code java}. */
+    public static boolean isBareName(String executable) {
+        return executable.indexOf('/') < 0 && executable.indexOf('\\') < 0;
     }
 
     /** Variables by name; names differing only in case are kept but warned about (one variable on Windows). */

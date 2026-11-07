@@ -78,6 +78,41 @@ public final class Supervisor {
     public static final Duration AFTER_TERMINATION = Duration.ofSeconds(10);
 
     /**
+     * The longest wait the wrapper measures: as many nanoseconds as a {@code long} holds (292
+     * years), so that any wait fits a monotonic ticker. Longer configured times are cut to it.
+     */
+    public static final Duration LONGEST_WAIT = Duration.ofNanos(Long.MAX_VALUE);
+
+    /**
+     * What a wait for a stop from outside the supervisor allows beyond the stop itself: the
+     * supervisor's own work and the report that it has ended.
+     */
+    public static final Duration STOP_WAIT_MARGIN = Duration.ofSeconds(10);
+
+    /**
+     * How long to wait for a stop with {@code stopBudget} to end: the budget the stop strategies
+     * share, the wait for the terminated application ({@link #AFTER_TERMINATION}) and {@link
+     * #STOP_WAIT_MARGIN}. Console mode, {@code -p} and the service's pre-shutdown timeout all wait
+     * this long, so they cannot drift apart.
+     */
+    public static Duration stopWait(Duration stopBudget) {
+        return sum(stopBudget, AFTER_TERMINATION, STOP_WAIT_MARGIN);
+    }
+
+    /** {@code parts} added up, at most {@link #LONGEST_WAIT}. */
+    public static Duration sum(Duration... parts) {
+        Duration sum = Duration.ZERO;
+        try {
+            for (Duration part : parts) {
+                sum = sum.plus(part);
+            }
+        } catch (ArithmeticException e) { // beyond Duration itself
+            return LONGEST_WAIT;
+        }
+        return sum.compareTo(LONGEST_WAIT) > 0 ? LONGEST_WAIT : sum;
+    }
+
+    /**
      * How supervision ended.
      *
      * @param state    {@link State#STOPPED} or {@link State#FAILED}

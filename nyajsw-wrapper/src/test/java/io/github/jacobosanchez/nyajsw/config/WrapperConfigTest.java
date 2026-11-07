@@ -178,10 +178,10 @@ public class WrapperConfigTest {
 
     @Test
     public void invalidPathIsReportedWithSecretsHiddenAndControlCharactersEscaped() throws IOException {
-        WrapperConfig config = loadWith(Map.of("wrapper.tmp.path", "/x/${wrapper.ntservice.password}\0y"),
+        WrapperConfig config = loadWith(Map.of("wrapper.image", "/x/${wrapper.ntservice.password}\0y"),
                 "wrapper.ntservice.password=Pa55w0rd");
 
-        assertEquals(config.java().tmpPath(), Optional.empty());
+        assertEquals(config.java().image(), Optional.empty());
         String message = messages(config).stream().filter(m -> m.startsWith("invalid path")).findFirst().orElseThrow();
         assertFalse(message.contains("Pa55w0rd"), message);
         assertTrue(message.contains("/x/****\\u0000y"), message);

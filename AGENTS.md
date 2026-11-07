@@ -140,7 +140,8 @@ Rules:
   is to end the application JVM); likewise `Runtime.halt`, used only by the CLI's console shutdown
   hook to exit with the application's code (plan D21). Everything else returns results or throws.
 * Exceptions: a small hierarchy (`NyajswException` → `ConfigException`, `LaunchException`,
-  `ServiceException`, `PlatformException`). Include the Win32 error code and message when relevant.
+  `ServiceException`, `PlatformException` → `UnsupportedPlatformException`). Include the Win32 error
+  code and message when relevant. `cli.ExitCode.of` maps them to exit codes (plan D23).
 * Logging only through the project's `WrapperLog` facade. Secrets are masked by the config layer, so
   nothing above it can leak them.
 * Naming: `*Config` for typed configuration views, `*Probe`, `*StopStrategy`, `Windows*` for Windows

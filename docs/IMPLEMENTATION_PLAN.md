@@ -129,6 +129,8 @@ the key registry so divergences are visible.
   The time fields of the log formats are nyajsw's (`yyyy/MM/dd HH:mm:ss`), since YAJSW documents
   none (P4.2). `wrapper.logfile.maxsize` also rolls files of the `JVM` roll mode, which YAJSW
   describes as without a size limit (P4.3b).
+* A service registered by YAJSW does not run nyajsw by swapping jars: it is removed and installed
+  again with `-i` on the same `wrapper.conf` (§10 Q8, D17).
 * Extensions (probes, stop strategies) are new `wrapper.*`
   keys tagged as nyajsw extensions in the matrix.
 
@@ -186,10 +188,10 @@ older JVMs than the wrapper requires.
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
 | `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileSink`, `LogFileNames` |
-| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (factory), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) |
+| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus` + `ServiceState`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
 | `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
-| `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `PlatformException`, which `cli` maps to exit code 4. | `UnsupportedServiceController` |
+| `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `UnsupportedPlatformException`, which `cli` maps to exit code 4. | `UnsupportedPlatform`, `UnsupportedServiceController` |
 | `agent` (module `nyajsw-agent`) | Agent `premain` and the shared protocol. | `Agent`, `AgentProtocol` |
 
 Design rules that keep this maintainable (see AGENTS.md §4.4): registries over `if/else` chains,
@@ -225,9 +227,9 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   mock the facades; JNA types never leave `platform.windows`. (`W32ServiceManager`/`W32Service` from `jna-platform` are not used: they
   cannot create or delete services, throw their own exception type and are not mockable — D5.)
 * **Minimal access rights per command**: `-q` opens the SCM with `SC_MANAGER_CONNECT` and the
-  service with `SERVICE_QUERY_STATUS | SERVICE_QUERY_CONFIG`, so it works unelevated; install/remove
-  use `SC_MANAGER_CREATE_SERVICE` / `DELETE`; start/stop use `SERVICE_START` /
-  `SERVICE_STOP | SERVICE_QUERY_STATUS`.
+  service with `SERVICE_QUERY_STATUS` (plus `SERVICE_QUERY_CONFIG` once it shows configuration), so it works unelevated; install/remove
+  use `SC_MANAGER_CREATE_SERVICE` / `DELETE`; start/stop use `SERVICE_START` or `SERVICE_STOP`,
+  each with `SERVICE_QUERY_STATUS` to wait for the new state.
 * **Service registration**: `CreateService(SERVICE_WIN32_OWN_PROCESS, start type, dependencies as a
   double-NUL-terminated list, account, password)`, then `ChangeServiceConfig2` for the description,
   delayed auto-start and the pre-shutdown timeout (the stop budget, `wrapper.shutdown.timeout` plus
@@ -267,7 +269,8 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   1053 `ERROR_SERVICE_REQUEST_TIMEOUT`; 1056 `ERROR_SERVICE_ALREADY_RUNNING`;
   1057 `ERROR_INVALID_SERVICE_ACCOUNT`; 1060 `ERROR_SERVICE_DOES_NOT_EXIST`;
   1062 `ERROR_SERVICE_NOT_ACTIVE`; 1069 `ERROR_SERVICE_LOGON_FAILED` → logon-right hint;
-  1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; anything else through
+  1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; 1332 `ERROR_NONE_MAPPED`
+  (no such account, P5.5); anything else through
   `Kernel32Util.formatMessage`.
 * **Native library loading**: in service mode `jna.tmpdir` is baked into the binary path at install
   time, because JNA is already loaded when the configuration is read; in console/client mode it is
@@ -1086,26 +1089,121 @@ Done when: rotation and formatting are tested against temp directories; no third
 
 ### P5 — Windows service control (client side)
 Goal: `-i -r -t -p -q` against the real SCM through JNA.
-- [ ] P5.1 `Platform` detection/factory; `platform.unsupported` fallback (`PlatformException` →
-      exit code 4 in `cli`).
-- [ ] P5.2 `ScmApi` facade + `JnaScmApi` (adds `jna`/`jna-platform` to `nyajsw-wrapper`; last-error handling in one place); hand-written
+- [x] P5.1 `Platform` detection/factory; `platform.unsupported` fallback (`PlatformException` →
+      exit code 4 in `cli`). **Done:** `Platform` (name, `serviceController()`; building either
+      loads no native code, so `jna.tmpdir` can be set first), `ServiceController`: install from a
+      `WrapperConfig`; remove; start and stop by service name, waiting up to a timeout for
+      `RUNNING`/`STOPPED`; status, empty when the service is not installed. Starting a running
+      service and stopping a stopped one are refusals. `ServiceStatus` holds the `ServiceState` (the
+      SCM's states; an unknown one is a failure) and the pid while there is one; it may grow for
+      `-q` (start type, account, the exit code of a failed service). `Platforms` picks the first
+      registered entry that claims the host's `os.name`, else `UnsupportedPlatform`, whose service
+      operations throw `UnsupportedPlatformException` naming the host and saying that `-c` works;
+      Windows registers with its controller in P5.2. Exit code 4 is for that subclass only
+      (`ExitCode.of`, D23). The CLI routes the service commands through the platform in P5.4.
+- [x] P5.2 `ScmApi` facade + `JnaScmApi` (adds `jna`/`jna-platform` to `nyajsw-wrapper`; last-error handling in one place); hand-written
       `SERVICE_DELAYED_AUTO_START_INFO` / `SERVICE_PRESHUTDOWN_INFO` with layout tests;
       `WindowsServiceController` (install with start type, dependencies as `\0`-separated list with
       a test, account, description, delayed start, pre-shutdown timeout with margin; remove; start; stop; status
       with pid), minimal access rights per command, wait-for-state helper, `Win32Errors` mapping.
-- [ ] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
+      **Done:** `ScmApi` has one method per call (per info level of `ChangeServiceConfig2`) in
+      plain types: `ScmHandle` (the native value), `ScmStatus`, `ServiceRegistration` (whose
+      `dependencyList()` ends each name with a NUL; `toString()` hides the binary path and
+      password). `JnaScmApi` is the only class that reads the last error; it throws
+      `platform.ServiceException` (with `errorCode()`) worded by `Win32Errors`: the system's text,
+      the code, and a hint for 5, 1053, 1057, 1069, 1072 and 1073. The structures live in
+      `platform.windows.jna` with layout tests. `WindowsServiceController` opens the manager and the
+      service with the least access (`-q`: `SC_MANAGER_CONNECT` and `SERVICE_QUERY_STATUS` only),
+      closes both handles always, and says what it attempted in every failure. Install registers
+      the `ServiceCommandLine` binary path (display name defaulting to the name, a missing name a
+      configuration error), sets the description, the delayed start and always the pre-shutdown
+      timeout (`Supervisor.longestStop` of the stop budget plus 10 s, the computation console mode
+      now shares), deletes a service it could not configure, and returns the command line's
+      warnings. Start and stop poll through `StateWait` (a tenth of the wait hint, 100 ms to 1 s,
+      on a monotonic ticker) until `RUNNING`/`STOPPED`; a service that stops while starting fails
+      with its exit codes. Status maps 1060 to "not installed" and an unknown state to a failure.
+      `WindowsPlatform` is registered in `Platforms`; `ServiceException` maps to exit code 3 (D23).
+      JNA loads at the first call (D5).
+- [x] P5.3 `ServiceCommandLine`: binary path from `java.home`, an explicit classpath parameter
       (default `java.class.path`; integration tests pass the real jars because surefire's
       `java.class.path` is a manifest-only booter jar), `wrapper.ntservice.additional.N`,
       `-Djna.tmpdir` from `wrapper.tmp.path`, quoting (D12); `wrapper.ntservice.java.command` (a
-      Java 21 only).
-- [ ] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes.
-- [ ] P5.4a (blocked on §10 Q8, D17) Migration entry point: `WrapperServiceBooter` alias class, mode
-      detection when `--service` is absent, and the Java 21 binPath rewrite in a migration command.
-- [ ] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` names a real
+      Java 21 only). **Done:** `platform.windows.ServiceCommandLine.build` gives a `ServiceCommand`:
+      the arguments (`javaw.exe` of the given `java.home`, the JVM options, `-Djna.tmpdir`, `-cp`,
+      `cli.Main`, `--service`, the absolute configuration file), warnings, the binary path joined
+      by `WindowsArguments` (the C runtime's quoting, which the Java launcher's parser follows) and
+      a loggable form masked argument by argument. Classpath entries and paths are absolute and
+      normal, since the service does not start in the installing directory. The JVM options are
+      unquoted like `wrapper.java.additional.N` (`JavaCommandBuilder.unquote`, now public), an
+      empty one is skipped with a warning, and `-Djna.tmpdir` comes after them so it is the one in
+      effect. The Java launcher reads its command line in the ANSI code page (`native.encoding`), so
+      an argument that code page cannot hold is a configuration error, not a service that finds
+      `?` in its paths; a `%NAME%` gives a warning, since Windows expands the stored binary path.
+      `wrapper.ntservice.java.command` (`ServiceConfig.javaCommand`, read like
+      `wrapper.java.command` through `JavaConfig.executable`, with a directory resolved against the
+      configuration directory) must have a directory and exist; a Java older than 21 by its
+      installation's `release` file (followed through links, and above a JDK 8's `jre`) is a
+      configuration error, an unknown version a warning (D12). The keys stay `PLANNED` until `-i`
+      writes the binary path (P5.4).
+- [x] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes. **Done:**
+      `Main` dispatches the five switches and their long forms to `cli.ServiceCommands`, which
+      loads the configuration like console mode (one shared `load`), prints its warnings, needs
+      the service name (`ServiceConfig.requiredName()`, shared with install) and runs the command
+      on `Platforms.forThisHost()`'s controller. Output goes to the console only, never to the log
+      file, so a command beside a running service cannot roll its log (P4.3b). `-i` prints the
+      command line's warnings (the logon right of the account follows in P5.5).
+      `-t` waits for `RUNNING` through `wrapper.startup.delay`, `wrapper.startup.timeout` and 30 s
+      (no limit for a timeout of 0); restarts before the application was ever ready can take
+      longer. `-p` waits for `STOPPED` as long as console mode waits for a stop and the
+      pre-shutdown timeout allows (one `Supervisor.stopWait`; every wait is cut to
+      `Supervisor.LONGEST_WAIT`, so huge configured times cannot overflow). `-r` says Windows
+      deletes the service once it has stopped; it does not stop it first. `-q` prints the state and
+      pid, or "not installed" (exit 0: an answer, not a failure). Failures are printed masked and
+      end by `ExitCode.of`: 2 configuration, 3 the SCM refused, 4 no services on this host, 1
+      otherwise, a native library that cannot be loaded included (a readable `PlatformException`
+      naming `jna.tmpdir`). `jna.tmpdir` is set from `wrapper.tmp.path` when the configuration is
+      loaded, for every command, unless the command line sets it. The `wrapper.ntservice.*` keys of
+      install, `wrapper.ntservice.additional.N`, `wrapper.ntservice.java.command` and
+      `wrapper.tmp.path` are now `SUPPORTED`, so a bad value in them is an error in console mode
+      too. Until P6 implements `--service`, an installed service does not run: `-t` fails.
+- ~~P5.4a Migration entry point: `WrapperServiceBooter` alias class, mode detection when `--service`
+  is absent, and the Java 21 binPath rewrite in a migration command~~ — dropped for now: the owner
+  migrates by reinstalling: stop (`-p`) and remove (`-r`) the service with YAJSW, then install it
+  with nyajsw's `-i` on the same `wrapper.conf` (§10 Q8, 2026-11-07). D17 keeps the design in case
+  taking over existing registrations is wanted later.
+- [x] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` names a real
       account (skipped for the built-in `LocalSystem`/`LocalService`/`NetworkService`); hand-written
-      LSA binding; clear error when it cannot be granted.
-- [ ] P5.6 `windows-integration` tests: install → query → remove a throwaway service (start/stop
-      come with P6), cleanup in `@AfterMethod(alwaysRun = true)`.
+      LSA binding; clear error when it cannot be granted. **Done:** before `CreateService`, install
+      checks an account that needs the right (`ServiceConfig.needsServiceLogonRight()`: not no
+      account, `LocalSystem`, `SYSTEM`, `LocalService`, `NetworkService` (also with a space), alone
+      or after `.\` or `NT AUTHORITY\`, in any case, nor a virtual account `NT SERVICE\name`, which
+      has the right already and cannot be looked up before its service exists):
+      `LsaApi.userSid` (`jna-platform`'s `Advapi32Util.getAccountByName`, `.\name` looked up as
+      `<computer>\name` so that a domain account of the same name is never found) must find a user,
+      since a group such as `Users` would let all its members log on as a service. Only once the
+      service is created and configured is `SeServiceLogonRight` granted (`LsaApi.grantServiceLogon`:
+      `LsaOpenPolicy` with `POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES`, `LsaAddAccountRights`,
+      `LsaClose`, an `NTSTATUS` below 0 turned into a Win32 code by `LsaNtStatusToWinError`), inside
+      the block that deletes a half-installed service, so a failed install grants nothing and leaves
+      nothing. The binding is hand-written: `platform.windows.jna.Advapi32Lsa` and
+      `LsaObjectAttributes` (layout test). Failures say which account and why (1332 "no such
+      account" has a hint, 5 the Administrator one); `JnaLsaApi` words its errors through
+      `JnaScmApi.failure`, one place for the system text. The right stays when the service is
+      removed, as the Services console leaves it.
+- [x] P5.6 `windows-integration` tests: install → query → remove a throwaway service (start/stop
+      come with P6), cleanup in `@AfterMethod(alwaysRun = true)`. **Done:**
+      `platform.windows.WindowsServiceIntegrationTest` (group `windows-integration`) installs a
+      `nyajsw-test-<random>` demand-start service, queries it as `STOPPED` without a pid, reads the
+      registration back from `HKLM\SYSTEM\CurrentControlSet\Services\<name>` (binary path, display
+      name, description, `LocalSystem`, own process, start type, both dependencies, pre-shutdown
+      timeout), removes it and sees it gone; a delayed one is automatic with `DelayedAutostart=1`; a
+      second install is refused with 1073 and keeps the first; a service that is not installed has
+      no status. All four pass on Windows 10 in a local elevated shell (`mvn -q verify
+      -Pwindows-integration` as Administrator; the CI job waits for P0.3) and leave no
+      `nyajsw-test-` service behind. That run proves `CreateService`, `ChangeServiceConfig2` and
+      `DeleteService` against the real SCM. An earlier unelevated run was refused at install with 5
+      and the Administrator hint (no test asserts it). The LSA grant needs a real local user and is
+      not covered.
 Done when: unit tests cover every `ScmApi` interaction with mocks; integration job green on Windows.
 
 ### P6 — Service host (running as the service)
@@ -1150,9 +1248,19 @@ HTTP probe passes and stops gracefully through the agent.
 - [ ] P8.1 `nyajsw-dist`: shaded `nyajsw.jar` (no relocation of `com.sun.jna`, native resources
       kept), `nyajsw-agent.jar`, `bin/*.bat` mirroring YAJSW script names, `conf/wrapper.conf`
       fully commented template, zip assembly.
-- [ ] P8.2 `docs/migration-from-yajsw.md`: what changes, how to read the warnings, differences (§3.4),
-      SCM recovery interplay (R6), one JVM option or argument per key (`-Xms1g -Xmx2g` in one value
-      is one argument, D19).
+- [ ] P8.2 `docs/migration-from-yajsw.md`: the reinstall procedure (§10 Q8): as Administrator,
+      stop (`-p`) and remove (`-r`) the service with YAJSW before deleting the YAJSW installation,
+      wait until it is gone (close the Services console; until then `-i` fails with 1072,
+      `ERROR_SERVICE_MARKED_FOR_DELETE`), then `-i` with nyajsw on the same `wrapper.conf`. The new
+      registration names a Java 21+ JVM: the installing JVM's `javaw.exe`, or
+      `wrapper.ntservice.java.command`, which `-i` rejects when older than 21 (D12). Settings made
+      on the old registration outside `wrapper.conf` are not carried over (binary-path edits with
+      `sc config` such as `-D` flags, a password entered in the Services console, recovery actions,
+      a start type changed in the console); move them into `wrapper.ntservice.additional.<n>`,
+      `wrapper.tmp.path`, `wrapper.ntservice.account`/`wrapper.ntservice.password` and
+      `wrapper.ntservice.starttype` before `-i` (recovery actions have no key until P9). Then:
+      what changes, how to read the warnings, differences (§3.4), SCM recovery interplay (R6), one
+      JVM option or argument per key (`-Xms1g -Xmx2g` in one value is one argument, D19).
 - [ ] P8.3 Run the owner's real configuration(s) end to end on Windows; close gaps; matrix updated.
 - [ ] P8.4 *(recommended)* Release process: version tag, CI builds and attaches the zip to a GitHub
       release.
@@ -1269,10 +1377,11 @@ entry names the commit/plan item it came from; remove entries when addressed.
   normalised form with `SecretMasker` if secrets in log file names ever matter. A roll that is
   interrupted (the interrupt flag of the logging thread set) gets no retries.
 - P4.3b: the start roll of the `JVM`/`WRAPPER` modes and the first `maxdays` clean-up happen when
-  the file sink opens, so any process that opens the configured log rolls the live file. Today
-  only console mode does; the P5 commands (`-q`, `-i`, …) must not open the file sink (or must
-  open it without the start roll, e.g. through an explicit `wrapperStarting()`), or a query beside
-  a running service would try to move its log. The `DATE` clean-up lists the directory and retries
+  the file sink opens, so any process that opens the configured log rolls the live file. Console
+  mode and (P6) the service do; the service commands of P5.4 report on the console only, and any
+  later command must do the same (or open the sink without the start roll, e.g. through an
+  explicit `wrapperStarting()`), or it would try to move a running service's log. The `DATE`
+  clean-up lists the directory and retries
   deletes while holding the sink's lock, which can block the application's output for a moment
   at the first record of a day; move it off the lock if that shows. Under `DATE` the start day's
   file is created even when the first record falls on the next day.
@@ -1280,6 +1389,35 @@ entry names the commit/plan item it came from; remove entries when addressed.
   as text; a registry flag that leaves the type check to the key's view would keep "integer". The
   same conditional rule would suit `wrapper.logfile.maxdays`, which only warns without `DATE` but
   whose non-numeric value is still an error through the validator's type check.
+- P5.3 (review): `ServiceCommandLine` repeats two small pieces of `JavaCommandBuilder` (the
+  `bin\javaw.exe` default and the `;` separator), and the D19 unquoting it shares lives as a public
+  static on the builder; a small `launch` helper could hold both if a third caller appears. A bad
+  `wrapper.ntservice.additional.N` fails as a `LaunchException` (exit 1); P5.4 may want to report it
+  as a configuration error. The stored binary path is the unexpanded string, so whether the SCM
+  expands `%NAME%` at start (the warning assumes it) can only be confirmed once P6 starts a service.
+- P5.2 (review): `platform.windows.StateWait.Pause` repeats `log.RollingFileSink.Pause` (a pause
+  that tests replace); extract one shared type when a third user appears. `WindowsServiceController`
+  reads `lifecycle.Supervisor.longestStop`, a new edge from `platform` to `lifecycle` that the P6
+  service host needs anyway. P5.6 reads the installed configuration back from the registry instead
+  of `QueryServiceConfig`/`QueryServiceConfig2`, which `ScmApi` does not have; `-q` will need them
+  to show configuration. System error texts are localised, so integration tests must not compare
+  them.
+- P5.4 (review): the service commands report through `WrapperLog.console`, the log for before
+  the configuration is read: it masks nothing itself (each call site masks), ignores
+  `wrapper.console.format`/`loglevel` and never shows debug output. A console-only log built from
+  `config.log()` without the file sink would fix all three. Check what YAJSW's `-r` does with a
+  running service (Tanuki's stops it first); nyajsw leaves it to Windows, so `-r` then `-i` on a
+  running service fails with 1072 until it stops.
+- P5.5 (review): the grant of the logon right is silent; `-i` could say it (a notice next to the
+  returned warnings). A domain GPO that defines "Log on as a service" overwrites the local grant at
+  the next policy refresh, and 1069 comes back later, as with the Services console: say so in the
+  user guide. Built-in accounts are recognised by spelling; comparing the looked-up SID with the
+  well-known ones would also catch localised names (`NT-AUTORITÄT\...`). `JnaLsaApi` borrows the
+  system-text helper of `JnaScmApi`; a small shared `Win32Failures` would read better.
+- PR #7 (review): in `WindowsServiceController.install` the logon grant runs inside the
+  `catch (RuntimeException)` that deletes a half-installed service; a `LinkageError` from the
+  first use of the LSA binding skips that clean-up, and `Main.service()` shows its stack trace.
+  Unlikely (`advapi32` is a system library); catch it there like `call()` does.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -1342,17 +1480,18 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Proposed (owner to confirm, §10 Q3) |
 | D11 | groupId and base package `io.github.jacobosanchez.nyajsw` | Matches the GitHub owner; Maven Central-compatible | Proposed (§10 Q2) |
-| D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.additional.N` (YAJSW's key for these options) + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM, `wrapper.ntservice.java.command` (YAJSW: default the application's Java command) may replace the installing JVM's `javaw.exe` if it is a Java 21 | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
+| D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.additional.N` (YAJSW's key for these options) + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM, `wrapper.ntservice.java.command` (YAJSW: default the application's Java command) may replace the installing JVM's `javaw.exe` if it is a Java 21; it must be given with its directory, and one known to be older than 21 is an error at install rather than a silent fallback to the installing JVM (P5.3) | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
 | D13 | The default working directory and relative wrapper-side paths (log file, pid files, temporary directory, probe files) resolve against the configuration file's directory; relative application-side paths (jar, library path, image, a Java command with a directory, classpath entries) resolve against the working directory, as the application sees them (P1.6b) | Services start in `System32`; configuration-relative is predictable for the wrapper, while the application's own paths must agree with what the child JVM resolves (usual YAJSW layout: `conf/wrapper.conf` with `wrapper.working.dir=..`) | Proposed (verify YAJSW, P1.9) |
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
 | D15 | Probe SPI, probe registry and stop-strategy registry are introduced in P3 with `process`/`terminate`; later probes and strategies are additions | Avoid rewriting the supervisor when P7 lands | Accepted |
 | D16 | Default liveness probe is `agent` when the agent is enabled (`wrapper.ping.*` semantics), none otherwise | YAJSW pings by default; keep behaviour parity without forcing the agent | Proposed |
-| D17 | Migration path (design only, blocked on §10 Q8): ship a thin alias class named like YAJSW's service booter (`org.rzo.yajsw.boot.WrapperServiceBooter`, a deliberate exception to D11 because existing service registrations store that name) that detects service mode when `--service` is absent and delegates to the normal entry point; a migration command rewrites an existing service's binary path to a Java 21 `javaw.exe` and our classpath (D12), since a bare jar swap cannot work when the old registration names an older JVM; `-D` options on the wrapper command line (e.g. `-Dwrapper.tmp.path`, a `jna_tmpdir` property, `-Dpath`) feed the system-property layer of §4.6; we also set the real `jna.tmpdir` from `wrapper.tmp.path` (R3). Short CLI options already exist in §3 | Observed in Denodo Platform's public KB (not tested by us): its services are registered as `java.exe … WrapperServiceBooter <conf>`, installed with `-i <conf>`, and re-pointed with `sc config` plus `-D` flags for non-admin accounts. Whether the underscore-spelled `jna_tmpdir` is read by YAJSW or JNA is unknown | Proposed (P5.4a; confirm with §10 Q1 and Q8) |
+| D17 | Migration path (design only; not pursued, §10 Q8 chose a reinstall): ship a thin alias class named like YAJSW's service booter (`org.rzo.yajsw.boot.WrapperServiceBooter`, a deliberate exception to D11 because existing service registrations store that name) that detects service mode when `--service` is absent and delegates to the normal entry point; a migration command rewrites an existing service's binary path to a Java 21 `javaw.exe` and our classpath (D12), since a bare jar swap cannot work when the old registration names an older JVM; `-D` options on the wrapper command line (e.g. `-Dwrapper.tmp.path`, a `jna_tmpdir` property, `-Dpath`) feed the system-property layer of §4.5; we also set the real `jna.tmpdir` from `wrapper.tmp.path` (R3). Short CLI options already exist in §3 | Observed in Denodo Platform's public KB (not tested by us): its services are registered as `java.exe … WrapperServiceBooter <conf>`, installed with `-i <conf>`, and re-pointed with `sc config` plus `-D` flags for non-admin accounts. Whether the underscore-spelled `jna_tmpdir` is read by YAJSW or JNA is unknown | Deferred (§10 Q8, 2026-11-07; P5.4a dropped). Already in place: `-D` options before the main class feed the system-property layer (§4.5) and `jna.tmpdir` follows `wrapper.tmp.path` (P5.4); the underscore-spelled `jna_tmpdir` is not mapped to `jna.tmpdir` |
 | D18 | The registry declares the YAJSW keys its public reference documents as supported by YAJSW, each with a nyajsw status; Tanuki keys that the reference lists as not (yet) supported by YAJSW (e.g. `wrapper.disable_restarts`, `wrapper.jvm.port`, `wrapper.ntservice.pausable`) stay undeclared and get the generic unknown-key warning (keys seeded earlier, such as `wrapper.syslog.*`, keep their entries). Defaults follow the reference where it states one (§3.3), including `wrapper.on_exit.default=SHUTDOWN` | A YAJSW file can only rely on keys YAJSW honours; declaring Tanuki-only keys would suggest a compatibility YAJSW never had. Following YAJSW's defaults keeps migrated services behaving as before | Accepted (P1.10) |
 | D19 | Arguments of the application are passed as an array. One pair of double quotes around a whole argument, or around everything after its first `=` (`-Dx="a b"`, `-XX:OnError="cmd /c x"`), is removed, as a shell would; any other double quote is a launch error naming the key family, with the argument masked | On POSIX every argument reaches the application unchanged, quotes included; on Windows `ProcessBuilder` wraps an argument with blanks in quotes, so `-Dx="a b"` would become `"-Dx="a b""` and break the command line, and an embedded quote is passed on unescaped (`jdk.lang.Process.allowAmbiguousCommands` defaults to true on JDK 21), which breaks it as well; checked by running `java.exe` through `ProcessBuilder` on JDK 21.0.13, which also handles trailing backslashes and empty arguments itself. Dropping a stray quote would change the value | Accepted (P2.2) |
 | D20 | `wrapper.control` is honoured in both directions. Application ends → wrapper ends under `TIGHT` and `WRAPPER`, so there the exit action `STOP` ends the wrapper like `SHUTDOWN`; only under `LOOSE` and `APPLICATION` does `STOP` keep the wrapper running without an application until it is stopped. Wrapper stopped → application stopped under `TIGHT` and `APPLICATION`; under `LOOSE` and `WRAPPER` the application is left running (logged with its pid). Launch errors count as failed invocations and are retried, also those a retry cannot fix (a missing Java executable is logged `wrapper.max_failed_invocations` times, `wrapper.restart.delay` apart, before `FAILED`). `wrapper.max_failed_invocations=N` means N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures; with 1 there is none | YAJSW's reference (read 2026-11-06/07) defines the four couplings that way and `STOP` as "stop the application but not the wrapper"; its change log ties `STOP` to `wrapper.control`, and this is the reading that coupling implies. The reference counts launches that fail towards `wrapper.max_failed_invocations` and gives its default as "5 invocations", though its "maximum number of times … to restart" also allows N restarts | Proposed (P3.2; the coupling itself is documented, its effect on `STOP` is our reading; confirm with YAJSW 13.18 or real use, §10 Q1) |
 | D22 | `wrapper.logfile.rollmode` takes YAJSW's `JVM`, `WRAPPER`, `DATE` and Tanuki's `SIZE`, `NONE`, `SIZE_OR_JVM`, `SIZE_OR_WRAPPER` (the last two as aliases of `JVM` and `WRAPPER`); `wrapper.logfile.maxsize` rolls in every mode but `NONE`, `JVM` included; `WRAPPER` rolls at wrapper start only | YAJSW documents `JVM` (no size limit) and `DATE`, and names `WRAPPER` without describing it; files derived from Tanuki templates carry its values, and an error would break the "swap the wrapper, not the configuration" goal. Keeping size rolling under `JVM` honours a configured size and keeps a restarting application from filling the disk | Proposed (P4.3b; confirm against YAJSW 13.18, §10 Q1) |
 | D21 | In console mode the shutdown hook (Ctrl+C, closing the session) stops through the supervisor, waits at most the stop budget + 10 s + 10 s, then ends the JVM with `Runtime.halt(<exit code>)`; `halt` is allowed only there, beside `System.exit` in `Main` | Once a signal has begun the JVM's shutdown its exit code is the signal's (130, `0xC000013A`) and `System.exit` blocks; `halt` is the only way to return the application's code, as §3.2 promises. It skips hooks that have not run yet, which nyajsw does not rely on; the console is flushed first (a file log, P4, must be flushed too) | Accepted (P3.6) |
+| D23 | Exit codes follow the exception type (`cli.ExitCode.of`): `ConfigException` → 2, `ServiceException` (the SCM refused or failed, P5.2) → 3, `UnsupportedPlatformException` (a `PlatformException` subclass: the host has no such operation) → 4, anything else → 1. A plain `PlatformException` (an OS call failed on a platform that has the operation, §4.4, such as a native library that cannot be loaded) is not an unsupported platform and ends as 1, also from a service command (P5.4) | §3.2 named `PlatformException` → 4, but §4.4 also uses `PlatformException` for Win32 failures of job objects and console functions, which must not read as "wrong platform" | Accepted (P5.1) |
 
 ## 10. Open questions for the project owner
 
@@ -1384,7 +1523,10 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 8. **Takeover of existing services.** Should nyajsw be able to run under services that YAJSW already
    registered (same `WrapperServiceBooter` class name and `-i`/`-r` options), so that swapping the
    jar is enough, or is a reinstall with our own installer acceptable? Which service names, Denodo
-   version and run-as accounts are in use? (D17)
+   version and run-as accounts are in use? (D17) (*Partly answered 2026-11-07:* a reinstall is
+   acceptable for now: stop (`-p`) and remove (`-r`) the service with YAJSW, then install it with
+   nyajsw's `-i` on the same `wrapper.conf`; P5.4a is dropped. Run-as accounts remain open under
+   Q5; service names and the Denodo version would still help P8.3.)
 9. **YAJSW is still being released.** SourceForge lists yajsw-stable-13.x through 14.01
    (2026-09-13; Netty 4.2.17, commons-configuration2 2.15.1), and the project now lists
    Apache-2.0 alongside LGPLv3 (the licence change dates from 12.00). §1, D1, AGENTS.md and the
