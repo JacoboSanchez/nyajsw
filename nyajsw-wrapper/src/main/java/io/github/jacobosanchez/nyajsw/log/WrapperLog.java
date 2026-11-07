@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.log;
 
+import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 
 import java.io.PrintStream;
@@ -23,6 +24,11 @@ import java.util.logging.Logger;
  * it. An instance is immutable: the command-line entry point builds a bootstrap log first and a new,
  * configured one once the configuration is read, instead of reconfiguring a log in place.
  *
+ * <p>Debug messages also carry a {@link DebugDetail}; a log writes those up to its own detail
+ * ({@code wrapper.debug.level}), shared with its views. Captured application output is logged at
+ * {@code INFO}, so the detail never hides it; output logged at {@code DEBUG} would count as {@link
+ * DebugDetail#ALL}.
+ *
  * <p>Every line names its source: {@code wrapper} for the wrapper's own messages, and the views
  * returned by {@link #forSource(String)} (such as {@code jvm 1}) for captured application output.
  *
@@ -37,13 +43,15 @@ public final class WrapperLog implements AutoCloseable {
 
     private final Logger logger;
     private final String source;
+    private final DebugDetail debugDetail;
 
-    private WrapperLog(Logger logger, String source) {
+    private WrapperLog(Logger logger, String source, DebugDetail debugDetail) {
         this.logger = logger;
         this.source = source;
+        this.debugDetail = debugDetail;
     }
 
-    private static WrapperLog of(Handler... sinks) {
+    private static WrapperLog of(DebugDetail debugDetail, Handler... sinks) {
         // Anonymous: not registered with the LogManager, so neither logging.properties, root handlers
         // nor LogManager.reset() (also run by the JDK's shutdown hook) reach it.
         Logger logger = Logger.getAnonymousLogger();
@@ -54,17 +62,29 @@ public final class WrapperLog implements AutoCloseable {
         for (Handler sink : sinks) {
             logger.addHandler(sink);
         }
-        return new WrapperLog(logger, WRAPPER_SOURCE);
+        return new WrapperLog(logger, WRAPPER_SOURCE, debugDetail);
     }
 
-    /** A log that writes messages at {@code threshold} and above to standard output. */
+    /** A log that writes messages at {@code threshold} and above to standard output, all debug detail included. */
     public static WrapperLog console(LogLevel threshold) {
         return console(System.out, threshold);
     }
 
-    /** A log that writes messages at {@code threshold} and above to {@code out}, which it never closes. */
+    /**
+     * A log that writes messages at {@code threshold} and above to {@code out}, which it never closes,
+     * all debug messages included.
+     */
     public static WrapperLog console(PrintStream out, LogLevel threshold) {
-        return of(new ConsoleSink(out, new LineFormatter(), WrapperLevel.threshold(threshold)));
+        return console(out, threshold, DebugDetail.ALL);
+    }
+
+    /**
+     * A log that writes messages at {@code threshold} and above to {@code out}, which it never closes;
+     * of the debug messages, only those of at most {@code debugDetail} ({@code wrapper.debug.level}).
+     */
+    public static WrapperLog console(PrintStream out, LogLevel threshold, DebugDetail debugDetail) {
+        Objects.requireNonNull(debugDetail, "debugDetail");
+        return of(debugDetail, new ConsoleSink(out, new LineFormatter(), WrapperLevel.threshold(threshold)));
     }
 
     /**
@@ -76,7 +96,7 @@ public final class WrapperLog implements AutoCloseable {
         if (source.isBlank()) {
             throw new IllegalArgumentException("source must not be blank");
         }
-        return new WrapperLog(logger, source);
+        return new WrapperLog(logger, source, debugDetail);
     }
 
     /** The source this log's lines name, {@code wrapper} unless this is a {@link #forSource} view. */
@@ -86,12 +106,13 @@ public final class WrapperLog implements AutoCloseable {
 
     /**
      * Whether some sink would write a message of {@code level}; use it to skip building expensive
-     * messages, or log through a {@link Supplier}.
+     * messages, or log through a {@link Supplier}. A {@code DEBUG} message logged without a detail
+     * has the most, {@link DebugDetail#ALL}.
      *
      * @throws IllegalArgumentException for {@link LogLevel#NONE}
      */
     public boolean isEnabled(LogLevel level) {
-        return logger.isLoggable(WrapperLevel.of(level));
+        return level == LogLevel.DEBUG ? isEnabled(DebugDetail.ALL) : passes(level);
     }
 
     /**
@@ -110,13 +131,20 @@ public final class WrapperLog implements AutoCloseable {
      */
     public void log(LogLevel level, String message, Throwable error) {
         Objects.requireNonNull(message, "message");
-        Level julLevel = WrapperLevel.of(level);
-        if (logger.isLoggable(julLevel)) {
-            LogRecord record = new LogRecord(julLevel, message);
-            record.setLoggerName(source);
-            record.setThrown(error);
-            logger.log(record);
+        if (isEnabled(level)) {
+            write(level, message, error);
         }
+    }
+
+    private boolean passes(LogLevel level) {
+        return logger.isLoggable(WrapperLevel.of(level));
+    }
+
+    private void write(LogLevel level, String message, Throwable error) {
+        LogRecord record = new LogRecord(WrapperLevel.of(level), message);
+        record.setLoggerName(source);
+        record.setThrown(error);
+        logger.log(record);
     }
 
     /** Logs the supplied message at {@code level}; the supplier only runs when the level is enabled. */
@@ -151,12 +179,49 @@ public final class WrapperLog implements AutoCloseable {
         log(LogLevel.INFO, message);
     }
 
+    /** Logs a debug message of the most detail, {@link DebugDetail#ALL}. */
     public void debug(String message) {
-        log(LogLevel.DEBUG, message);
+        debug(DebugDetail.ALL, message);
     }
 
+    /** Logs a supplied debug message of the most detail, {@link DebugDetail#ALL}. */
     public void debug(Supplier<String> message) {
-        log(LogLevel.DEBUG, message);
+        debug(DebugDetail.ALL, message);
+    }
+
+    /**
+     * Logs a debug message of {@code detail}, written when {@code DEBUG} is enabled and the detail
+     * is within this log's {@code wrapper.debug.level}.
+     *
+     * @throws IllegalArgumentException for {@link DebugDetail#NONE}, which is only a threshold
+     */
+    public void debug(DebugDetail detail, String message) {
+        Objects.requireNonNull(message, "message");
+        debug(detail, () -> message);
+    }
+
+    /**
+     * Logs a supplied debug message of {@code detail}; the supplier only runs when it is written.
+     *
+     * @throws IllegalArgumentException for {@link DebugDetail#NONE}, which is only a threshold
+     */
+    public void debug(DebugDetail detail, Supplier<String> message) {
+        Objects.requireNonNull(message, "message");
+        if (isEnabled(detail)) {
+            write(LogLevel.DEBUG, Objects.requireNonNull(message.get(), "message"), null);
+        }
+    }
+
+    /**
+     * Whether a debug message of {@code detail} would be written.
+     *
+     * @throws IllegalArgumentException for {@link DebugDetail#NONE}, which is only a threshold
+     */
+    public boolean isEnabled(DebugDetail detail) {
+        if (Objects.requireNonNull(detail, "detail") == DebugDetail.NONE) {
+            throw new IllegalArgumentException("NONE is a threshold, not the detail of a message");
+        }
+        return detail.compareTo(debugDetail) <= 0 && passes(LogLevel.DEBUG);
     }
 
     /**

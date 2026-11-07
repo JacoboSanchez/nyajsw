@@ -2,7 +2,7 @@ package io.github.jacobosanchez.nyajsw.cli;
 
 import io.github.jacobosanchez.nyajsw.config.ConfigException;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
-import io.github.jacobosanchez.nyajsw.config.LogConfig;
+import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
@@ -79,7 +79,7 @@ public final class Main {
                 return ExitCode.CONFIGURATION_ERROR.code();
             }
         }
-        try (WrapperLog log = WrapperLog.console(out, consoleLevel(config.log()))) {
+        try (WrapperLog log = WrapperLog.console(out, config.log().consoleThreshold(), config.log().debugDetail())) {
             ConsoleMode mode;
             try {
                 mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());
@@ -124,14 +124,8 @@ public final class Main {
 
     private static int unexpected(RuntimeException e, WrapperConfig config, WrapperLog log) {
         log.fatal("unexpected error: " + config.secrets().maskText(String.valueOf(e)));
-        log.debug(() -> config.secrets().maskText(stackTrace(e)));
+        log.debug(DebugDetail.APPLICATION, () -> config.secrets().maskText(stackTrace(e)));
         return ExitCode.UNEXPECTED_ERROR.code();
-    }
-
-    /** {@code wrapper.console.loglevel}, raised to {@code DEBUG} by {@code wrapper.debug}. */
-    static LogLevel consoleLevel(LogConfig log) {
-        // The registry gives wrapper.console.loglevel a default, so it is always there.
-        return log.debug() ? LogLevel.DEBUG : log.consoleLevel().orElseThrow();
     }
 
     private static String stackTrace(Throwable e) {

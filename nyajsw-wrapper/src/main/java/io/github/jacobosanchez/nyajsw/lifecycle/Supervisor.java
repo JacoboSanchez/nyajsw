@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
+import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.ExitAction;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
@@ -365,7 +366,7 @@ public final class Supervisor {
             return;
         }
         lastReadiness = result.detail();
-        log.debug(() -> application.name() + " is not ready yet: " + result.detail());
+        log.debug(DebugDetail.SUPERVISION, () -> application.name() + " is not ready yet: " + result.detail());
         startTimer(readiness.interval(), this::checkReadiness);
     }
 
@@ -419,7 +420,7 @@ public final class Supervisor {
         lastExitCode = code;
         switch (state) {
             case STOPPING -> {
-                log.debug(() -> name + " ended while stopping; no exit action applies");
+                log.debug(DebugDetail.APPLICATION, () -> name + " ended while stopping; no exit action applies");
                 moveTo(State.STOPPED);
             }
             case STARTING, RUNNING -> applyExitAction(name, code);
@@ -497,7 +498,8 @@ public final class Supervisor {
                     moveTo(State.STOPPED);
                 }
             }
-            case STOPPING, STOPPED, FAILED -> log.debug("stop requested again; already " + state);
+            case STOPPING, STOPPED, FAILED ->
+                    log.debug(DebugDetail.SUPERVISION, "stop requested again; already " + state);
         }
     }
 
@@ -543,7 +545,7 @@ public final class Supervisor {
             result = StopStrategy.Result.NOT_APPLICABLE;
         }
         if (result == StopStrategy.Result.NOT_APPLICABLE) {
-            log.debug(() -> step.name() + " did not apply; going on with the next step");
+            log.debug(DebugDetail.SUPERVISION, () -> step.name() + " did not apply; going on with the next step");
             graceful(index + 1);
         } else {
             startTimer(share, () -> graceful(index + 1));
@@ -599,7 +601,7 @@ public final class Supervisor {
         }
         cancelTimers();
         state = target;
-        log.debug(() -> "state " + from + " -> " + target);
+        log.debug(DebugDetail.APPLICATION, () -> "state " + from + " -> " + target);
         try {
             listener.changed(from, target);
         } catch (RuntimeException e) {
