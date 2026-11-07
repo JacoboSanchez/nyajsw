@@ -73,7 +73,7 @@ public final class Main {
                 config = WrapperConfig.from(ConfigLoader.forCurrentProcess().load(Path.of(file)));
             } catch (ConfigException e) {
                 e.problems().forEach(problem -> early.error(problem.getMessage()));
-                return ExitCode.CONFIGURATION_ERROR.code();
+                return ExitCode.of(e).code();
             } catch (InvalidPathException e) {
                 early.error("not a valid path for the configuration file: " + file);
                 return ExitCode.CONFIGURATION_ERROR.code();
