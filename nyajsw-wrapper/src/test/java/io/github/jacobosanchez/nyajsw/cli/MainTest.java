@@ -81,6 +81,7 @@ public class MainTest {
 
         assertEquals(code, 7, output());
         assertTrue(output().contains("jvm 1    | to stderr"), output());
+        assertTrue(output().contains("jvm 1    | stdin-ended=true"), output()); // standard output too
         assertTrue(output().contains("wrapper  | jvm 1 exited with code 7"), output());
         assertTrue(output().contains("wrapper  | warning: "), output()); // the unsupported wrapper.tray
         // and the default log file beside the configuration, in YAJSW's default file format
@@ -89,6 +90,8 @@ public class MainTest {
                 && line.endsWith(" | jvm 1 exited with code 7")), file);
         assertTrue(file.lines().anyMatch(line -> line.startsWith("INFO   | jvm 1    | ")
                 && line.endsWith(" | to stderr")), file);
+        assertTrue(file.lines().anyMatch(line -> line.startsWith("INFO   | jvm 1    | ")
+                && line.endsWith(" | stdin-ended=true")), file);
     }
 
     @Test
@@ -128,6 +131,8 @@ public class MainTest {
         assertTrue(Files.readString(dir.resolve("wrapper.log.1"), charset).contains("| jvm 1 exited with code 5"));
         assertTrue(Files.readString(dir.resolve("wrapper.log"), charset).contains("| jvm 2 exited with code 5"));
         assertTrue(output().contains("launching jvm 2"), output());
+        assertTrue(output().contains("jvm 2    | to stderr"), output()); // the restarted run's output is jvm 2
+        assertTrue(Files.readString(dir.resolve("wrapper.log"), charset).contains("| jvm 2    | "));
         assertFalse(output().contains("launching jvm 3"), output());
         assertTrue(output().contains("supervision ended FAILED; exit code 5 is the application's"), output());
         assertFalse(Files.exists(dir.resolve("run/wrapper.pid")), "removed at the end");
