@@ -121,13 +121,13 @@ public class ConfigKeysTest {
                 {"wrapper.stop.strategy", SUPPORTED, NYAJSW},
                 {"wrapper.stop.command", PLANNED, NYAJSW},
                 // Logging
-                {"wrapper.logfile", PLANNED, YAJSW},
-                {"wrapper.logfile.format", PLANNED, YAJSW},
-                {"wrapper.logfile.loglevel", PLANNED, YAJSW},
-                {"wrapper.logfile.maxsize", PLANNED, YAJSW},
-                {"wrapper.logfile.maxfiles", PLANNED, YAJSW},
-                {"wrapper.logfile.rollmode", PLANNED, YAJSW},
-                {"wrapper.console.format", PLANNED, YAJSW},
+                {"wrapper.logfile", SUPPORTED, YAJSW},
+                {"wrapper.logfile.format", SUPPORTED, YAJSW},
+                {"wrapper.logfile.loglevel", SUPPORTED, YAJSW},
+                {"wrapper.logfile.maxsize", SUPPORTED, YAJSW},
+                {"wrapper.logfile.maxfiles", SUPPORTED, YAJSW},
+                {"wrapper.logfile.rollmode", SUPPORTED, YAJSW},
+                {"wrapper.console.format", SUPPORTED, YAJSW},
                 {"wrapper.console.loglevel", SUPPORTED, YAJSW},
                 {"wrapper.console.visible", UNSUPPORTED, YAJSW},
                 {"wrapper.console.title", UNSUPPORTED, YAJSW},
@@ -227,13 +227,13 @@ public class ConfigKeysTest {
                 {"wrapper.filter.missing.trigger.1", UNSUPPORTED, YAJSW},
                 {"wrapper.filter.missing.autostop.1", UNSUPPORTED, YAJSW},
                 {"wrapper.filter.debug.default", UNSUPPORTED, YAJSW},
-                {"wrapper.logfile.maxdays", PLANNED, YAJSW},
+                {"wrapper.logfile.maxdays", SUPPORTED, YAJSW},
                 {"wrapper.logfile.desc", UNSUPPORTED, YAJSW},
-                {"wrapper.log.encoding", PLANNED, YAJSW},
+                {"wrapper.log.encoding", SUPPORTED, YAJSW},
                 {"wrapper.console.minimized", UNSUPPORTED, YAJSW},
                 {"wrapper.console.use_interpolated", UNSUPPORTED, YAJSW},
                 {"wrapper.app.status.log.lines", UNSUPPORTED, YAJSW},
-                {"wrapper.debug.level", PLANNED, YAJSW},
+                {"wrapper.debug.level", SUPPORTED, YAJSW},
                 {"wrapper.ntservice.java.command", PLANNED, YAJSW},
                 {"wrapper.ntservice.java.customProcName", UNSUPPORTED, YAJSW},
                 {"wrapper.ntservice.autoreport.startup", UNSUPPORTED, YAJSW},
@@ -276,8 +276,8 @@ public class ConfigKeysTest {
     }
 
     @Test
-    public void rollModesHaveTheYajswValues() {
-        assertEquals(ConfigKeys.LOGFILE_ROLLMODE.values(), List.of("JVM", "WRAPPER", "DATE"));
+    public void rollModesHaveTheYajswValuesAndTanukisWithAliases() {
+        assertEquals(ConfigKeys.LOGFILE_ROLLMODE.values(), List.of("JVM", "WRAPPER", "DATE", "SIZE", "NONE"));
     }
 
     @Test(dataProvider = "seededKeys")

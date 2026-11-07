@@ -6,6 +6,7 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -332,17 +334,163 @@ public class WrapperConfigTest {
         LogConfig absent = load().log();
         LogConfig blank = load("wrapper.logfile.format=", "wrapper.console.format=").log();
 
-        assertEquals(absent.logfileFormat(), Optional.of("LPTM"));
-        assertEquals(absent.consoleFormat(), Optional.of("PM"));
-        // YAJSW turns the output off for a blank format; P4 implements that, so it must stay visible here.
+        assertEquals(absent.logfileFormat().map(LineFormat::toString), Optional.of("LPTM"));
+        assertEquals(absent.consoleFormat(), Optional.of(LineFormat.CONSOLE_DEFAULT));
+        // YAJSW turns the output off for a blank format.
         assertEquals(blank.logfileFormat(), Optional.empty());
         assertEquals(blank.consoleFormat(), Optional.empty());
     }
 
     @Test
+    public void theLogFileIsWrapperLogBesideTheConfigurationUnlessSetAndOffWhenBlank() throws IOException {
+        assertEquals(load().log().logfile(), Optional.of(dir.resolve("wrapper.log")));
+        assertEquals(load("wrapper.logfile=logs/w.log").log().logfile(), Optional.of(dir.resolve("logs/w.log")));
+        assertEquals(load("wrapper.logfile=").log().logfile(), Optional.empty());
+        assertEquals(load("wrapper.logfile=  ").log().logfile(), Optional.empty());
+    }
+
+    @Test
+    public void theLogFileLevelIsRaisedByDebugAndTheEncodingDefaultsToTheJvms() throws IOException {
+        LogConfig plain = load("wrapper.logfile.loglevel=ERROR").log();
+        LogConfig debug = load("wrapper.logfile.loglevel=ERROR", "wrapper.debug=true").log();
+
+        assertEquals(plain.logfileThreshold(), LogLevel.ERROR);
+        assertEquals(debug.logfileThreshold(), LogLevel.DEBUG);
+        assertEquals(plain.encoding(), Charset.defaultCharset());
+        assertEquals(load("wrapper.log.encoding=windows-1252").log().encoding(), Charset.forName("windows-1252"));
+        assertEquals(load("wrapper.log.encoding=  ").log().encoding(), Charset.defaultCharset());
+    }
+
+    @Test
+    public void anUnknownLogEncodingANegativeMaxfilesOrAnUnusableFileNameIsAnError() throws IOException {
+        ConfigException error = expectThrows(ConfigException.class,
+                () -> load("wrapper.log.encoding=klingon-8", "wrapper.logfile.maxfiles=-1",
+                        "wrapper.logfile=logs/ROLLNUM"));
+
+        List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
+        assertTrue(problems.stream().anyMatch(p -> p.contains("unknown character encoding 'klingon-8' for"
+                + " wrapper.log.encoding")), problems.toString());
+        assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.logfile.maxfiles=-1 is negative")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.logfile: the file name is only ROLLNUM")),
+                problems.toString());
+    }
+
+    @Test
+    public void rollModesTakeYajswsValuesAndTanukisWithDaysKeptOnlyUnderDate() throws IOException {
+        assertEquals(load().log().rollMode(), Optional.empty());
+        assertEquals(load().log().maxDays(), -1);
+        LogConfig dated = load("wrapper.logfile=w_YYYYMMDD.log", "wrapper.logfile.rollmode=DATE",
+                "wrapper.logfile.maxdays=3").log();
+        assertEquals(dated.rollMode(), Optional.of(RollMode.DATE));
+        assertEquals(dated.maxDays(), 3);
+        // Tanuki's values, from files derived from its templates (D22)
+        assertEquals(load("wrapper.logfile.rollmode=SIZE_OR_JVM").log().rollMode(), Optional.of(RollMode.JVM));
+        assertEquals(load("wrapper.logfile.rollmode=SIZE_OR_WRAPPER").log().rollMode(),
+                Optional.of(RollMode.WRAPPER));
+        assertEquals(load("wrapper.logfile.rollmode=SIZE").log().rollMode(), Optional.of(RollMode.SIZE));
+        assertEquals(load("wrapper.logfile.rollmode=NONE").log().rollMode(), Optional.of(RollMode.NONE));
+
+        WrapperConfig undatedDays = load("wrapper.logfile.maxdays=3");
+        assertTrue(undatedDays.warnings().stream().map(ConfigWarning::toString).anyMatch(w -> w.endsWith(
+                "wrapper.logfile.maxdays has an effect only with wrapper.logfile.rollmode=DATE")),
+                undatedDays.warnings().toString());
+        assertFalse(load("wrapper.logfile=w_YYYYMMDD.log", "wrapper.logfile.rollmode=DATE",
+                "wrapper.logfile.maxdays=3").warnings().stream().anyMatch(w -> w.toString().contains("maxdays")));
+
+        ConfigException undated = expectThrows(ConfigException.class,
+                () -> load("wrapper.logfile=logs/wrapper.log", "wrapper.logfile.rollmode=DATE"));
+        assertTrue(undated.problems().stream().map(Throwable::getMessage).anyMatch(p -> p.contains(
+                "wrapper.logfile.rollmode=DATE needs YYYYMMDD in the name of wrapper.logfile")),
+                undated.problems().toString());
+        ConfigException unknown = expectThrows(ConfigException.class, () -> load("wrapper.logfile.rollmode=WEEKLY"));
+        assertTrue(unknown.problems().toString().contains("invalid value 'WEEKLY' for wrapper.logfile.rollmode"),
+                unknown.problems().toString());
+    }
+
+    @Test
+    public void whatIsWrongWithAFormatIsAWarningAtItsLine() throws IOException {
+        WrapperConfig config = load("wrapper.console.format=L?M\\n", "wrapper.logfile.format=none");
+
+        assertEquals(config.log().consoleFormat().map(LineFormat::toString), Optional.of("LM"));
+        assertEquals(config.log().consoleFormat().orElseThrow().lineSeparator(), "\n");
+        assertEquals(config.log().logfileFormat(), Optional.empty(), "no letter of 'none' is a field");
+        List<String> warnings = config.warnings().stream().map(ConfigWarning::toString).toList();
+        assertTrue(warnings.stream().anyMatch(w -> w.endsWith(
+                "wrapper.conf:1: wrapper.console.format: '?' is not a format letter (L P D T Z M); skipped")),
+                warnings.toString());
+        assertTrue(warnings.stream().anyMatch(
+                w -> w.contains("wrapper.logfile.format: no format letter, so nothing is written there")),
+                warnings.toString());
+    }
+
+    @Test
     public void debugLevelDefaultsToFullDetail() throws IOException {
-        assertEquals(load().log().debugLevel(), 3);
-        assertEquals(load("wrapper.debug.level=1").log().debugLevel(), 1);
+        assertEquals(load().log().debugLevel(), DebugDetail.ALL);
+        assertEquals(load("wrapper.debug.level=0").log().debugLevel(), DebugDetail.NONE);
+        assertEquals(load("wrapper.debug.level=1").log().debugLevel(), DebugDetail.APPLICATION);
+        assertEquals(load("wrapper.debug.level=2").log().debugLevel(), DebugDetail.SUPERVISION);
+    }
+
+    private static final List<String> NOT_A_DEBUG_LEVEL = List.of("-1", "4", "garbage", "99999999999");
+
+    @Test
+    public void aDebugLevelOutsideZeroToThreeIsAnErrorUnderDebug() {
+        for (String level : NOT_A_DEBUG_LEVEL) {
+            ConfigException error = expectThrows(ConfigException.class,
+                    () -> load("wrapper.debug=true", "wrapper.debug.level=" + level));
+
+            List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
+            assertEquals(problems.size(), 1, problems.toString());
+            assertTrue(problems.get(0).contains("wrapper.debug.level=" + level
+                    + " is not a whole number from 0 to 3"), problems.toString());
+        }
+    }
+
+    @Test
+    public void aDebugLevelOutsideZeroToThreeOnlyWarnsWhileDebugIsOff() throws IOException {
+        for (String level : NOT_A_DEBUG_LEVEL) {
+            WrapperConfig config = load("wrapper.debug.level=" + level);
+
+            assertEquals(config.log().debugLevel(), DebugDetail.ALL, level);
+            assertTrue(config.warnings().stream().map(ConfigWarning::toString).anyMatch(w -> w.contains(
+                    "wrapper.debug.level=" + level + " is not a whole number from 0 to 3; it has no effect while"
+                            + " wrapper.debug is false")), config.warnings().toString());
+        }
+    }
+
+    @Test
+    public void aBlankDebugLevelIsTheDefault() throws IOException {
+        WrapperConfig config = load("wrapper.debug=true", "wrapper.debug.level=");
+
+        assertEquals(config.log().debugLevel(), DebugDetail.ALL);
+    }
+
+    @Test
+    public void anEncodingThatCanOnlyBeReadIsAnError() {
+        if (!Charset.isSupported("ISO-2022-CN")) {
+            throw new SkipException("this runtime has no ISO-2022-CN (module jdk.charsets)");
+        }
+        ConfigException error = expectThrows(ConfigException.class, () -> load("wrapper.log.encoding=ISO-2022-CN"));
+
+        List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
+        assertTrue(problems.stream().anyMatch(p -> p.contains(
+                "the character encoding 'ISO-2022-CN' for wrapper.log.encoding can be read but not written")),
+                problems.toString());
+    }
+
+    @Test
+    public void debugRaisesTheConsoleLevelAndAppliesTheDebugLevel() throws IOException {
+        LogConfig plain = load("wrapper.debug.level=1").log();
+        LogConfig quiet = load("wrapper.console.loglevel=ERROR").log();
+        LogConfig debug = load("wrapper.console.loglevel=ERROR", "wrapper.debug=true", "wrapper.debug.level=1").log();
+
+        assertEquals(plain.consoleThreshold(), LogLevel.INFO);
+        assertEquals(quiet.consoleThreshold(), LogLevel.ERROR);
+        assertEquals(debug.consoleThreshold(), LogLevel.DEBUG);
+        // YAJSW reads wrapper.debug.level only under wrapper.debug.
+        assertEquals(plain.debugDetail(), DebugDetail.ALL);
+        assertEquals(debug.debugDetail(), DebugDetail.APPLICATION);
     }
 
     @Test

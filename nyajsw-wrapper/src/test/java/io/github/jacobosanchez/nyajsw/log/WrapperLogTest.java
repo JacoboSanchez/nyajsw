@@ -5,6 +5,7 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
+import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 
 import java.io.ByteArrayOutputStream;
@@ -146,6 +147,52 @@ public class WrapperLogTest {
             expectThrows(IllegalArgumentException.class, () -> log.log(LogLevel.NONE, "x"));
             expectThrows(IllegalArgumentException.class, () -> log.isEnabled(LogLevel.NONE));
         }
+    }
+
+    @Test
+    public void debugMessagesAreWrittenUpToTheLogsDebugDetail() {
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.DEBUG, DebugDetail.APPLICATION)) {
+            WrapperLog jvm = log.forSource("jvm 1");
+            log.debug(DebugDetail.APPLICATION, "application");
+            log.debug(DebugDetail.SUPERVISION, () -> "supervision");
+            log.debug("all, by default");
+            log.log(LogLevel.DEBUG, "all, without a detail");
+            jvm.debug(DebugDetail.APPLICATION, "the views share the detail");
+            jvm.debug(DebugDetail.ALL, "hidden as well");
+
+            assertTrue(log.isEnabled(DebugDetail.APPLICATION));
+            assertFalse(log.isEnabled(DebugDetail.SUPERVISION));
+            assertFalse(log.isEnabled(LogLevel.DEBUG), "a debug message without a detail has all of it");
+            assertTrue(log.isEnabled(LogLevel.INFO));
+        }
+
+        assertEquals(lines(), List.of("wrapper  | application", "jvm 1    | the views share the detail"));
+    }
+
+    @Test
+    public void theDebugDetailDoesNotOpenAThresholdBelowDebug() {
+        AtomicInteger built = new AtomicInteger();
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO, DebugDetail.ALL)) {
+            log.debug(DebugDetail.APPLICATION, () -> "built " + built.incrementAndGet());
+
+            assertFalse(log.isEnabled(DebugDetail.APPLICATION));
+        }
+
+        assertEquals(built.get(), 0);
+        assertEquals(text(), "");
+    }
+
+    @Test
+    public void noDebugDetailWritesNoDebugMessage() {
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.DEBUG, DebugDetail.NONE)) {
+            log.debug(DebugDetail.APPLICATION, "hidden");
+            log.info("shown");
+
+            expectThrows(IllegalArgumentException.class, () -> log.debug(DebugDetail.NONE, "x"));
+            expectThrows(IllegalArgumentException.class, () -> log.isEnabled(DebugDetail.NONE));
+        }
+
+        assertEquals(lines(), List.of("wrapper  | shown"));
     }
 
     @Test
