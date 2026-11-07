@@ -15,6 +15,7 @@ import io.github.jacobosanchez.nyajsw.launch.TestApplication;
 import io.github.jacobosanchez.nyajsw.lifecycle.State;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.platform.ProcessTools;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -150,11 +151,11 @@ public class MainTest {
         assertEquals(Main.run(new String[] {}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-c"}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-x", "a"}, out), ExitCode.UNEXPECTED_ERROR.code());
-        assertEquals(Main.run(new String[] {"--service", "wrapper.conf"}, out), ExitCode.UNEXPECTED_ERROR.code());
+        assertEquals(Main.run(new String[] {"--service"}, out), ExitCode.UNEXPECTED_ERROR.code());
         assertEquals(Main.run(new String[] {"-q"}, out), ExitCode.UNEXPECTED_ERROR.code());
 
         assertTrue(output().contains("usage: nyajsw -c <wrapper.conf>"), output());
-        assertTrue(output().contains("--service is not implemented yet"), output());
+        assertTrue(output().contains("nyajsw --service <wrapper.conf>  run as the service"), output());
         assertTrue(output().contains("nyajsw -i <wrapper.conf>    install the Windows service"), output());
     }
 
@@ -192,7 +193,7 @@ public class MainTest {
         ConsoleMode mode;
         CompletableFuture<Integer> run;
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
-            mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());
+            mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost(), ProcessTools.NONE);
             run = CompletableFuture.supplyAsync(mode::run);
             try {
                 awaitOutput("jvm 1    | parked");
@@ -217,7 +218,7 @@ public class MainTest {
                 "wrapper.app.parameter.3=3", "wrapper.shutdown.timeout=30"));
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
             ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
-                    ClasspathExpander.forThisHost());
+                    ClasspathExpander.forThisHost(), ProcessTools.NONE);
             CompletableFuture<Integer> run = CompletableFuture.supplyAsync(mode::run);
             try {
                 awaitOutput("jvm 1    | lingering");
@@ -240,7 +241,7 @@ public class MainTest {
         List<Integer> halted = new ArrayList<>();
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
             ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
-                    ClasspathExpander.forThisHost());
+                    ClasspathExpander.forThisHost(), ProcessTools.NONE);
             CompletableFuture<Integer> run = CompletableFuture.supplyAsync(mode::run);
             try {
                 awaitOutput("jvm 1    | lingering");
@@ -257,13 +258,13 @@ public class MainTest {
 
     @Test
     public void aFailedSupervisionNeverExitsWithZero() {
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(7))), 7);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(0))), 0);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.empty())), 0);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(5))), 5);
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(0))),
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(7))), 7);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.of(0))), 0);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.STOPPED, OptionalInt.empty())), 0);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(5))), 5);
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.of(0))),
                 ExitCode.UNEXPECTED_ERROR.code());
-        assertEquals(ConsoleMode.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.empty())),
+        assertEquals(Supervision.exitCode(new Supervisor.Outcome(State.FAILED, OptionalInt.empty())),
                 ExitCode.UNEXPECTED_ERROR.code());
     }
 
@@ -272,7 +273,7 @@ public class MainTest {
         WrapperConfig config = load(conf("wrapper.app.parameter.1=park"));
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
             ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
-                    ClasspathExpander.forThisHost());
+                    ClasspathExpander.forThisHost(), ProcessTools.NONE);
             mode.stop();
             mode.run();
 
@@ -285,7 +286,7 @@ public class MainTest {
         WrapperConfig config = load(conf("wrapper.app.parameter.1=park"));
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
             ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
-                    ClasspathExpander.forThisHost());
+                    ClasspathExpander.forThisHost(), ProcessTools.NONE);
             mode.stop();
 
             assertEquals(mode.run(), 0);

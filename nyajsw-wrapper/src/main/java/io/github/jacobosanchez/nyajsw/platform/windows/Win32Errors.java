@@ -5,8 +5,8 @@ import com.sun.jna.platform.win32.WinError;
 import java.util.Map;
 
 /**
- * Turns a Win32 error code of a service call into text for the operator (plan §4.4): the system's
- * own message, the code, and for the errors an operator can act on, what to do. The codes are
+ * Turns a Win32 error code into text for the operator (plan §4.4): the system's own message, the
+ * code, and for the errors of a service call that an operator can act on, what to do. The codes are
  * {@code jna-platform}'s constants, inlined by the compiler, so this class loads no native code.
  */
 final class Win32Errors {
@@ -25,6 +25,7 @@ final class Win32Errors {
     static final int PROCESS_ABORTED = WinError.ERROR_PROCESS_ABORTED;
     static final int SERVICE_DEPENDENCY_FAIL = WinError.ERROR_SERVICE_DEPENDENCY_FAIL;
     static final int SERVICE_LOGON_FAILED = WinError.ERROR_SERVICE_LOGON_FAILED;
+    static final int FAILED_SERVICE_CONTROLLER_CONNECT = WinError.ERROR_FAILED_SERVICE_CONTROLLER_CONNECT;
     static final int SERVICE_MARKED_FOR_DELETE = WinError.ERROR_SERVICE_MARKED_FOR_DELETE;
     static final int SERVICE_EXISTS = WinError.ERROR_SERVICE_EXISTS;
     static final int DUPLICATE_SERVICE_NAME = WinError.ERROR_DUPLICATE_SERVICE_NAME;
@@ -57,6 +58,9 @@ final class Win32Errors {
                     "check the services in wrapper.ntservice.dependency.<n>")),
             Map.entry(SERVICE_LOGON_FAILED, new Known("the service could not log on",
                     "check wrapper.ntservice.password and that the account may log on as a service")),
+            Map.entry(FAILED_SERVICE_CONTROLLER_CONNECT, new Known("the process was not started as a service",
+                    "--service is for the Service Control Manager: start the installed service with -t, or run"
+                            + " the application in the console with -c")),
             Map.entry(SERVICE_MARKED_FOR_DELETE, new Known("the service is marked for deletion",
                     "close the Services console and any other program that has the service open, then try"
                             + " again")),
@@ -77,6 +81,11 @@ final class Win32Errors {
      * run the command as Administrator"}.
      */
     static String describe(int code, String systemText) {
+        return describe(code, systemText, true);
+    }
+
+    /** As {@link #describe(int, String)}; without the hint, which suits service calls only, unless {@code hint}. */
+    static String describe(int code, String systemText, boolean hint) {
         Known known = KNOWN.get(code);
         String text = systemText == null ? "" : systemText.strip();
         if (text.endsWith(".")) {
@@ -86,6 +95,6 @@ final class Win32Errors {
             text = known == null ? "error" : known.name();
         }
         String described = text + " (Win32 error " + code + ")";
-        return known == null || known.hint().isEmpty() ? described : described + "; " + known.hint();
+        return !hint || known == null || known.hint().isEmpty() ? described : described + "; " + known.hint();
     }
 }

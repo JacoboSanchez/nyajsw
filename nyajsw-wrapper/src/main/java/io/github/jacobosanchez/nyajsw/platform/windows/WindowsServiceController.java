@@ -4,7 +4,6 @@ import io.github.jacobosanchez.nyajsw.config.ServiceConfig;
 import io.github.jacobosanchez.nyajsw.config.StartType;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
-import io.github.jacobosanchez.nyajsw.platform.PlatformException;
 import io.github.jacobosanchez.nyajsw.platform.ServiceController;
 import io.github.jacobosanchez.nyajsw.platform.ServiceException;
 import io.github.jacobosanchez.nyajsw.platform.ServiceStatus;
@@ -173,11 +172,8 @@ final class WindowsServiceController implements ServiceController {
             return call.get();
         } catch (ServiceException e) {
             throw failure(what, e);
-        } catch (LinkageError e) { // UnsatisfiedLinkError, NoClassDefFoundError, ExceptionInInitializerError
-            throw new PlatformException("cannot " + what + ": the native library (JNA) cannot be loaded: " + e
-                    + "; check that the directory '" + System.getProperty("jna.tmpdir", System.getProperty(
-                            "java.io.tmpdir")) + "' (jna.tmpdir, from wrapper.tmp.path) is writable, or ship"
-                    + " jnidispatch.dll and set jna.boot.library.path", e);
+        } catch (LinkageError e) {
+            throw NativeLibrary.cannotLoad(what, e);
         }
     }
 

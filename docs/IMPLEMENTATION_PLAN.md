@@ -181,17 +181,17 @@ older JVMs than the wrapper requires.
 | Package | Responsibility | Key types |
 |---|---|---|
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
-| `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit` (and `Runtime.halt`, in the console shutdown hook). | `Main`, `Command`, `ExitCode`, `ConsoleMode` (runs the supervisor since P3.6) |
+| `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit` (and `Runtime.halt`, in the console shutdown hook). | `Main`, `Command`, `ExitCode`, `ConsoleMode` (runs the supervisor since P3.6), `ServiceMode` and `ServiceStatusReporter` (P6.2), `Supervision` (the stack both modes run) |
 | `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `CompatibilityDocument`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
 | `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess` (a `RunningApplication`, started per invocation through an `ApplicationLauncher`), `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `Scheduler` + `ExecutorScheduler`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
 | `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileSink`, `LogFileNames` |
-| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus` + `ServiceState`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
-| `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
-| `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
-| `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `UnsupportedPlatformException`, which `cli` maps to exit code 4. | `UnsupportedPlatform`, `UnsupportedServiceController` |
+| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status) with `ServiceBody`, `ServiceContext`, `ServiceControl` and `ServiceExit`, `ServiceStatus` + `ServiceState`, `ProcessTools` and `ProcessJob` (P6.4), `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
+| `platform.windows` | Windows implementations. | `ScmApi`, `ServiceHostApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaServiceHostApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `KernelHandle`, `Win32Errors`, `Win32Failures` |
+| `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Lsa`, `Kernel32Jobs`, structures |
+| `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `UnsupportedPlatformException`, which `cli` maps to exit code 4. | `UnsupportedPlatform`, `UnsupportedServiceController`, `UnsupportedServiceHost` |
 | `agent` (module `nyajsw-agent`) | Agent `premain` and the shared protocol. | `Agent`, `AgentProtocol` |
 
 Design rules that keep this maintainable (see AGENTS.md §4.4): registries over `if/else` chains,
@@ -220,9 +220,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   functions to grant "Log on as a service" (`LsaOpenPolicy`,
   `LsaAddAccountRights`, `LsaClose`, `LsaNtStatusToWinError`). Every structure gets a layout test
   (`size()`, field order) and is used only through the `ScmApi` / `ProcessApi` facades.
-* `ScmApi` (service control) and `ProcessApi` (job objects, `OpenProcess`, console functions) are
-  **our** interfaces with one method per Win32 call we use. `JnaScmApi` and `JnaProcessApi`
-  implement them and are the only classes that read the last error (`Native.getLastError()`),
+* `ScmApi` (service control), `ServiceHostApi` (running as a service, P6.1), `LsaApi` (P5.5) and
+  `ProcessApi` (job objects, `OpenProcess`, console functions) are **our** interfaces with one
+  method per Win32 call we use. Their `Jna*` implementations are the only classes that read the
+  last error (`Native.getLastError()`),
   wrapping it into `ServiceException` / `PlatformException` with the Win32 code and message. Tests
   mock the facades; JNA types never leave `platform.windows`. (`W32ServiceManager`/`W32Service` from `jna-platform` are not used: they
   cannot create or delete services, throw their own exception type and are not mockable — D5.)
@@ -252,24 +253,37 @@ interfaces at the OS boundary, immutable config records, one place per concern.
 * **Running as the service** (`--service`): `Main` calls `StartServiceCtrlDispatcher` before
   anything else, so the SCM's 30-second start window is never at risk. The table entry name may be
   empty for `SERVICE_WIN32_OWN_PROCESS`; the real name arrives in `ServiceMain`'s `argv[0]`.
-  `ServiceMain` (a JNA callback thread, named through `CallbackThreadInitializer`) registers the
-  handler, reports `START_PENDING` with `dwControlsAccepted = 0`, loads configuration and logging,
-  starts the supervisor, and reports `RUNNING` (accepting `STOP`, `SHUTDOWN`, `PRESHUTDOWN`) once
-  readiness passes. It blocks until the supervisor is terminal and reports `STOPPED` last. The
-  control handler reports `STOP_PENDING` synchronously, queues the event to the supervisor and
-  returns. Callback objects are kept in static fields so the native pointers stay valid (the one
-  sanctioned static state, AGENTS.md §4.4). When the application cannot be kept running, the
+  The dispatcher runs on a daemon thread of its own (`nyajsw-service-dispatcher`), so the caller
+  is not stuck when Windows would never release it (below).
+  `ServiceMain` (a JNA callback thread, named `nyajsw-service` through `CallbackThreadInitializer`)
+  registers the handler, reports `START_PENDING` with `dwControlsAccepted = 0` and a 10 s wait hint
+  at once, then runs the service body (P6.2: configuration and logging, the supervisor), which
+  reports `RUNNING` (accepting `STOP`, `SHUTDOWN`, `PRESHUTDOWN`) once readiness passes. It blocks
+  until the body has ended and reports `STOPPED` last. The control handler reports `STOP_PENDING`
+  synchronously with a 10 s wait hint, then tells the body, which queues the event to the
+  supervisor and returns. Reports go one way: a `starting` after `running`, or either after a stop,
+  is ignored. `INTERROGATE` returns `NO_ERROR` without a report, other controls
+  `ERROR_CALL_NOT_IMPLEMENTED`. Since `START_PENDING` and `STOP_PENDING` accept no controls, Windows
+  refuses a stop during the start with 1061, and sends no `SHUTDOWN`/`PRESHUTDOWN` to a service
+  already stopping; the start must therefore stay bounded (P6.2). If the service thread cannot
+  register its handler or report `STOPPED`, Windows keeps the dispatcher blocked and the SCM does
+  not end the process, so `ServiceHost.run` returns by itself and throws why. Callback objects are
+  kept in static fields so the native pointers stay valid (the one sanctioned static state,
+  AGENTS.md §4.4). When the application cannot be kept running, the
   service ends with `dwWin32ExitCode = ERROR_SERVICE_SPECIFIC_ERROR` (1066) and the reason in
   `dwServiceSpecificExitCode`.
-* **Pending states**: the checkpoint is incremented on every report and the wait hint is at least
-  twice the readiness interval with a 2-second floor, so long readiness checks never trip the SCM.
+* **Pending states**: the checkpoint is incremented on every report (from 1 in each pending state)
+  and the wait hint is at least twice the readiness interval with a 2-second floor, so long
+  readiness checks never trip the SCM; the host enforces the floor (P6.1), P6.2 the rest.
   `PRESHUTDOWN` is accepted by default because plain `SHUTDOWN` only leaves the few seconds of
   `WaitToKillServiceTimeout`.
 * **Error mapping** (`Win32Errors`): 5 `ERROR_ACCESS_DENIED` → "run as Administrator";
   1053 `ERROR_SERVICE_REQUEST_TIMEOUT`; 1056 `ERROR_SERVICE_ALREADY_RUNNING`;
   1057 `ERROR_INVALID_SERVICE_ACCOUNT`; 1060 `ERROR_SERVICE_DOES_NOT_EXIST`;
   1062 `ERROR_SERVICE_NOT_ACTIVE`; 1069 `ERROR_SERVICE_LOGON_FAILED` → logon-right hint;
-  1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; 1332 `ERROR_NONE_MAPPED`
+  1063 `ERROR_FAILED_SERVICE_CONTROLLER_CONNECT` (`--service` run outside the SCM: use `-t` or
+  `-c`, P6.1); 1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; 1332
+  `ERROR_NONE_MAPPED`
   (no such account, P5.5); anything else through
   `Kernel32Util.formatMessage`.
 * **Native library loading**: in service mode `jna.tmpdir` is baked into the binary path at install
@@ -471,10 +485,12 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
   application ends when the wrapper ends, but the wrapper survives the application; `LOOSE` —
   independent (meanings as YAJSW documents them, P1.10). The supervisor honours both directions
   (P3.2, D20): under `LOOSE`/`WRAPPER` a stop request ends supervision and leaves the application
-  running, logged with its pid. On Windows a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` enforces `TIGHT`/`APPLICATION` even if the
-  wrapper dies abruptly: the job is created before launch, the child is assigned right after start
-  (`OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE)`), the job handle stays open for the
-  wrapper's lifetime, and the tiny pre-assignment window is accepted and documented (P6.4).
+  running, logged with its pid. On Windows a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+  enforces `TIGHT`/`APPLICATION` even if the wrapper dies abruptly: the job is created when
+  supervision begins, each invocation is assigned right after start
+  (`OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE)`), the job is closed when supervision
+  ends, which ends whatever the application started, also after a clean exit of its own, and the
+  short pre-assignment window is accepted and documented (P6.4).
 * **Pid files**: `wrapper.pidfile` (wrapper) and `wrapper.java.pidfile` (application), written on
   start, removed on stop, stale files overwritten.
 * **Console mode**: Ctrl+C reaches both the wrapper and the child because they share the console.
@@ -554,8 +570,9 @@ output, configuration and a clock; probes are stateless or own their state expli
 * `wrapper.debug=true` raises the wrapper log level to `DEBUG`, and `wrapper.debug.level` (0–3,
   default 3) chooses which debug messages are written by the detail each one names (P4.1). In
   service mode nothing is written to the console; logging initialises to the file as early as the
-  configuration allows, with a bootstrap fallback (`%TEMP%\nyajsw-bootstrap.log`) for errors
-  before the configuration is read (P4.3a).
+  configuration allows, with a bootstrap fallback (`nyajsw-bootstrap-<name>.log` beside the
+  configuration file since P6.3; `%TEMP%` only when that path cannot be parsed) for errors
+  before the configuration is read and for the problems of the log file (P4.3a).
 
 ### 4.9 Command-line interface
 
@@ -1208,22 +1225,126 @@ Done when: unit tests cover every `ScmApi` interaction with mocks; integration j
 
 ### P6 — Service host (running as the service)
 Goal: the wrapper itself runs under the SCM.
-- [ ] P6.1 `ServiceHost` interface + `FakeServiceHost` for tests; `WindowsServiceHost` with
+- [x] P6.1 `ServiceHost` interface + `FakeServiceHost` for tests; `WindowsServiceHost` with
       `StartServiceCtrlDispatcher`, `RegisterServiceCtrlHandlerEx`, `SetServiceStatus`,
       checkpoint/wait-hint reporting, `STOP`, `SHUTDOWN`, `PRESHUTDOWN` (accepted by default),
-      `INTERROGATE`; named callback thread; `STOPPED` reported last.
-- [ ] P6.2 `--service <conf>` command: dispatcher first, then configuration, file-only logging,
+      `INTERROGATE`; named callback thread; `STOPPED` reported last. **Done:** `ServiceHost.run`
+      runs a `ServiceBody` (`run(ServiceContext)` → `ServiceExit`, `stop(ServiceControl)`) and
+      returns once `STOPPED` is reported, rethrowing what the body threw; the body reports
+      `starting(waitHint)`, `running()` and `stopping(waitHint)`. `Platform.serviceHost()` gives
+      `WindowsServiceHost` on `JnaServiceHostApi` (no hand-written binding: `jna-platform` has the
+      three calls and their callback types), and on other hosts `UnsupportedServiceHost` (exit code
+      4). The checkpoint restarts at 1 in each pending state; a failed `ServiceExit` is reported as
+      1066 with its code, an exception of the body as 1066 with code 1. The callbacks are held in
+      static fields, the one sanctioned static state. Shared with the controller:
+      `NativeLibrary.cannotLoad` for a JNA that cannot be loaded. Tested on a fake dispatcher
+      (`FakeServiceHostApi`, which runs the service main on a thread of its own and sends controls
+      on the dispatcher's); `FakeServiceHost` is the platform-neutral double for P6.2. On Windows
+      the real `StartServiceCtrlDispatcher` fails with 1063 from a console process
+      (`windows-integration`). If `RegisterServiceCtrlHandlerEx` or the final `SetServiceStatus`
+      fails, Windows never releases the dispatcher, which runs on a daemon thread
+      (`nyajsw-service-dispatcher`) for that reason: `run` returns by itself and throws the
+      failure, so the caller can log it and end the process. Reports go one way (no
+      `START_PENDING` after `RUNNING`, nothing after `STOPPED`), and a pending wait hint is at least
+      2 s. `FakeServiceHost` accepts a stop only while `RUNNING`, as Windows does.
+- [x] P6.2 `--service <conf>` command: dispatcher first, then configuration, file-only logging,
       supervisor wiring with `START_PENDING` until `ProbeRunner` readiness (`process` probe),
       `ERROR_SERVICE_SPECIFIC_ERROR` on `FAILED`; `-Xrs` for the application JVM in service mode
       while `wrapper.ntservice.reduce_signals` is true (it also keeps a future `console` stop
-      strategy from working, §4.6).
-- [ ] P6.3 Service-account hardening: working directory default, clear errors for unwritable
-      log/pid paths, documentation of `jna.tmpdir` / `jnidispatch.dll` options.
-- [ ] P6.4 Job object (hand-written binding) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for
+      strategy from working, §4.6). **Done:** `Main --service <conf>` hands a `cli.ServiceMode` to
+      `Platform.serviceHost()` before reading anything. On the service thread it reads the
+      configuration (problems go to the bootstrap log `nyajsw-bootstrap-<name>.log`, and the
+      service fails with code 2), opens the configured log with no console (the log file's own
+      problems go to the bootstrap log), and runs the supervision stack, now shared with console
+      mode as `cli.Supervision` (the deferred P3.6 finding). `ServiceStatusReporter` maps the
+      supervisor's states: `START_PENDING` until the first ready, `RUNNING` from then on (a restart
+      of a running application does not show), `STOP_PENDING` while stopping; a pending state is
+      reported again every half wait hint (twice the readiness interval, at least 2 s), on a timer
+      of its own, so the checkpoint moves for as long as the supervisor's bounded start or stop
+      lasts. A stop control logs the reason and asks the supervisor to stop; one before
+      supervision begins starts nothing. Supervision that ends `FAILED` reports 1066 with console
+      mode's exit code; for `STOPPED` see below. `JavaCommandBuilder.build` takes the wrapper's own JVM options, placed after
+      `-Djava.library.path` and before `wrapper.java.additional.<n>`: `-Xrs` while
+      `wrapper.ntservice.reduce_signals` (now `SUPPORTED`) is true. What keeps the process from
+      running as a service at all goes to the console and, once Windows has named the service, to
+      its bootstrap log; the exit code follows D23. A configured name that differs from the one
+      Windows started is a warning. Tested under `FakeServiceHost` with a real application JVM; the
+      run under the real SCM is P6.5. After review: supervision that waits idle (an exit with
+      action `STOP` under `LOOSE`/`APPLICATION`) is a running service, so it can be stopped; a
+      pending state is reported for no longer than `-t` or `-p` would wait (`startTimeout`,
+      `stopWait`), after which Windows shows it as not responding instead of starting forever; a
+      failed report is tried again; the configuration is read under a 30 s wait hint; the
+      bootstrap log is opened only when there is something to write; an application that ends
+      by itself with a code other than 0 fails the service with that code (as console mode exits
+      with it), while a stop the SCM asked for is success whatever the code; a stop chain without
+      a graceful step is warned about at start (deferred finding). A start that never becomes ready
+      with `wrapper.startup.timeout=0`, or a long `wrapper.startup.delay`, stays `START_PENDING`,
+      where Windows refuses a stop (1061).
+- [x] P6.3 Service-account hardening: working directory default, clear errors for unwritable
+      log/pid paths, documentation of `jna.tmpdir` / `jnidispatch.dll` options. **Done:** the
+      working directory needed no change: it defaults to the configuration's directory (D13),
+      wrapper-side relative paths resolve against that directory and application-side ones against
+      the working directory, so the service's own current directory (`C:\Windows\System32`) never
+      matters, and the installed command line names the configuration by its absolute path (D12). A log file or pid file that cannot be written
+      because access is denied says which account the wrapper runs as (`user.name`) and which key
+      chose the place (`log.WriteAccess`); the log file's message reaches the bootstrap log in
+      service mode. The bootstrap log moves beside the configuration file
+      (`WrapperLog.bootstrapFile(directory, name)`; deferred finding P4.3a), which is protected as
+      well as the configuration itself, where `C:\Windows\Temp` lets any user plant a file first;
+      when the account may not create it there, it falls back to the account's temporary directory
+      (`cli.BootstrapLog`), and before Windows has named the service (JNA cannot be loaded, the
+      process cannot connect) it is named after the configuration file. User guide
+      `docs/windows-service.md`: the commands, what needs a reinstall (the registration's keys,
+      the stop timeouts, the file locations, a rename), starting and stopping (the default stop
+      chain, 1066 and `SERVICE_EXIT_CODE`, `-Xrs`), accounts and what they must read and write,
+      protecting the installation, the two logs, the application JVM given with its directory, and
+      `jna.tmpdir` with the `jna.boot.library.path` / `jna.nounpack` fallback for
+      `jnidispatch.dll`.
+- [x] P6.4 Job object (hand-written binding) with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for
       `TIGHT`/`APPLICATION` (the modes in which the application ends with the wrapper, §4.6);
-      `TerminateJobObject` used by the `terminate` strategy when present.
+      `TerminateJobObject` used by the `terminate` strategy when present. **Done:**
+      `Platform.processTools()` gives `ProcessTools.createKillOnCloseJob()` → `ProcessJob` (`add`,
+      `terminate`, `close`); `WindowsProcessTools` on the `ProcessApi` facade (`JnaProcessApi`: the
+      hand-written `Kernel32Jobs` binding with `JOBOBJECT_BASIC_LIMIT_INFORMATION` and
+      `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`, layout-tested, and `jna-platform`'s `OpenProcess` and
+      `CloseHandle`), `ProcessTools.NONE` elsewhere. `Supervision` makes one job per supervision
+      under `TIGHT`/`APPLICATION`, in console mode as in service mode, and closes it when
+      supervision ends; under `LOOSE`/`WRAPPER` there is none, since the application may outlive
+      the wrapper. `ApplicationProcess` adds each invocation right after it starts, and
+      `terminateTree` ends the job first (`TerminateJobObject`, exit code 1 as
+      `destroyForcibly`), then still walks the process tree for anything outside it. A job that
+      cannot be created, or a process it refuses, is an error in the log, and the application runs
+      without it. What a process started before it was added stays outside, as does an earlier
+      invocation's orphan only until the job ends: one job serves all invocations, so `terminate`
+      also ends orphans an earlier invocation left. Tested with a mocked facade, a recording job and
+      counting tools; on Windows `WindowsProcessToolsIntegrationTest` (`windows-integration`, no
+      elevation needed) shows that closing or ending a real job ends a `TestApplication` and the
+      grandchild it starts, and the console-mode tests run under a real job. `Win32Failures` now
+      words every facade's failures (the deferred P5.5 finding), without the service commands'
+      hints for process calls. After review: the job is created when supervision runs, not when it
+      is built; a process that ended before it could join the job (Windows refuses it with 5) is
+      a debug line, not an error; the tree is read before the job is ended; the user guide says
+      that under `TIGHT`/`APPLICATION` everything the application started ends with supervision.
 - [ ] P6.5 `windows-integration` end-to-end: install → start → `RUNNING` → stop → `STOPPED` →
-      remove, with a test application and the wrapper log attached on failure.
+      remove, with a test application and the wrapper log attached on failure. **Status:** written
+      (`platform.windows.WindowsServiceEndToEndTest`, group `windows-integration`): the service's
+      binary path runs `--service` on the test JVM's full classpath (surefire's
+      `surefire.test.class.path`: the wrapper's classes, JNA, the test application); a
+      `TestApplication` service is started until `RUNNING` with a pid, its log shows the service
+      name and `-Xrs` in the application's JVM options, it is stopped until `STOPPED` with Win32
+      exit code 0 and both processes gone; an application that ends with 3 stops the service with
+      1066 and `dwServiceSpecificExitCode` (`sc query`'s `SERVICE_EXIT_CODE`) 3; a configuration
+      broken after the install stops it with 1066 and 2, its error in the bootstrap log beside the
+      configuration. A failed test prints the wrapper log and both bootstrap logs into the report
+      (the service's `java.io.tmpdir` is in the test's directory, so the fallback one is too).
+      After each test the service is stopped (a pending one is waited for, then killed as a last
+      resort) and removed, and the directory is deleted once the wrapper's process has let go of
+      the JNA library it unpacked there; that fixture, `ThrowawayService`, is shared with the P5.6
+      test, which now also installs the real classpath. The configuration is a minimal generated one; the phase's
+      "unmodified YAJSW-style `wrapper.conf`" needs a real fixture (P8.3). Unelevated on Windows 10, the registered command line, run from a console, starts
+      the wrapper, which refuses with 1063 and the hint, exit code 3, in the bootstrap log named
+      after the configuration file; install is refused with 5. The elevated run (`mvn -q verify
+      -Pwindows-integration` as Administrator) is still to be done before this box is ticked.
 Done when: a real service runs a test application from an unmodified YAJSW-style `wrapper.conf`.
 
 ### P7 — Probes and agent
@@ -1327,11 +1448,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
   carry them.
 - P2.5: usage messages and "not implemented yet" go to standard output with everything else; standard
   error would suit scripts better.
-- P3.6: `ConsoleMode` assembles the whole supervision stack (stop chain, pid files, readiness
-  runner, scheduler, probe executor, launcher); the service host (P6) needs the same, so extract a
-  lifecycle-level assembly then instead of copying it. Launch errors that cannot fix themselves (a
-  missing executable or working directory) are retried like any failed invocation: with the
-  defaults about 20 s and five error lines before exit 1, where P2.5 failed at once; consider a
+- P3.6: Launch errors that cannot fix themselves (a missing executable or working directory) are
+  retried like any failed invocation: with the defaults about 20 s and five error lines before
+  exit 1, where P2.5 failed at once; consider a
   kind of `LaunchException` that is not retried, or say it in the migration guide (P8.2, which
   should also mention that invalid `on_exit` values now stop the wrapper). The
   clamp in the `forceStop` message (a real timer fires late) is covered only by `MainTest`'s real
@@ -1356,15 +1475,18 @@ entry names the commit/plan item it came from; remove entries when addressed.
   (no limit) comes from the Tanuki format and is unconfirmed for YAJSW (§10 Q1).
 - P3.2: under `LOOSE`/`WRAPPER` the application "keeps running" after the wrapper ends, but its
   standard output and error are pipes the wrapper owns, so it loses them (and may fail writing to
-  them), and in console mode it shares the console and its Ctrl+C. P6 must decide (P3.6 left it
-  as is): redirect its output, detach it from the console, and keep it out of the kill-on-close
-  job of P6.4.
-- P4.3a (review): P6 must open the configured log with `WrapperLog.open(…, fileProblems)` pointed
-  at the bootstrap log, and use the bootstrap log for errors before the configuration is read. The
-  bootstrap file lives in the temporary directory, which for `LocalSystem` is `C:\Windows\Temp`,
-  where any user may create a file of that name first (and so read the wrapper's early errors,
-  or keep it from being written); decide in P6 whether a directory with a restricted ACL (beside
-  the configuration, or under `%ProgramData%\nyajsw`) suits better. The bootstrap log masks no
+  them), and in console mode it shares the console and its Ctrl+C. P6.2 left it as is (a
+  service has no console); P6.4 keeps it out of the job (none under `LOOSE`/`WRAPPER`). Still
+  open: redirect its output and detach it from the console, so that it really survives the
+  wrapper.
+- P4.3a (review): done in P6.2/P6.3: service mode opens the configured log with the bootstrap log
+  for its problems and uses the bootstrap log before the configuration is read, opened only when
+  there is something to write, beside the configuration file instead of the temporary directory
+  (for `LocalSystem` `C:\Windows\Temp`, where any user may create a file of that name first, or a
+  link). Left: `%TEMP%` is still the fallback for a configuration path that cannot be parsed and
+  for an account that may not create files beside the configuration (for `LocalSystem`, which
+  rarely lacks that right, `C:\Windows\Temp`), and the file is opened following links.
+  The bootstrap log masks no
   stack trace (it may run before any secret is known): once the configuration is read, log
   exceptions only to the configured log, or give `bootstrap` the configuration's mask. Three debug
   messages put exception text into the message unmasked (`Supervisor` cancelling a timer,
@@ -1413,11 +1535,44 @@ entry names the commit/plan item it came from; remove entries when addressed.
   the next policy refresh, and 1069 comes back later, as with the Services console: say so in the
   user guide. Built-in accounts are recognised by spelling; comparing the looked-up SID with the
   well-known ones would also catch localised names (`NT-AUTORITÄT\...`). `JnaLsaApi` borrows the
-  system-text helper of `JnaScmApi`; a small shared `Win32Failures` would read better.
+  system-text helper of `JnaScmApi`, which uses the shared `Win32Failures` since P6.4.
 - PR #7 (review): in `WindowsServiceController.install` the logon grant runs inside the
   `catch (RuntimeException)` that deletes a half-installed service; a `LinkageError` from the
   first use of the LSA binding skips that clean-up, and `Main.service()` shows its stack trace.
   Unlikely (`advapi32` is a system library); catch it there like `call()` does.
+- P6.1 (review): `STOP_PENDING` accepts no controls, so an operator stop that is still running
+  when the system shuts down gets no `PRESHUTDOWN` and only `WaitToKillServiceTimeout`; P6.2 kept
+  that (the body has nothing to do with a second stop); revisit if P6.5 shows such stops cut
+  short. Not tested: a stop control that arrives between the handler's registration and the first
+  `START_PENDING`, which Windows cannot send (nothing is accepted yet); the final `STOPPED` is not
+  retried before `run` gives up.
+- P6.4 (review): without `JOB_OBJECT_LIMIT_BREAKAWAY_OK`, a helper the application starts with
+  `CREATE_BREAKAWAY_FROM_JOB` cannot leave the job; decide when a user needs it (until then
+  `LOOSE`/`WRAPPER` or a helper started outside the tree). With a script as `wrapper.java.command`,
+  `cmd.exe` may start the JVM before it is assigned, which leaves the JVM outside the job.
+  `Supervisor.abandonUnready` logs "giving up on it", while the job now ends it with supervision.
+  Not tested: that killing the process that holds the job handle ends the application (a helper
+  JVM that creates the job and is then killed would show it), that the console-mode run under a
+  real job logs no job error, and the order of the job's end against the walk of the tree.
+- P6.3 (review): a bare `wrapper.java.command` (`java`, YAJSW's default) is found by Windows in
+  the wrapper's own JDK first, before `PATH` (`CreateProcess` searches the parent's directory
+  first), so the application runs on the wrapper's Java 21; the `ApplicationProcess` Javadoc says
+  `PATH`. The guide says to give the command with its directory; resolving bare names against
+  `PATH` in the wrapper would match the documentation. The access hint names `user.name`
+  without its domain, and `-Duser.name` in `wrapper.ntservice.additional.<n>` would change it;
+  P6.5 should show what it is under `LocalSystem`. It covers the log file at open and the pid
+  files, not a later roll or write failure of the log.
+- P6.2 (review): a stop with the default chain (`terminate` alone) waits the whole stop budget
+  (`wrapper.shutdown.timeout`, default 30 s), during which nothing asks the application to end,
+  since a service receives no Ctrl+C; service mode says so at start. Terminating at once, or a
+  graceful default, is for P7 (the agent's `STOP`) and the `command` strategy (P1.2 gap). A
+  failure to register the control handler names the service but reaches only the console (none
+  under the SCM): `ServiceMode` learns the name only once the service runs; the host could hand
+  it over. `wrapper.tmp.path` cannot steer `jna.tmpdir` in service mode, since JNA is loaded
+  before the configuration is read: the installed command line carries it (D12). The `--service`
+  switch is spelled in `Main` and in `ServiceCommandLine`; a test that ties the two would keep
+  install and dispatch together. The console line `supervision ended …` now comes after the
+  wrapper's pid file is removed (cosmetic).
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.

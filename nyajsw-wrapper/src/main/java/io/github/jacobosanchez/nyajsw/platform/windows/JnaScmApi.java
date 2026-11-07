@@ -8,7 +8,6 @@ import io.github.jacobosanchez.nyajsw.platform.windows.jna.ServicePreshutdownInf
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.platform.win32.Advapi32;
-import com.sun.jna.platform.win32.Kernel32Util;
 import com.sun.jna.platform.win32.WinNT;
 import com.sun.jna.platform.win32.Winsvc;
 import com.sun.jna.ptr.IntByReference;
@@ -126,12 +125,6 @@ final class JnaScmApi implements ScmApi {
 
     /** The failure of {@code call} with Win32 error {@code code}, in the system's words and ours. */
     static ServiceException failure(String call, int code) {
-        String text;
-        try {
-            text = Kernel32Util.formatMessage(code);
-        } catch (RuntimeException e) { // no text for this code
-            text = "";
-        }
-        return new ServiceException(call + ": " + Win32Errors.describe(code, text), code);
+        return new ServiceException(Win32Failures.message(call, code), code);
     }
 }

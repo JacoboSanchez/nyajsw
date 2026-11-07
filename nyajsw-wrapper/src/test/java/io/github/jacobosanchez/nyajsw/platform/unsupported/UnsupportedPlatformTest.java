@@ -32,6 +32,15 @@ public class UnsupportedPlatformTest {
     }
 
     @Test
+    public void runningAsAServiceFailsNamingTheHostAndWhatWorks() {
+        UnsupportedPlatformException failure = expectThrows(UnsupportedPlatformException.class,
+                () -> new UnsupportedPlatform("Linux").serviceHost().run(null));
+
+        assertEquals(failure.getMessage(), "cannot run as a service: nyajsw runs services on Windows only, and this"
+                + " host runs Linux; the console mode (-c) works here");
+    }
+
+    @Test
     public void aBlankOsNameIsAnUnknownOperatingSystem() {
         UnsupportedPlatform platform = new UnsupportedPlatform(" ");
 

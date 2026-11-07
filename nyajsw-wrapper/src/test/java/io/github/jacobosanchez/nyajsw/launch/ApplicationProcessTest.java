@@ -11,6 +11,8 @@ import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.platform.PlatformException;
+import io.github.jacobosanchez.nyajsw.platform.ProcessJob;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -171,6 +173,70 @@ public class ApplicationProcessTest {
         assertTrue(process.waitFor(GENEROUS).isPresent());
         handle.onExit().get(1, TimeUnit.MINUTES);
         assertFalse(handle.isAlive());
+    }
+
+    /** A job that records what it is asked, and refuses to take a process when told to. */
+    private static final class RecordingJob implements ProcessJob {
+
+        final List<Long> added = new ArrayList<>();
+        int terminated;
+        boolean refuse;
+
+        @Override
+        public synchronized void add(long pid) {
+            if (refuse) {
+                throw new PlatformException("cannot put process " + pid + " in the job object: access is denied");
+            }
+            added.add(pid);
+        }
+
+        @Override
+        public synchronized void terminate() {
+            terminated++;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private ApplicationProcess start(WrapperConfig config, ProcessJob job) {
+        List<String> classpath = ClasspathExpander.forThisHost()
+                .expand(config.java().classpath(), config.java().workingDir(), config.secrets()).entries();
+        JavaCommand command = JavaCommandBuilder.forThisJvm().build(config.java(), classpath, config.secrets());
+        ApplicationProcess process = ApplicationProcess.start(command, config.java(), 1, config.secrets(), log,
+                Optional.of(job));
+        started.add(process);
+        return process;
+    }
+
+    @Test(timeOut = 120_000)
+    public void aStartedProcessGoesInTheJobWhichATerminationEndsFirst() throws Exception {
+        RecordingJob job = new RecordingJob();
+        ApplicationProcess process = start(config("wrapper.app.parameter.1=park"), job);
+
+        assertEquals(job.added, List.of(process.pid()));
+
+        process.terminateTree();
+
+        assertEquals(job.terminated, 1);
+        assertTrue(process.waitFor(GENEROUS).isPresent(), "the walk of the tree still ends the process");
+    }
+
+    @Test(timeOut = 120_000)
+    public void aProcessTheJobRefusesRunsWithoutItAndSaysSo() throws Exception {
+        RecordingJob job = new RecordingJob();
+        job.refuse = true;
+        ApplicationProcess process = start(config("wrapper.app.parameter.1=park"), job);
+
+        assertTrue(process.isAlive());
+        assertTrue(logLines().stream().anyMatch(line -> line.contains("jvm 1 runs outside the job object, so it may"
+                + " outlive the wrapper if that is killed: cannot put process")), logLines().toString());
+
+        process.terminateTree();
+
+        assertEquals(job.terminated, 0, "a job it is not in is not ended for it");
+        assertTrue(process.waitFor(GENEROUS).isPresent());
     }
 
     private long awaitGrandchildPid() throws InterruptedException {

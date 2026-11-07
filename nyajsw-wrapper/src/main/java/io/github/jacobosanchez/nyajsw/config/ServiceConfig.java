@@ -9,6 +9,7 @@ import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DISPLAY
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_JAVA_COMMAND;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_NAME;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_PASSWORD;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_REDUCE_SIGNALS;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_STARTTYPE;
 
 import java.util.List;
@@ -32,10 +33,12 @@ import java.util.Optional;
  *                        wrapper.java.command}, a bare name stays as it is and anything with a
  *                        directory is resolved, against the configuration file's directory, since the
  *                        service has no working directory of its own when it starts
+ * @param reduceSignals   {@code wrapper.ntservice.reduce_signals}: whether the application JVM of
+ *                        the service is started with {@code -Xrs}
  */
 public record ServiceConfig(Optional<String> name, Optional<String> displayName, Optional<String> description,
         StartType startType, List<String> dependencies, Optional<String> account, Optional<Secret> password,
-        List<String> wrapperJvmOptions, Optional<String> javaCommand) {
+        List<String> wrapperJvmOptions, Optional<String> javaCommand, boolean reduceSignals) {
 
     public ServiceConfig {
         Objects.requireNonNull(name, "name");
@@ -104,7 +107,8 @@ public record ServiceConfig(Optional<String> name, Optional<String> displayName,
                 values.text(NTSERVICE_ACCOUNT).map(ValueParser::normalisePath),
                 values.text(NTSERVICE_PASSWORD).map(Secret::new),
                 values.familyValues(NTSERVICE_ADDITIONAL),
-                JavaConfig.executable(values, NTSERVICE_JAVA_COMMAND, values.directory()));
+                JavaConfig.executable(values, NTSERVICE_JAVA_COMMAND, values.directory()),
+                values.required(values.bool(NTSERVICE_REDUCE_SIGNALS), NTSERVICE_REDUCE_SIGNALS));
     }
 
     /** {@code com.example.Main} gives {@code Main}; a nested {@code Outer$Inner} gives {@code Inner}. */
