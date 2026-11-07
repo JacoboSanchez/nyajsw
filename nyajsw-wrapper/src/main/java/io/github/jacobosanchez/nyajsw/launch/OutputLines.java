@@ -8,7 +8,8 @@ import java.util.List;
 /**
  * The recent output lines of one invocation, standard output and standard error together, each in
  * its order (two threads read the two streams, so how they interleave is approximate), for probes
- * that look for a line ({@code log}, plan §4.7). Lines are numbered from 0 as they come; a reader keeps the number it has read to and asks for what came {@link #since} then.
+ * that look for a line ({@code log}, plan §4.7). Lines are numbered from 0 as they come; a reader
+ * keeps the number it has read to and asks for what came {@link #since} then.
  * Only the latest {@link #MAX_LINES} lines and {@link #MAX_CHARS} characters are kept, so a reader
  * that falls further behind misses the oldest ones and is told how many.
  *
