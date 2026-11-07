@@ -3,6 +3,7 @@ package io.github.jacobosanchez.nyajsw.platform;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -11,8 +12,8 @@ import java.util.Optional;
  * the service host (P6), not through this interface.
  *
  * <p>Failures are {@link io.github.jacobosanchez.nyajsw.NyajswException}s: an
- * {@link UnsupportedPlatformException} where the host has no services, a {@code ServiceException}
- * with the operating system's error code and text where the service manager refuses (P5.2).
+ * {@link UnsupportedPlatformException} where the host has no services, a {@link ServiceException}
+ * with the operating system's error code and text where the service manager refuses.
  * Starting a service that runs already and stopping one that does not run are refusals too, so a
  * script learns that nothing happened.
  */
@@ -21,8 +22,10 @@ public interface ServiceController {
     /**
      * Registers the service described by {@code config} ({@code wrapper.ntservice.*}), set to run
      * the wrapper on {@link WrapperConfig#file()}.
+     *
+     * @return what the operator should know about the installed service, for the caller to report
      */
-    void install(WrapperConfig config);
+    List<String> install(WrapperConfig config);
 
     /** Removes the service named {@code serviceName}; one that still runs is removed once it stops. */
     void remove(String serviceName);

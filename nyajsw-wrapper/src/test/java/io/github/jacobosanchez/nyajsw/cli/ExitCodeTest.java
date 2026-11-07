@@ -7,6 +7,7 @@ import io.github.jacobosanchez.nyajsw.config.ConfigException;
 import io.github.jacobosanchez.nyajsw.config.ConfigLocation;
 import io.github.jacobosanchez.nyajsw.launch.LaunchException;
 import io.github.jacobosanchez.nyajsw.platform.PlatformException;
+import io.github.jacobosanchez.nyajsw.platform.ServiceException;
 import io.github.jacobosanchez.nyajsw.platform.UnsupportedPlatformException;
 
 import org.testng.annotations.Test;
@@ -27,6 +28,8 @@ public class ExitCodeTest {
         assertEquals(ExitCode.of(new UnsupportedPlatformException("no services here")), ExitCode.UNSUPPORTED_PLATFORM);
         assertEquals(ExitCode.of(new ConfigException(ConfigLocation.of("wrapper.conf"), "bad")),
                 ExitCode.CONFIGURATION_ERROR);
+        assertEquals(ExitCode.of(new ServiceException("the service manager refused", 5)),
+                ExitCode.SERVICE_OPERATION_FAILED);
         assertEquals(ExitCode.of(new PlatformException("the system refused")), ExitCode.UNEXPECTED_ERROR);
         assertEquals(ExitCode.of(new LaunchException("cannot start")), ExitCode.UNEXPECTED_ERROR);
         assertEquals(ExitCode.of(new NyajswException("other")), ExitCode.UNEXPECTED_ERROR);

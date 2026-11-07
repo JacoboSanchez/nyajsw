@@ -128,7 +128,7 @@ public final class ConsoleMode {
                 return ExitCode.SUCCESS.code();
             }
         }
-        Duration limit = config.lifecycle().stopBudget().plus(Supervisor.AFTER_TERMINATION).plus(STOP_MARGIN);
+        Duration limit = Supervisor.longestStop(config.lifecycle().stopBudget()).plus(STOP_MARGIN);
         try {
             return finished.get(limit.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {

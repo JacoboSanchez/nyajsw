@@ -7,6 +7,7 @@ import static org.testng.Assert.assertSame;
 import static org.testng.Assert.assertTrue;
 
 import io.github.jacobosanchez.nyajsw.platform.unsupported.UnsupportedPlatform;
+import io.github.jacobosanchez.nyajsw.platform.windows.WindowsPlatform;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,6 +22,17 @@ public class PlatformsTest {
             assertTrue(Platforms.forOsName(osName) instanceof UnsupportedPlatform, osName);
         }
         assertEquals(Platforms.forOsName("Linux").name(), "Linux");
+    }
+
+    @Test
+    public void windowsHasItsPlatform() {
+        for (String osName : List.of("Windows 10", "Windows Server 2022", "Windows 11")) {
+            Platform platform = Platforms.forOsName(osName);
+
+            assertTrue(platform instanceof WindowsPlatform, osName);
+            assertEquals(platform.name(), osName);
+            assertTrue(platform.serviceController() != null);
+        }
     }
 
     @Test
