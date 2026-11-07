@@ -640,33 +640,38 @@ public final class ConfigKeys {
     // ---- logging ----
 
     public static final KeySpec LOGFILE = yajsw("wrapper.logfile", PATH, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Wrapper log file; may contain the ROLLNUM and YYYYMMDD tokens")
+            .derivedDefault("wrapper.log in the directory of the configuration file (D13)")
+            .notes("Blank turns the log file off. In the file name, YYYYMMDD is the date the file is opened and"
+                    + " ROLLNUM the number of a rolled copy (left out, with a . _ or - next to it, for the current"
+                    + " file); without ROLLNUM, rolled copies are named <file>.1, <file>.2, 1 the newest")
             .build();
 
     public static final KeySpec LOGFILE_FORMAT = yajsw("wrapper.logfile.format", STRING, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Format tokens of log file lines")
             .defaultValue("LPTM")
-            .notes("Same letters as wrapper.console.format")
+            .notes("Same letters as wrapper.console.format; blank turns the log file off")
             .build();
 
     public static final KeySpec LOGFILE_LOGLEVEL = yajsw("wrapper.logfile.loglevel", ENUM, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Lowest level written to the log file")
             .values(LOG_LEVELS)
             .defaultValue("INFO")
             .build();
 
     public static final KeySpec LOGFILE_MAXSIZE = yajsw("wrapper.logfile.maxsize", SIZE, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Size at which the log file rolls; 0 turns rolling by size off")
             .defaultValue("0")
             .build();
 
     public static final KeySpec LOGFILE_MAXFILES = yajsw("wrapper.logfile.maxfiles", INTEGER, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Number of rolled log files kept, per day under the DATE roll mode")
+            .notes("When not set, or 0, every rolled file is kept")
             .build();
 
     public static final KeySpec LOGFILE_MAXDAYS = yajsw("wrapper.logfile.maxdays", INTEGER, LOGGING)
@@ -688,9 +693,11 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec LOG_ENCODING = yajsw("wrapper.log.encoding", STRING, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Character encoding of the wrapper log file")
-            .notes("YAJSW defaults to the JVM's default charset")
+            .derivedDefault("the default charset of the wrapper JVM, as in YAJSW (UTF-8 on Java 18 and later)")
+            .notes("YAJSW also reads scripts and configuration files with it; nyajsw reads configuration files"
+                    + " as wrapper.conf.encoding says")
             .build();
 
     public static final KeySpec CONSOLE_FORMAT = yajsw("wrapper.console.format", STRING, LOGGING)
@@ -746,7 +753,8 @@ public final class ConfigKeys {
             .status(SUPPORTED)
             .description("Raise the wrapper log level to DEBUG")
             .defaultValue("false")
-            .notes("Raises wrapper.console.loglevel; wrapper.debug.level chooses which debug messages are written")
+            .notes("Raises wrapper.console.loglevel and wrapper.logfile.loglevel; wrapper.debug.level chooses which"
+                    + " debug messages are written")
             .build();
 
     public static final KeySpec DEBUG_LEVEL = yajsw("wrapper.debug.level", INTEGER, LOGGING)
