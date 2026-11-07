@@ -973,14 +973,20 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec READINESS_COMMAND = nyajsw("wrapper.readiness.command", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("Command whose exit code 0 the command readiness probe waits for")
+            .status(SUPPORTED)
+            .description("Command the command probe runs; exit code 0 passes, for readiness and liveness alike")
+            .notes("Run without a shell, in wrapper.working.dir, with the wrapper's environment: blanks separate"
+                    + " arguments, double quotes group them; a program with a directory is relative to"
+                    + " wrapper.working.dir, a bare name is looked up on PATH; output is discarded and input closed;"
+                    + " Windows runs .cmd and .bat files through cmd.exe, which expands %VARIABLES%")
             .build();
 
     public static final KeySpec READINESS_COMMAND_TIMEOUT =
             nyajsw("wrapper.readiness.command.timeout", DURATION, PROBES)
-                    .status(PLANNED, "P7")
-                    .description("Time one run of wrapper.readiness.command may take")
+                    .status(SUPPORTED)
+                    .description("Time one run of wrapper.readiness.command may take; then it is killed with"
+                            + " what it started")
+                    .defaultValue("10")
                     .build();
 
     public static final KeySpec READINESS_JMX_URL = nyajsw("wrapper.readiness.jmx.url", STRING, PROBES)

@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 62 |
-| planned | 10 |
+| supported | 64 |
+| planned | 8 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -203,8 +203,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.readiness.log.pattern` | Regular expression the log readiness probe waits for | text | — | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.readiness.log.file` | File the log readiness probe reads | path | — | **planned** (P7)<br>nyajsw extension | When absent the probe reads the captured application output |
 | `wrapper.readiness.file.path` | File whose existence the file probe checks, for readiness and liveness alike | path | — | **supported**<br>nyajsw extension | Relative to wrapper.working.dir; a file left over from an earlier run counts as well |
-| `wrapper.readiness.command` | Command whose exit code 0 the command readiness probe waits for | text | — | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.readiness.command.timeout` | Time one run of wrapper.readiness.command may take | seconds | — | **planned** (P7)<br>nyajsw extension |  |
+| `wrapper.readiness.command` | Command the command probe runs; exit code 0 passes, for readiness and liveness alike | text | — | **supported**<br>nyajsw extension | Run without a shell, in wrapper.working.dir, with the wrapper's environment: blanks separate arguments, double quotes group them; a program with a directory is relative to wrapper.working.dir, a bare name is looked up on PATH; output is discarded and input closed; Windows runs .cmd and .bat files through cmd.exe, which expands %VARIABLES% |
+| `wrapper.readiness.command.timeout` | Time one run of wrapper.readiness.command may take; then it is killed with what it started | seconds | `10` | **supported**<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.url` | JMX service URL the jmx readiness probe connects to | text | — | **unsupported** (P9)<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.attribute` | MBean attribute the jmx readiness probe reads | text | — | **unsupported** (P9)<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.value` | Attribute value the jmx readiness probe waits for | text | — | **unsupported** (P9)<br>nyajsw extension |  |

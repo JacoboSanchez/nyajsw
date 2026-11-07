@@ -3,6 +3,7 @@ package io.github.jacobosanchez.nyajsw.probe;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ProbeConfig;
 import io.github.jacobosanchez.nyajsw.config.StatusRanges;
+import io.github.jacobosanchez.nyajsw.log.Durations;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -10,7 +11,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -86,7 +86,7 @@ public final class HttpProbe implements Probe {
             status = response.get(timeout.toMillis(), TimeUnit.MILLISECONDS).statusCode();
         } catch (TimeoutException e) {
             response.cancel(true);
-            return ProbeResult.fail("GET " + target + " did not complete within " + seconds(timeout));
+            return ProbeResult.fail("GET " + target + " did not complete within " + Durations.seconds(timeout));
         } catch (ExecutionException e) {
             return ProbeResult.fail("GET " + target + " failed: " + reason(e.getCause()));
         } catch (InterruptedException e) {
@@ -97,12 +97,6 @@ public final class HttpProbe implements Probe {
         String detail = "GET " + target + " answered " + status;
         return accepted.contains(status) ? ProbeResult.pass(detail)
                 : ProbeResult.fail(detail + ", not one of " + accepted);
-    }
-
-    /** {@code 5 s}, or with milliseconds when there are some ({@code 0.500 s}). */
-    private static String seconds(Duration duration) {
-        long millis = duration.toMillis();
-        return millis % 1000 == 0 ? millis / 1000 + " s" : String.format(Locale.ROOT, "%.3f s", millis / 1000.0);
     }
 
     /**

@@ -103,13 +103,13 @@ public class ProbeRunnerTest {
         List<ProbeRegistry.NamedProbe> probes = registry.create(config.readinessTypes(), config);
 
         assertEquals(List.copyOf(registry.types()), List.of(ProcessProbe.TYPE, TcpProbe.TYPE, HttpProbe.TYPE,
-                FileProbe.TYPE));
+                FileProbe.TYPE, CommandProbe.TYPE));
         assertEquals(probes.size(), 1);
         assertEquals(probes.get(0).type(), ProcessProbe.TYPE);
         assertEquals(probes.get(0).probe().getClass(), ProcessProbe.class);
         IllegalArgumentException unknown = expectThrows(IllegalArgumentException.class,
                 () -> registry.create(List.of("telepathy"), config));
-        assertEquals(unknown.getMessage(), "unknown probe type telepathy; known: [process, tcp, http, file]");
+        assertEquals(unknown.getMessage(), "unknown probe type telepathy; known: [process, tcp, http, file, command]");
         IllegalArgumentException incomplete = expectThrows(IllegalArgumentException.class,
                 () -> registry.create(List.of("tcp"), config));
         assertEquals(incomplete.getMessage(), "the tcp probe needs wrapper.readiness.tcp.port");

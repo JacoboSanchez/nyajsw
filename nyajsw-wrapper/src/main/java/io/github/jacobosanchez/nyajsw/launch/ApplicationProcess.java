@@ -12,14 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -248,37 +244,22 @@ public final class ApplicationProcess implements RunningApplication {
     /**
      * Kills the process and everything it started, at once. On Windows {@code Process.destroy()} is
      * already a hard kill and leaves grandchildren, such as a JVM started by a batch file, running;
-     * this kills the process first, so it cannot start more, then its descendants, looking again
-     * below each one until nothing new turns up. A process started in the moment between finding and
-     * killing its parent can still escape; the job object of P6.4 closes that gap on Windows.
-     * Graceful stops are the stop strategies' job (P3.4, P7).
+     * this kills the process first, so it cannot start more, then its descendants ({@link
+     * ProcessTrees}). The job object of P6.4 catches what escapes the walk on Windows. Graceful
+     * stops are the stop strategies' job (P3.4, P7).
      */
     @Override
     public void terminateTree() {
         // The tree is read before the job ends it, so that it names processes that are still alive.
-        Deque<ProcessHandle> pending = new ArrayDeque<>(process.toHandle().descendants().toList());
+        List<ProcessHandle> descendants = process.toHandle().descendants().toList();
         job.ifPresent(this::terminateJob);
         process.destroyForcibly();
-        Set<Long> seen = new HashSet<>();
-        int descendants = 0;
-        int failed = 0;
-        while (!pending.isEmpty()) {
-            ProcessHandle next = pending.poll();
-            if (!seen.add(next.pid())) {
-                continue;
-            }
-            List<ProcessHandle> below = next.descendants().toList();
-            descendants++;
-            if (next.isAlive() && !next.destroyForcibly()) {
-                failed++;
-            }
-            pending.addAll(below);
-        }
-        if (failed > 0) {
-            log.error(name + " terminated, but " + failed + " of its " + descendants
+        ProcessTrees.Killed killed = ProcessTrees.killDescendants(descendants);
+        if (killed.failed() > 0) {
+            log.error(name + " terminated, but " + killed.failed() + " of its " + killed.descendants()
                     + " descendant process(es) could not be killed");
         } else {
-            log.status(name + " terminated with " + descendants + " descendant process(es)");
+            log.status(name + " terminated with " + killed.descendants() + " descendant process(es)");
         }
     }
 
