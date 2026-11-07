@@ -45,7 +45,7 @@ final class StateWait {
      *                          the caller to say what it attempted
      */
     ScmStatus until(Supplier<ScmStatus> query, int target, int giveUp, Duration timeout) {
-        long deadline = nanoTicker.getAsLong() + timeout.toNanos();
+        long deadline = nanoTicker.getAsLong() + nanos(timeout); // may overflow; only differences are used
         for (;;) {
             ScmStatus status = query.get();
             if (status.currentState() == target) {
@@ -66,6 +66,14 @@ final class StateWait {
                 Thread.currentThread().interrupt();
                 throw new ServiceException("interrupted while waiting for the service", 0, e);
             }
+        }
+    }
+
+    private static long nanos(Duration timeout) {
+        try {
+            return timeout.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE; // beyond 292 years: no limit, in practice
         }
     }
 

@@ -94,7 +94,10 @@ final class JnaScmApi implements ScmApi {
 
     /** {@code timeout} in whole milliseconds as a positive {@code DWORD}, at most {@code Integer.MAX_VALUE}. */
     static int dword(Duration timeout) {
-        return (int) Math.max(0, Math.min(Integer.MAX_VALUE, timeout.toMillis()));
+        if (timeout.compareTo(Duration.ofMillis(Integer.MAX_VALUE)) > 0) {
+            return Integer.MAX_VALUE;
+        }
+        return (int) Math.max(0, timeout.toMillis());
     }
 
     private static Winsvc.SC_HANDLE sc(ScmHandle handle) {

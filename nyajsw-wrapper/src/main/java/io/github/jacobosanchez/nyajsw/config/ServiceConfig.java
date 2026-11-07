@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.config;
 
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.JAVA_APP_MAINCLASS;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_ACCOUNT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_ADDITIONAL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.NTSERVICE_DEPENDENCY;
@@ -46,6 +47,35 @@ public record ServiceConfig(Optional<String> name, Optional<String> displayName,
         Objects.requireNonNull(password, "password");
         wrapperJvmOptions = List.copyOf(wrapperJvmOptions);
         Objects.requireNonNull(javaCommand, "javaCommand");
+    }
+
+    /**
+     * Whether the service runs as one of Windows' built-in accounts, which may log on as a service
+     * already: no account (LocalSystem), or {@code LocalSystem}, {@code LocalService} or {@code
+     * NetworkService}, alone or after {@code .\} or {@code NT AUTHORITY\}, in any case.
+     */
+    public boolean runsAsBuiltInAccount() {
+        if (account.isEmpty()) {
+            return true;
+        }
+        String name = account.get().strip().toLowerCase(java.util.Locale.ROOT);
+        for (String prefix : List.of(".\\", "nt authority\\")) {
+            if (name.startsWith(prefix)) {
+                name = name.substring(prefix.length());
+                break;
+            }
+        }
+        return List.of("localsystem", "localservice", "networkservice").contains(name);
+    }
+
+    /**
+     * The service's name, which every service command needs.
+     *
+     * @throws ConfigException when neither {@code wrapper.ntservice.name} nor a main class names it
+     */
+    public String requiredName() {
+        return name.orElseThrow(() -> new ConfigException(NTSERVICE_NAME.name() + " is not set, and there is no "
+                + JAVA_APP_MAINCLASS.name() + " to name the service after"));
     }
 
     /**

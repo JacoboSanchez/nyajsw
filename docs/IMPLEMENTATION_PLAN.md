@@ -1140,7 +1140,28 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       installation's `release` file (followed through links, and above a JDK 8's `jre`) is a
       configuration error, an unknown version a warning (D12). The keys stay `PLANNED` until `-i`
       writes the binary path (P5.4).
-- [ ] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes.
+- [x] P5.4 CLI commands `-i -r -t -p -q` with human-readable output and exit codes. **Done:**
+      `Main` dispatches the five switches and their long forms to `cli.ServiceCommands`, which
+      loads the configuration like console mode (one shared `load`), prints its warnings, needs
+      the service name (`ServiceConfig.requiredName()`, shared with install) and runs the command
+      on `Platforms.forThisHost()`'s controller. Output goes to the console only, never to the log
+      file, so a command beside a running service cannot roll its log (P4.3b). `-i` prints the
+      command line's warnings and, for an account other than the built-in ones
+      (`ServiceConfig.runsAsBuiltInAccount()`), that it needs the logon right (P5.5 grants it).
+      `-t` waits for `RUNNING` through `wrapper.startup.delay`, `wrapper.startup.timeout` and 30 s
+      (no limit for a timeout of 0); restarts before the application was ever ready can take
+      longer. `-p` waits for `STOPPED` as long as console mode waits for a stop and the
+      pre-shutdown timeout allows (one `Supervisor.stopWait`; every wait is cut to
+      `Supervisor.LONGEST_WAIT`, so huge configured times cannot overflow). `-r` says Windows
+      deletes the service once it has stopped; it does not stop it first. `-q` prints the state and
+      pid, or "not installed" (exit 0: an answer, not a failure). Failures are printed masked and
+      end by `ExitCode.of`: 2 configuration, 3 the SCM refused, 4 no services on this host, 1
+      otherwise, a native library that cannot be loaded included (a readable `PlatformException`
+      naming `jna.tmpdir`). `jna.tmpdir` is set from `wrapper.tmp.path` when the configuration is
+      loaded, for every command, unless the command line sets it. The `wrapper.ntservice.*` keys of
+      install, `wrapper.ntservice.additional.N`, `wrapper.ntservice.java.command` and
+      `wrapper.tmp.path` are now `SUPPORTED`, so a bad value in them is an error in console mode
+      too. Until P6 implements `--service`, an installed service does not run: `-t` fails.
 - [ ] P5.4a (blocked on §10 Q8, D17) Migration entry point: `WrapperServiceBooter` alias class, mode
       detection when `--service` is absent, and the Java 21 binPath rewrite in a migration command.
 - [ ] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` names a real
@@ -1311,10 +1332,11 @@ entry names the commit/plan item it came from; remove entries when addressed.
   normalised form with `SecretMasker` if secrets in log file names ever matter. A roll that is
   interrupted (the interrupt flag of the logging thread set) gets no retries.
 - P4.3b: the start roll of the `JVM`/`WRAPPER` modes and the first `maxdays` clean-up happen when
-  the file sink opens, so any process that opens the configured log rolls the live file. Today
-  only console mode does; the P5 commands (`-q`, `-i`, …) must not open the file sink (or must
-  open it without the start roll, e.g. through an explicit `wrapperStarting()`), or a query beside
-  a running service would try to move its log. The `DATE` clean-up lists the directory and retries
+  the file sink opens, so any process that opens the configured log rolls the live file. Console
+  mode and (P6) the service do; the service commands of P5.4 report on the console only, and any
+  later command must do the same (or open the sink without the start roll, e.g. through an
+  explicit `wrapperStarting()`), or it would try to move a running service's log. The `DATE`
+  clean-up lists the directory and retries
   deletes while holding the sink's lock, which can block the application's output for a moment
   at the first record of a day; move it off the lock if that shows. Under `DATE` the start day's
   file is created even when the first record falls on the next day.
@@ -1334,6 +1356,12 @@ entry names the commit/plan item it came from; remove entries when addressed.
   service host needs anyway. In P5.6, read the installed configuration back
   (`QueryServiceConfig`/`QueryServiceConfig2`: dependencies, delayed start, pre-shutdown timeout).
   System error texts are localised, so integration tests must not compare them.
+- P5.4 (review): the service commands report through `WrapperLog.console`, the log for before
+  the configuration is read: it masks nothing itself (each call site masks), ignores
+  `wrapper.console.format`/`loglevel` and never shows debug output. A console-only log built from
+  `config.log()` without the file sink would fix all three. Check what YAJSW's `-r` does with a
+  running service (Tanuki's stops it first); nyajsw leaves it to Windows, so `-r` then `-i` on a
+  running service fails with 1072 until it stops.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -1407,7 +1435,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D20 | `wrapper.control` is honoured in both directions. Application ends → wrapper ends under `TIGHT` and `WRAPPER`, so there the exit action `STOP` ends the wrapper like `SHUTDOWN`; only under `LOOSE` and `APPLICATION` does `STOP` keep the wrapper running without an application until it is stopped. Wrapper stopped → application stopped under `TIGHT` and `APPLICATION`; under `LOOSE` and `WRAPPER` the application is left running (logged with its pid). Launch errors count as failed invocations and are retried, also those a retry cannot fix (a missing Java executable is logged `wrapper.max_failed_invocations` times, `wrapper.restart.delay` apart, before `FAILED`). `wrapper.max_failed_invocations=N` means N failed invocations in a row end supervision, so at most N-1 restarts follow quick failures; with 1 there is none | YAJSW's reference (read 2026-11-06/07) defines the four couplings that way and `STOP` as "stop the application but not the wrapper"; its change log ties `STOP` to `wrapper.control`, and this is the reading that coupling implies. The reference counts launches that fail towards `wrapper.max_failed_invocations` and gives its default as "5 invocations", though its "maximum number of times … to restart" also allows N restarts | Proposed (P3.2; the coupling itself is documented, its effect on `STOP` is our reading; confirm with YAJSW 13.18 or real use, §10 Q1) |
 | D22 | `wrapper.logfile.rollmode` takes YAJSW's `JVM`, `WRAPPER`, `DATE` and Tanuki's `SIZE`, `NONE`, `SIZE_OR_JVM`, `SIZE_OR_WRAPPER` (the last two as aliases of `JVM` and `WRAPPER`); `wrapper.logfile.maxsize` rolls in every mode but `NONE`, `JVM` included; `WRAPPER` rolls at wrapper start only | YAJSW documents `JVM` (no size limit) and `DATE`, and names `WRAPPER` without describing it; files derived from Tanuki templates carry its values, and an error would break the "swap the wrapper, not the configuration" goal. Keeping size rolling under `JVM` honours a configured size and keeps a restarting application from filling the disk | Proposed (P4.3b; confirm against YAJSW 13.18, §10 Q1) |
 | D21 | In console mode the shutdown hook (Ctrl+C, closing the session) stops through the supervisor, waits at most the stop budget + 10 s + 10 s, then ends the JVM with `Runtime.halt(<exit code>)`; `halt` is allowed only there, beside `System.exit` in `Main` | Once a signal has begun the JVM's shutdown its exit code is the signal's (130, `0xC000013A`) and `System.exit` blocks; `halt` is the only way to return the application's code, as §3.2 promises. It skips hooks that have not run yet, which nyajsw does not rely on; the console is flushed first (a file log, P4, must be flushed too) | Accepted (P3.6) |
-| D23 | Exit codes follow the exception type (`cli.ExitCode.of`): `ConfigException` → 2, `ServiceException` (the SCM refused or failed, P5.2) → 3, `UnsupportedPlatformException` (a `PlatformException` subclass: the host has no such operation) → 4, anything else → 1. A plain `PlatformException` (an OS call failed on a platform that has the operation, §4.4) is not an unsupported platform; P5.4 decides whether one raised by a service command ends as 3 | §3.2 named `PlatformException` → 4, but §4.4 also uses `PlatformException` for Win32 failures of job objects and console functions, which must not read as "wrong platform" | Accepted (P5.1) |
+| D23 | Exit codes follow the exception type (`cli.ExitCode.of`): `ConfigException` → 2, `ServiceException` (the SCM refused or failed, P5.2) → 3, `UnsupportedPlatformException` (a `PlatformException` subclass: the host has no such operation) → 4, anything else → 1. A plain `PlatformException` (an OS call failed on a platform that has the operation, §4.4, such as a native library that cannot be loaded) is not an unsupported platform and ends as 1, also from a service command (P5.4) | §3.2 named `PlatformException` → 4, but §4.4 also uses `PlatformException` for Win32 failures of job objects and console functions, which must not read as "wrong platform" | Accepted (P5.1) |
 
 ## 10. Open questions for the project owner
 

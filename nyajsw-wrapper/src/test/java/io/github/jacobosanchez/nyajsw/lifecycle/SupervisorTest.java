@@ -52,6 +52,14 @@ import org.testng.annotations.Test;
 
 public class SupervisorTest {
 
+    @Test
+    public void aStopIsWaitedForThroughItsBudgetTheTerminationAndTheMargin() {
+        assertEquals(Supervisor.stopWait(Duration.ofSeconds(45)), Duration.ofSeconds(45 + 10 + 10));
+        assertEquals(Supervisor.stopWait(Duration.ofSeconds(Long.MAX_VALUE)), Supervisor.LONGEST_WAIT);
+        assertEquals(Supervisor.sum(Duration.ofDays(200_000), Duration.ofDays(1)), Supervisor.LONGEST_WAIT);
+        assertEquals(Supervisor.sum(), Duration.ZERO);
+    }
+
     private static final Duration RESTART_DELAY = Lifecycles.RESTART_DELAY;
     private static final Duration SHUTDOWN_TIMEOUT = Lifecycles.SHUTDOWN_TIMEOUT;
     private static final Duration SUCCESSFUL_TIME = Lifecycles.SUCCESSFUL_TIME;

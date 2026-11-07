@@ -249,9 +249,10 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec TMP_PATH = yajsw("wrapper.tmp.path", PATH, JAVA)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("Temporary directory of the wrapper, also used as jna.tmpdir")
-            .notes("Not passed to the application")
+            .notes("Not passed to the application. Written into the service's command line as -Djna.tmpdir,"
+                    + " and set as jna.tmpdir for the service commands unless their command line sets it")
             .toVerify(DEFAULT) // the reference says /tmp, YAJSW's change log jna.tmpdir under its tmp folder
             .build();
 
@@ -785,24 +786,24 @@ public final class ConfigKeys {
     // ---- Windows service ----
 
     public static final KeySpec NTSERVICE_NAME = yajsw("wrapper.ntservice.name", STRING, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("Service name")
             .derivedDefault("the simple name of the application main class")
             .toVerify(DEFAULT)
             .build();
 
     public static final KeySpec NTSERVICE_DISPLAYNAME = yajsw("wrapper.ntservice.displayname", STRING, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("Display name of the service")
             .build();
 
     public static final KeySpec NTSERVICE_DESCRIPTION = yajsw("wrapper.ntservice.description", STRING, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("Description of the service")
             .build();
 
     public static final KeySpec NTSERVICE_STARTTYPE = yajsw("wrapper.ntservice.starttype", ENUM, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("Start type of the service")
             .values(names(StartType.class))
             .alias("DELAY_START", "DELAYED_AUTO_START")
@@ -810,18 +811,19 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec NTSERVICE_DEPENDENCY = yajsw("wrapper.ntservice.dependency.<n>", STRING, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("Service that must run before this one")
             .build();
 
     public static final KeySpec NTSERVICE_ACCOUNT = yajsw("wrapper.ntservice.account", STRING, SERVICE)
-            .status(PLANNED, "P5")
-            .description("Account the service runs as; granted the right to log on as a service at install")
-            .notes("When absent the service runs as LocalSystem")
+            .status(SUPPORTED)
+            .description("Account the service runs as")
+            .notes("When absent the service runs as LocalSystem. Until P5.5 grants it, an account other than"
+                    + " the built-in ones must have the right to log on as a service already; -i warns")
             .build();
 
     public static final KeySpec NTSERVICE_PASSWORD = yajsw("wrapper.ntservice.password", STRING, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .secret()
             .description("Password of wrapper.ntservice.account")
             .build();
@@ -839,12 +841,12 @@ public final class ConfigKeys {
                     .build();
 
     public static final KeySpec NTSERVICE_ADDITIONAL = yajsw("wrapper.ntservice.additional.<n>", STRING, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("JVM option for the wrapper JVM, written into the service binary path (D12)")
             .build();
 
     public static final KeySpec NTSERVICE_JAVA_COMMAND = yajsw("wrapper.ntservice.java.command", PATH, SERVICE)
-            .status(PLANNED, "P5")
+            .status(SUPPORTED)
             .description("Java executable of the wrapper JVM that runs the service")
             .derivedDefault("javaw from the java.home of the JVM that installs the service (D12)")
             .notes("YAJSW defaults to the application's Java command; nyajsw needs Java 21 here. Give it"

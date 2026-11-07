@@ -40,9 +40,6 @@ import java.util.concurrent.TimeoutException;
  */
 public final class ConsoleMode {
 
-    /** What {@link #stop()} allows beyond the stop budget for the supervisor's own work. */
-    static final Duration STOP_MARGIN = Duration.ofSeconds(10);
-
     private final WrapperConfig config;
     private final WrapperLog log;
     private final JavaCommandBuilder builder;
@@ -113,8 +110,7 @@ public final class ConsoleMode {
 
     /**
      * Stops the application through the supervisor's stop chain and waits until {@link #run()} has
-     * finished, at most the stop budget plus the supervisor's wait after termination plus {@link
-     * #STOP_MARGIN}: a supervisor stuck in a blocking call (a classpath on an unreachable share)
+     * finished, at most {@link Supervisor#stopWait} of the stop budget: a supervisor stuck in a blocking call (a classpath on an unreachable share)
      * must not keep Ctrl+C from ending the wrapper. Safe to call at any time, also before {@link
      * #run()} (which then starts nothing), and more than once.
      *
@@ -128,7 +124,7 @@ public final class ConsoleMode {
                 return ExitCode.SUCCESS.code();
             }
         }
-        Duration limit = Supervisor.longestStop(config.lifecycle().stopBudget()).plus(STOP_MARGIN);
+        Duration limit = Supervisor.stopWait(config.lifecycle().stopBudget());
         try {
             return finished.get(limit.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
