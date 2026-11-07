@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 56 |
-| planned | 16 |
+| supported | 62 |
+| planned | 10 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -195,14 +195,14 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 |---|---|---|---|---|---|
 | `wrapper.readiness.type` | Readiness probes that must all pass before the service reports RUNNING | list | `process` | **supported**<br>nyajsw extension | Probe types and their settings: implementation plan, section 4.7; an unknown type is an error when the wrapper starts the application |
 | `wrapper.readiness.interval` | Pause between readiness checks | seconds | `1` | **supported**<br>nyajsw extension |  |
-| `wrapper.readiness.tcp.host` | Host the tcp readiness probe connects to | text | `127.0.0.1` | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.readiness.tcp.port` | Port the tcp readiness probe connects to | integer | — | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.readiness.http.url` | URL the http readiness probe requests | text | — | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.readiness.http.status` | HTTP status codes the http readiness probe accepts | text | `200-399` | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.readiness.http.timeout` | Time one http readiness request may take | seconds | — | **planned** (P7)<br>nyajsw extension |  |
+| `wrapper.readiness.tcp.host` | Host the tcp probe connects to, for readiness and liveness alike | text | `127.0.0.1` | **supported**<br>nyajsw extension |  |
+| `wrapper.readiness.tcp.port` | Port the tcp probe connects to, for readiness and liveness alike | integer | — | **supported**<br>nyajsw extension |  |
+| `wrapper.readiness.http.url` | URL the http probe requests with GET, for readiness and liveness alike | text | — | **supported**<br>nyajsw extension | Redirects are not followed; HTTP/1.1 without a proxy; user information is not sent; https uses the trust store of the wrapper's JVM |
+| `wrapper.readiness.http.status` | HTTP status codes the http probe accepts: codes and ranges separated by commas | text | `200-399` | **supported**<br>nyajsw extension |  |
+| `wrapper.readiness.http.timeout` | Time one request of the http probe may take, connecting and the body included | seconds | `5` | **supported**<br>nyajsw extension |  |
 | `wrapper.readiness.log.pattern` | Regular expression the log readiness probe waits for | text | — | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.readiness.log.file` | File the log readiness probe reads | path | — | **planned** (P7)<br>nyajsw extension | When absent the probe reads the captured application output |
-| `wrapper.readiness.file.path` | File whose existence the file readiness probe waits for | path | — | **planned** (P7)<br>nyajsw extension |  |
+| `wrapper.readiness.file.path` | File whose existence the file probe checks, for readiness and liveness alike | path | — | **supported**<br>nyajsw extension | Relative to wrapper.working.dir; a file left over from an earlier run counts as well |
 | `wrapper.readiness.command` | Command whose exit code 0 the command readiness probe waits for | text | — | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.readiness.command.timeout` | Time one run of wrapper.readiness.command may take | seconds | — | **planned** (P7)<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.url` | JMX service URL the jmx readiness probe connects to | text | — | **unsupported** (P9)<br>nyajsw extension |  |

@@ -926,30 +926,33 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec READINESS_TCP_HOST = nyajsw("wrapper.readiness.tcp.host", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("Host the tcp readiness probe connects to")
+            .status(SUPPORTED)
+            .description("Host the tcp probe connects to, for readiness and liveness alike")
             .defaultValue("127.0.0.1")
             .build();
 
     public static final KeySpec READINESS_TCP_PORT = nyajsw("wrapper.readiness.tcp.port", INTEGER, PROBES)
-            .status(PLANNED, "P7")
-            .description("Port the tcp readiness probe connects to")
+            .status(SUPPORTED)
+            .description("Port the tcp probe connects to, for readiness and liveness alike")
             .build();
 
     public static final KeySpec READINESS_HTTP_URL = nyajsw("wrapper.readiness.http.url", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("URL the http readiness probe requests")
+            .status(SUPPORTED)
+            .description("URL the http probe requests with GET, for readiness and liveness alike")
+            .notes("Redirects are not followed; HTTP/1.1 without a proxy; user information is not sent;"
+                    + " https uses the trust store of the wrapper's JVM")
             .build();
 
     public static final KeySpec READINESS_HTTP_STATUS = nyajsw("wrapper.readiness.http.status", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("HTTP status codes the http readiness probe accepts")
+            .status(SUPPORTED)
+            .description("HTTP status codes the http probe accepts: codes and ranges separated by commas")
             .defaultValue("200-399")
             .build();
 
     public static final KeySpec READINESS_HTTP_TIMEOUT = nyajsw("wrapper.readiness.http.timeout", DURATION, PROBES)
-            .status(PLANNED, "P7")
-            .description("Time one http readiness request may take")
+            .status(SUPPORTED)
+            .description("Time one request of the http probe may take, connecting and the body included")
+            .defaultValue("5")
             .build();
 
     public static final KeySpec READINESS_LOG_PATTERN = nyajsw("wrapper.readiness.log.pattern", STRING, PROBES)
@@ -964,8 +967,9 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec READINESS_FILE_PATH = nyajsw("wrapper.readiness.file.path", PATH, PROBES)
-            .status(PLANNED, "P7")
-            .description("File whose existence the file readiness probe waits for")
+            .status(SUPPORTED)
+            .description("File whose existence the file probe checks, for readiness and liveness alike")
+            .notes("Relative to wrapper.working.dir; a file left over from an earlier run counts as well")
             .build();
 
     public static final KeySpec READINESS_COMMAND = nyajsw("wrapper.readiness.command", STRING, PROBES)

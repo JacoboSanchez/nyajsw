@@ -516,15 +516,16 @@ output, configuration and a clock; probes are stateless or own their state expli
 | Type | Readiness means… | Configuration |
 |---|---|---|
 | `process` (default) | The application process is alive | — |
-| `tcp` | A TCP connection to host:port succeeds | `wrapper.readiness.tcp.host` (default `127.0.0.1`), `wrapper.readiness.tcp.port` |
-| `http` | An HTTP(S) request returns an expected status | `wrapper.readiness.http.url`, `.status` (default `200-399`), `.timeout` |
+| `tcp` | A TCP connection to host:port succeeds (5 s connect timeout) | `wrapper.readiness.tcp.host` (default `127.0.0.1`), `wrapper.readiness.tcp.port` |
+| `http` | A `GET` returns an expected status (redirects not followed) | `wrapper.readiness.http.url`, `.status` (default `200-399`), `.timeout` (default 5 s) |
 | `log` | Captured stdout/stderr (or a file) matches a regex | `wrapper.readiness.log.pattern`, `.file` (optional) |
-| `file` | A file exists (and is optionally non-empty) | `wrapper.readiness.file.path` |
+| `file` | A file or directory exists (relative to `wrapper.working.dir`) | `wrapper.readiness.file.path` |
 | `command` | An external command exits `0` | `wrapper.readiness.command`, `.timeout` |
 | `agent` | The in-JVM agent connected and answers `PING` | `wrapper.agent.enabled` (default `true`) |
 | `jmx` (backlog) | A JMX attribute matches | `wrapper.readiness.jmx.url`, `.attribute`, `.value` |
 
-* `wrapper.readiness.type` is a comma-separated list; **all** listed probes must pass.
+* `wrapper.readiness.type` is a comma-separated list; **all** listed probes must pass. The
+  per-probe settings (`wrapper.readiness.<type>.*`) serve `wrapper.liveness.type` as well (D25).
   `wrapper.readiness.interval` (default 1 s) is the polling cadence; `wrapper.startup.timeout` is
   the overall bound. While pending, the service host bumps the SCM checkpoint on every report and
   uses a wait hint of at least twice the interval (§4.4).
@@ -1370,7 +1371,24 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
       waiting in `STOPPING` for it to end, end supervision `FAILED` (D24). Tests: fake clock in
       `SupervisorLivenessTest`; the configuration, console and service-mode errors end to end.
 - [ ] P7.2 `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe` (tests with
-      local `ServerSocket`/`HttpServer`, temp files, fake clock).
+      local `ServerSocket`/`HttpServer`, temp files, fake clock). In three commits:
+  - [x] P7.2a `tcp`, `http`, `file`. **Done:** registered in `ProbeRegistry`; each serves readiness
+        and liveness from the same `wrapper.readiness.<type>.*` keys, now supported. `tcp` opens and
+        closes a connection (5 s connect timeout, the host looked up on every check); `http` sends
+        a `GET` with `java.net.http.HttpClient` over HTTP/1.1 and without a proxy (redirects not
+        followed, so a `3xx` is judged by its own status; `wrapper.readiness.http.timeout`, default
+        5 s, bounds the whole exchange, body included, so an application that sends its headers and
+        then hangs fails the check instead of blocking liveness; user information in the URL is not
+        sent and is warned about); `file` passes while the path exists, relative to
+        `wrapper.working.dir`. Readiness and liveness share the per-probe keys (D25).
+        `wrapper.readiness.http.status` is read into `config.StatusRanges` (codes and ranges
+        separated by commas). Invalid values are configuration errors with their location: a port
+        outside 1–65535, a URL that is not absolute `http`/`https` with a host (not quoted, since
+        it may hold credentials), unreadable status ranges, a timeout of 0. A probe listed without
+        its required key is a configuration error naming that key when supervision is set up. Log
+        messages show an http target without user information, query or fragment.
+  - [ ] P7.2b `command`.
+  - [ ] P7.2c `log` (captured output or `wrapper.readiness.log.file`).
 - [ ] P7.3 `nyajsw-agent`: `premain`, `AgentProtocol`, loopback connection with token from
       `NYAJSW_AGENT_TOKEN`, `STOP` → `System.exit(0)`; wrapper side `agentlink` (`AgentListener`,
       `AgentChannel`), `AgentProbe`, `AgentStopStrategy`; automatic `-javaagent` injection unless
@@ -1426,7 +1444,17 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
-- P7.1: an unknown probe type is found only when supervision is set up, so `-i` installs a
+- P7.2a: a `file` readiness probe passes at once on every restart when the application leaves its
+  file behind (a crash does), so restarts are judged ready and `wrapper.max_failed_invocations` is
+  undermined; decide before P7.4 between "modified since the launch" (`ProbeContext` would carry
+  the launch instant) and deleting the file before each launch. The `HttpClient` of each `http`
+  probe is never closed (one selector thread each until garbage collection); close probes in
+  `Supervision.close()` if probes get a lifecycle. `ConfigDump` shows `wrapper.readiness.http.url`
+  whole, user information included, since it is no registered secret; mask user information there
+  before a debug dump uses it. Probe constructors trust `ProbeConfig.from` for ranges (a port
+  outside 1–65535 would fail inside `check()`).
+- P7.1: an unknown probe type, or one listed without its required key (`tcp` without
+  `wrapper.readiness.tcp.port`, P7.2a), is found only when supervision is set up, so `-i` installs a
   service that then fails with exit code 2 on every start, and the error has no `file:line`.
   Validate the type lists against the registry in a check that `-c`, `-i` and `-t` share, with the
   key's location. The configured liveness interval, failures and action are not asserted end to
@@ -1450,9 +1478,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.9: the default fallback for files that are not valid UTF-8 is a fixed windows-1252; using the
   JVM's `native.encoding` (the Windows ANSI code page, Java 17+) would read files from non-Western
   installations correctly without `wrapper.conf.encoding`. Decide with real files (Q1).
-- P1.6b: no range checks: `wrapper.java.maxmemory=-5` or `wrapper.readiness.tcp.port=70000` are
-  accepted. Add min/max to `KeySpec` (checked by `ValueParser`) when the consuming phases
-  implement those keys. P7.1 checks the probe intervals and `wrapper.liveness.failures` where
+- P1.6b: no range checks: `wrapper.java.maxmemory=-5` is accepted. Add min/max to `KeySpec`
+  (checked by `ValueParser`) when the consuming phases implement those keys. P7.1/P7.2a check the
+  probe intervals and timeouts, `wrapper.liveness.failures` and `wrapper.readiness.tcp.port` where
   `ProbeConfig` reads them (`ConfigValues.problem`); move them to `KeySpec` with the others.
 - P1.6b: `ProbeConfig` is one flat record; P7 should split it into per-probe settings registered
   with the probe types (AGENTS.md §4.4), and move `wrapper.ping.*` there from `LifecycleConfig`
@@ -1675,6 +1703,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D21 | In console mode the shutdown hook (Ctrl+C, closing the session) stops through the supervisor, waits at most the stop budget + 10 s + 10 s, then ends the JVM with `Runtime.halt(<exit code>)`; `halt` is allowed only there, beside `System.exit` in `Main` | Once a signal has begun the JVM's shutdown its exit code is the signal's (130, `0xC000013A`) and `System.exit` blocks; `halt` is the only way to return the application's code, as §3.2 promises. It skips hooks that have not run yet, which nyajsw does not rely on; the console is flushed first (a file log, P4, must be flushed too) | Accepted (P3.6) |
 | D23 | Exit codes follow the exception type (`cli.ExitCode.of`): `ConfigException` → 2, `ServiceException` (the SCM refused or failed, P5.2) → 3, `UnsupportedPlatformException` (a `PlatformException` subclass: the host has no such operation) → 4, anything else → 1. A plain `PlatformException` (an OS call failed on a platform that has the operation, §4.4, such as a native library that cannot be loaded) is not an unsupported platform and ends as 1, also from a service command (P5.4) | §3.2 named `PlatformException` → 4, but §4.4 also uses `PlatformException` for Win32 failures of job objects and console functions, which must not read as "wrong platform" | Accepted (P5.1) |
 | D24 | A liveness failure (`wrapper.liveness.failures` failed checks in a row) terminates the application at once instead of stopping it gracefully. `RESTART` then restarts it like an invocation that ended by itself, its run time measured up to the first failed check of the streak, so that one unhealthy from the start reaches `wrapper.max_failed_invocations` however long the checks take; `SHUTDOWN` waits in `STOPPING` for it to end (at most 10 s) and ends supervision `FAILED` (console: the application's exit code, never 0; the service `STOPPED` with 1066), never `STOPPED` with success. Once the process has ended, checks no longer count: the exit action decides | An application that fails its checks may not answer a graceful stop either; YAJSW kills the JVM when its ping times out, and the startup timeout (P3.3) terminates the same way. A deliberate shutdown of an unhealthy application must not read as success, so that scripts and SCM recovery see it | Proposed (P7.1; revisit once the agent's graceful stop exists, P7.3) |
+| D25 | Liveness reuses the per-probe settings of readiness: `wrapper.readiness.<type>.*` configures a probe type wherever it is listed, in `wrapper.readiness.type` or `wrapper.liveness.type`; there are no `wrapper.liveness.<type>.*` keys | The common case checks the same endpoint for both; one set of keys keeps the surface small. Probing readiness and liveness on different ports or URLs, or with different timeouts, is not possible; adding `wrapper.liveness.<type>.*` later would need a precedence rule (liveness key, else readiness key) | Proposed (P7.2a) |
 
 ## 10. Open questions for the project owner
 

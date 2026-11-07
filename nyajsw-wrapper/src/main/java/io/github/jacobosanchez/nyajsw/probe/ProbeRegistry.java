@@ -28,6 +28,9 @@ public final class ProbeRegistry {
     public static ProbeRegistry defaults() {
         Map<String, Function<ProbeConfig, Probe>> factories = new LinkedHashMap<>();
         factories.put(ProcessProbe.TYPE, config -> new ProcessProbe());
+        factories.put(TcpProbe.TYPE, TcpProbe::from);
+        factories.put(HttpProbe.TYPE, HttpProbe::from);
+        factories.put(FileProbe.TYPE, FileProbe::from);
         return new ProbeRegistry(factories);
     }
 

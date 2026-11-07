@@ -112,8 +112,8 @@ public class MainTest {
         int code = Main.run(new String[] {"-c", conf.toString()}, out);
 
         assertEquals(code, ExitCode.CONFIGURATION_ERROR.code(), output());
-        assertTrue(output().contains("wrapper.liveness.type: unknown probe type telepathy; known: [process]"),
-                output());
+        assertTrue(output().contains("wrapper.liveness.type: unknown probe type telepathy;"
+                + " known: [process, tcp, http, file]"), output());
         assertFalse(output().contains("launching jvm 1"), output());
     }
 
