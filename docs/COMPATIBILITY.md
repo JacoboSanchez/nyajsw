@@ -174,7 +174,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.ntservice.description` | Description of the service | text | — | **supported** |  |
 | `wrapper.ntservice.starttype` | Start type of the service | one of `AUTO_START`, `DEMAND_START`, `DELAYED_AUTO_START`, `DISABLED`; alias `DELAY_START` = `DELAYED_AUTO_START` | `AUTO_START` | **supported** |  |
 | `wrapper.ntservice.dependency.<n>` | Service that must run before this one | text | — | **supported** |  |
-| `wrapper.ntservice.account` | Account the service runs as | text | — | **supported** | When absent the service runs as LocalSystem. Until P5.5 grants it, an account other than the built-in ones must have the right to log on as a service already; -i warns |
+| `wrapper.ntservice.account` | Account the service runs as; granted the right to log on as a service at install | text | — | **supported** | When absent the service runs as LocalSystem. The built-in service accounts and virtual accounts (NT SERVICE\\name) are granted nothing; any other account must be a user, and a local one is written .\\name |
 | `wrapper.ntservice.password` | Password of wrapper.ntservice.account | text | — | **supported** | Secret: never logged or shown. |
 | `wrapper.ntservice.interactive` | Let the service interact with the desktop | boolean | — | **ignored** | Obsolete since Windows Vista isolated services in session 0 |
 | `wrapper.ntservice.failure_actions.<setting>` | SCM recovery actions (reset_period, reboot_msg, command, actions, actions_delay) | text | — | **unsupported** (P9) |  |

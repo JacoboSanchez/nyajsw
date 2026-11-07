@@ -28,6 +28,7 @@ final class Win32Errors {
     static final int SERVICE_MARKED_FOR_DELETE = WinError.ERROR_SERVICE_MARKED_FOR_DELETE;
     static final int SERVICE_EXISTS = WinError.ERROR_SERVICE_EXISTS;
     static final int DUPLICATE_SERVICE_NAME = WinError.ERROR_DUPLICATE_SERVICE_NAME;
+    static final int NONE_MAPPED = WinError.ERROR_NONE_MAPPED;
 
     /** What each error is called when the system has no text for it, and what the operator can do. */
     private record Known(String name, String hint) {
@@ -62,7 +63,10 @@ final class Win32Errors {
             Map.entry(SERVICE_EXISTS, new Known("a service of that name is installed already",
                     "remove it first (-r) or choose another wrapper.ntservice.name")),
             Map.entry(DUPLICATE_SERVICE_NAME, new Known("another service has that display name",
-                    "choose another wrapper.ntservice.displayname")));
+                    "choose another wrapper.ntservice.displayname")),
+            Map.entry(NONE_MAPPED, new Known("no such account",
+                    "check wrapper.ntservice.account: a local account is written .\\name, a domain account"
+                            + " DOMAIN\\name")));
 
     private Win32Errors() {
     }

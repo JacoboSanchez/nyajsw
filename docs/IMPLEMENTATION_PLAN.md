@@ -267,7 +267,8 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   1053 `ERROR_SERVICE_REQUEST_TIMEOUT`; 1056 `ERROR_SERVICE_ALREADY_RUNNING`;
   1057 `ERROR_INVALID_SERVICE_ACCOUNT`; 1060 `ERROR_SERVICE_DOES_NOT_EXIST`;
   1062 `ERROR_SERVICE_NOT_ACTIVE`; 1069 `ERROR_SERVICE_LOGON_FAILED` → logon-right hint;
-  1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; anything else through
+  1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; 1332 `ERROR_NONE_MAPPED`
+  (no such account, P5.5); anything else through
   `Kernel32Util.formatMessage`.
 * **Native library loading**: in service mode `jna.tmpdir` is baked into the binary path at install
   time, because JNA is already loaded when the configuration is read; in console/client mode it is
@@ -1146,8 +1147,7 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       the service name (`ServiceConfig.requiredName()`, shared with install) and runs the command
       on `Platforms.forThisHost()`'s controller. Output goes to the console only, never to the log
       file, so a command beside a running service cannot roll its log (P4.3b). `-i` prints the
-      command line's warnings and, for an account other than the built-in ones
-      (`ServiceConfig.runsAsBuiltInAccount()`), that it needs the logon right (P5.5 grants it).
+      command line's warnings (the logon right of the account follows in P5.5).
       `-t` waits for `RUNNING` through `wrapper.startup.delay`, `wrapper.startup.timeout` and 30 s
       (no limit for a timeout of 0); restarts before the application was ever ready can take
       longer. `-p` waits for `STOPPED` as long as console mode waits for a stop and the
@@ -1164,9 +1164,25 @@ Goal: `-i -r -t -p -q` against the real SCM through JNA.
       too. Until P6 implements `--service`, an installed service does not run: `-t` fails.
 - [ ] P5.4a (blocked on §10 Q8, D17) Migration entry point: `WrapperServiceBooter` alias class, mode
       detection when `--service` is absent, and the Java 21 binPath rewrite in a migration command.
-- [ ] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` names a real
+- [x] P5.5 Grant `SeServiceLogonRight` at install when `wrapper.ntservice.account` names a real
       account (skipped for the built-in `LocalSystem`/`LocalService`/`NetworkService`); hand-written
-      LSA binding; clear error when it cannot be granted.
+      LSA binding; clear error when it cannot be granted. **Done:** before `CreateService`, install
+      checks an account that needs the right (`ServiceConfig.needsServiceLogonRight()`: not no
+      account, `LocalSystem`, `SYSTEM`, `LocalService`, `NetworkService` (also with a space), alone
+      or after `.\` or `NT AUTHORITY\`, in any case, nor a virtual account `NT SERVICE\name`, which
+      has the right already and cannot be looked up before its service exists):
+      `LsaApi.userSid` (`jna-platform`'s `Advapi32Util.getAccountByName`, `.\name` looked up as
+      `<computer>\name` so that a domain account of the same name is never found) must find a user,
+      since a group such as `Users` would let all its members log on as a service. Only once the
+      service is created and configured is `SeServiceLogonRight` granted (`LsaApi.grantServiceLogon`:
+      `LsaOpenPolicy` with `POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES`, `LsaAddAccountRights`,
+      `LsaClose`, an `NTSTATUS` below 0 turned into a Win32 code by `LsaNtStatusToWinError`), inside
+      the block that deletes a half-installed service, so a failed install grants nothing and leaves
+      nothing. The binding is hand-written: `platform.windows.jna.Advapi32Lsa` and
+      `LsaObjectAttributes` (layout test). Failures say which account and why (1332 "no such
+      account" has a hint, 5 the Administrator one); `JnaLsaApi` words its errors through
+      `JnaScmApi.failure`, one place for the system text. The right stays when the service is
+      removed, as the Services console leaves it.
 - [ ] P5.6 `windows-integration` tests: install → query → remove a throwaway service (start/stop
       come with P6), cleanup in `@AfterMethod(alwaysRun = true)`.
 Done when: unit tests cover every `ScmApi` interaction with mocks; integration job green on Windows.
@@ -1362,6 +1378,12 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `config.log()` without the file sink would fix all three. Check what YAJSW's `-r` does with a
   running service (Tanuki's stops it first); nyajsw leaves it to Windows, so `-r` then `-i` on a
   running service fails with 1072 until it stops.
+- P5.5 (review): the grant of the logon right is silent; `-i` could say it (a notice next to the
+  returned warnings). A domain GPO that defines "Log on as a service" overwrites the local grant at
+  the next policy refresh, and 1069 comes back later, as with the Services console: say so in the
+  user guide. Built-in accounts are recognised by spelling; comparing the looked-up SID with the
+  well-known ones would also catch localised names (`NT-AUTORITÄT\...`). `JnaLsaApi` borrows the
+  system-text helper of `JnaScmApi`; a small shared `Win32Failures` would read better.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.

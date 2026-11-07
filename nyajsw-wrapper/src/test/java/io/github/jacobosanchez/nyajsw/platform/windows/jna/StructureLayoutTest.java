@@ -2,6 +2,7 @@ package io.github.jacobosanchez.nyajsw.platform.windows.jna;
 
 import static org.testng.Assert.assertEquals;
 
+import com.sun.jna.Native;
 import com.sun.jna.Structure;
 
 import java.util.List;
@@ -29,6 +30,17 @@ public class StructureLayoutTest {
         assertEquals(fieldOrder(ServicePreshutdownInfo.class), List.of("dwPreshutdownTimeout"));
         info.write();
         assertEquals(info.getPointer().getInt(0), 75_000);
+    }
+
+    @Test
+    public void lsaObjectAttributesHaveTheirLengthSet() {
+        LsaObjectAttributes attributes = new LsaObjectAttributes();
+        int pointer = Native.POINTER_SIZE;
+
+        assertEquals(attributes.size(), pointer == 8 ? 48 : 24);
+        assertEquals(attributes.Length, attributes.size());
+        assertEquals(fieldOrder(LsaObjectAttributes.class), List.of("Length", "RootDirectory", "ObjectName",
+                "Attributes", "SecurityDescriptor", "SecurityQualityOfService"));
     }
 
     private static List<String> fieldOrder(Class<? extends Structure> type) {

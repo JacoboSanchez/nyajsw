@@ -1,6 +1,5 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
-import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigWarning;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
@@ -73,11 +72,6 @@ final class ServiceCommands {
             case INSTALL -> {
                 List<String> warnings = services.install(config);
                 warnings.forEach(warning -> log.status("warning: " + config.secrets().maskText(warning)));
-                if (!config.service().runsAsBuiltInAccount()) {
-                    log.status("warning: " + ConfigKeys.NTSERVICE_ACCOUNT.name() + " must have the right to log on"
-                            + " as a service, which this version of nyajsw does not grant yet; without it the"
-                            + " service fails to start (Win32 error 1069)");
-                }
                 log.info("installed the service '" + name + "'");
             }
             case REMOVE -> {
