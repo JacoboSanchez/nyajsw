@@ -192,18 +192,28 @@ public record LogConfig(Optional<Path> logfile, Optional<LineFormat> logfileForm
         return values.constantDefault(DEBUG_LEVEL, text -> DebugDetail.ofLevel(ValueParser.parseInteger(text)));
     }
 
-    /** {@code wrapper.log.encoding}; a name the JVM does not know is a problem of the key. */
+    /**
+     * {@code wrapper.log.encoding}; a name the JVM does not know, or an encoding it can only read
+     * (such as {@code ISO-2022-CN}), is a problem of the key.
+     */
     private static Charset encoding(ConfigValues values) {
         Optional<String> name = values.text(LOG_ENCODING).map(String::strip).filter(text -> !text.isEmpty());
         if (name.isEmpty()) {
             return Charset.defaultCharset();
         }
+        String shown = "'" + values.shown(LOG_ENCODING.name(), name.get()) + "' for " + LOG_ENCODING.name();
+        ConfigLocation location = values.location(LOG_ENCODING).orElseThrow();
+        Charset charset;
         try {
-            return Charset.forName(name.get());
+            charset = Charset.forName(name.get());
         } catch (IllegalArgumentException e) { // IllegalCharsetNameException, UnsupportedCharsetException
-            values.problem(LOG_ENCODING, values.location(LOG_ENCODING).orElseThrow(), "unknown character encoding '"
-                    + values.shown(LOG_ENCODING.name(), name.get()) + "' for " + LOG_ENCODING.name());
+            values.problem(LOG_ENCODING, location, "unknown character encoding " + shown);
             return Charset.defaultCharset();
         }
+        if (!charset.canEncode()) {
+            values.problem(LOG_ENCODING, location, "the character encoding " + shown + " can be read but not written");
+            return Charset.defaultCharset();
+        }
+        return charset;
     }
 }

@@ -1012,7 +1012,9 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       `RollingFileHandler`) appends to `wrapper.logfile` (directories created; not set: `wrapper.log`
       beside the configuration file; blank: no file), in `wrapper.logfile.format` from
       `wrapper.logfile.loglevel` up (raised by `wrapper.debug`; `NONE` or a blank format: no file),
-      encoded in `wrapper.log.encoding` (default the JVM's charset; an unknown name is an error), and
+      encoded in `wrapper.log.encoding` (default the JVM's charset; an unknown name, or one the JVM
+      can only read, is an error) by one encoder per opened file, so that a byte-order mark
+      (`UTF-16`) starts a new file only, and
       flushes every record, so the D21 halt loses nothing. A record that would take the file past
       `wrapper.logfile.maxsize` rolls it first (an empty file never rolls, so a huge record is still
       written); copy 1 is the newest, `wrapper.logfile.maxfiles` copies are kept (not set or 0: all;
