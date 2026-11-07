@@ -48,9 +48,10 @@ import java.util.logging.Logger;
  * returned by {@link #forSource(String)} (such as {@code jvm 1}) for captured application output.
  *
  * <p>Messages are written as given. Configuration values reach them only through the configuration
- * layer, which masks secrets ({@code ConfigDump}, the masking form of the command line); the only
- * value this class shows itself, the log file's name in its own errors, it masks with the
- * configuration's {@link SecretMasker}.
+ * layer, which masks secrets ({@code ConfigDump}, the masking form of the command line). What a log
+ * opened from the configuration adds itself it masks with the configuration's {@link SecretMasker}:
+ * the log file's name in its own errors, and the stack traces of attached exceptions, which nothing
+ * masked before. Exception text put into a message is the caller's to mask.
  */
 public final class WrapperLog implements AutoCloseable {
 
@@ -87,7 +88,10 @@ public final class WrapperLog implements AutoCloseable {
         return new WrapperLog(logger, WRAPPER_SOURCE, debugDetail, clock);
     }
 
-    /** A log that writes messages at {@code threshold} and above to standard output, all debug detail included. */
+    /**
+     * A log that writes messages at {@code threshold} and above to standard output, all debug detail
+     * included; for before the configuration is read, so it masks no stack trace.
+     */
     public static WrapperLog console(LogLevel threshold) {
         return console(System.out, threshold);
     }
@@ -107,7 +111,8 @@ public final class WrapperLog implements AutoCloseable {
     static WrapperLog console(PrintStream out, LogLevel threshold, DebugDetail debugDetail) {
         Objects.requireNonNull(debugDetail, "debugDetail");
         Clock clock = Clock.systemDefaultZone();
-        return of(clock, debugDetail, consoleSink(out, LineFormat.CONSOLE_DEFAULT, clock.getZone(), threshold));
+        return of(clock, debugDetail,
+                consoleSink(out, new LineFormatter(LineFormat.CONSOLE_DEFAULT, clock.getZone()), threshold));
     }
 
     /**
@@ -146,7 +151,8 @@ public final class WrapperLog implements AutoCloseable {
      * What goes wrong with the file goes to {@code fileProblems}, or, when that is {@code null}, to
      * the console as an {@code ERROR} line where the console shows those, and to {@code stderr}
      * otherwise. Times on the lines are in {@code clock}'s zone, and so is the date of a {@code
-     * YYYYMMDD} file name. File names in messages are masked with {@code secrets}.
+     * YYYYMMDD} file name. File names in messages, and the stack traces of logged exceptions, are
+     * masked with {@code secrets}.
      */
     static WrapperLog open(LogConfig config, PrintStream console, SecretMasker secrets,
             Consumer<String> fileProblems, Clock clock, PrintStream stderr) {
@@ -158,7 +164,9 @@ public final class WrapperLog implements AutoCloseable {
         ZoneId zone = clock.getZone();
         List<Handler> sinks = new ArrayList<>();
         Handler consoleSink = config.consoleFormat()
-                .map(format -> consoleSink(console, format, zone, config.consoleThreshold())).orElse(null);
+                .map(format -> consoleSink(console, new LineFormatter(format, zone, secrets::maskText),
+                        config.consoleThreshold()))
+                .orElse(null);
         if (consoleSink != null) {
             sinks.add(consoleSink);
         }
@@ -169,7 +177,8 @@ public final class WrapperLog implements AutoCloseable {
                 RollingFileSink.Settings settings = new RollingFileSink.Settings(config.logfile().get(),
                         config.maxSizeBytes().orElse(0L), config.maxFiles().orElse(0), config.encoding(),
                         config.rollMode(), config.maxDays());
-                sinks.add(RollingFileSink.open(settings, new LineFormatter(config.logfileFormat().get(), zone),
+                sinks.add(RollingFileSink.open(settings,
+                        new LineFormatter(config.logfileFormat().get(), zone, secrets::maskText),
                         WrapperLevel.threshold(config.logfileThreshold()), clock, secrets::maskText,
                         new ForwardingErrorManager(problems)));
             } catch (IOException | RuntimeException e) {
@@ -247,8 +256,11 @@ public final class WrapperLog implements AutoCloseable {
         return record;
     }
 
-    private static Handler consoleSink(PrintStream out, LineFormat format, ZoneId zone, LogLevel threshold) {
-        return new ConsoleSink(out, new LineFormatter(format, zone), WrapperLevel.threshold(threshold));
+    private static Handler consoleSink(PrintStream out, LineFormatter formatter, LogLevel threshold) {
+        ConsoleSink sink = new ConsoleSink(out, formatter, WrapperLevel.threshold(threshold));
+        // A record that cannot be formatted: shown by the exception's class only, as for the file.
+        sink.setErrorManager(new ForwardingErrorManager(message -> System.err.println("nyajsw: " + message)));
+        return sink;
     }
 
     /**

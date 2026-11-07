@@ -8,6 +8,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.function.UnaryOperator;
 import java.util.logging.Formatter;
 import java.util.logging.LogRecord;
 
@@ -26,6 +27,10 @@ import java.util.logging.LogRecord;
  *
  * <p>When the format chooses a line ending other than the platform's, the line breaks inside the
  * message and the stack trace follow it too, so that one log does not mix endings.
+ *
+ * <p>The stack trace of an attached exception goes through a mask, the configuration's secrets for
+ * a configured log, since nothing masked it before. Exception text that a caller puts into the
+ * message itself is the caller's to mask, like every other message.
  */
 final class LineFormatter extends Formatter {
 
@@ -43,10 +48,18 @@ final class LineFormatter extends Formatter {
 
     private final LineFormat format;
     private final ZoneId zone;
+    private final UnaryOperator<String> traceMask;
 
+    /** A formatter that writes stack traces as they are. */
     LineFormatter(LineFormat format, ZoneId zone) {
+        this(format, zone, UnaryOperator.identity());
+    }
+
+    /** A formatter that writes stack traces through {@code traceMask}. */
+    LineFormatter(LineFormat format, ZoneId zone, UnaryOperator<String> traceMask) {
         this.format = Objects.requireNonNull(format, "format");
         this.zone = Objects.requireNonNull(zone, "zone");
+        this.traceMask = Objects.requireNonNull(traceMask, "traceMask");
     }
 
     @Override
@@ -71,7 +84,7 @@ final class LineFormatter extends Formatter {
         if (record.getThrown() != null) {
             StringWriter trace = new StringWriter();
             record.getThrown().printStackTrace(new PrintWriter(trace));
-            line.append(lineBreaks(trace.toString()));
+            line.append(lineBreaks(traceMask.apply(trace.toString())));
         }
         return line.toString();
     }
