@@ -11,7 +11,8 @@ import java.util.Objects;
  *
  * <ul>
  *   <li>{@code report <code>}: prints its arguments, working directory, the variables
- *       {@code NYAJSW_TEST} and {@code NYAJSW_REMOVED}, whether standard input is at its end, and a
+ *       {@code NYAJSW_TEST}, {@code NYAJSW_REMOVED} and {@code NYAJSW_AGENT_TOKEN},
+ *       whether standard input is at its end, and a
  *       line on standard error, then exits with {@code code};</li>
  *   <li>{@code cafe}: prints {@code caf\u00e9} on standard output and exits;</li>
  *   <li>{@code park}: prints {@code parked} and waits until it is killed;</li>
@@ -37,6 +38,7 @@ public final class TestApplication {
                 System.out.println("dir=" + Path.of("").toAbsolutePath());
                 System.out.println("test=" + System.getenv("NYAJSW_TEST"));
                 System.out.println("removed=" + System.getenv("NYAJSW_REMOVED"));
+                System.out.println("token=" + System.getenv("NYAJSW_AGENT_TOKEN"));
                 System.out.println("stdin-ended=" + (System.in.read() < 0));
                 System.err.println("to stderr");
                 System.exit(Integer.parseInt(args[1]));

@@ -62,7 +62,7 @@ public class StopStrategyRegistryTest {
         assertEquals(chain.last().name(), TerminateStopStrategy.NAME);
         assertTrue(chain.last().strategy() instanceof TerminateStopStrategy);
         assertEquals(chain.warnings(), List.of());
-        assertEquals(StopStrategyRegistry.defaults().names(), Set.of("terminate"));
+        assertEquals(StopStrategyRegistry.defaults().names(), Set.of("agent", "terminate"));
     }
 
     @Test
@@ -72,11 +72,11 @@ public class StopStrategyRegistryTest {
 
     @Test
     public void anUnknownStrategyIsSkippedWithAWarning() throws IOException {
-        StopChain chain = chain("agent,terminate");
+        StopChain chain = chain("telepathy,terminate");
 
         assertEquals(gracefulNames(chain), List.of());
         assertEquals(chain.warnings(), List.of(
-                "wrapper.stop.strategy: unknown stop strategy agent, skipped; known: [terminate]"));
+                "wrapper.stop.strategy: unknown stop strategy telepathy, skipped; known: [agent, terminate]"));
     }
 
     @Test
@@ -101,18 +101,18 @@ public class StopStrategyRegistryTest {
     @Test
     public void aConfiguredNameIsMaskedInTheWarningsAsWritten() throws IOException {
         // The list itself holds no secret here, but a name that equals one is still masked.
-        WrapperConfig config = TestConfigs.load(dir, "wrapper.ntservice.password=Agent");
+        WrapperConfig config = TestConfigs.load(dir, "wrapper.ntservice.password=Telepathy");
         StopChain chain = StopStrategyRegistry.defaults().chain(Lifecycles.lifecycle(ControlMode.TIGHT,
                 ExitAction.SHUTDOWN, Map.of(), Lifecycles.MAX_FAILED, Duration.ZERO, Lifecycles.STARTUP_TIMEOUT,
-                Duration.ZERO, List.of("Agent", "terminate")), config.secrets());
+                Duration.ZERO, List.of("Telepathy", "terminate")), config.secrets());
 
         assertEquals(chain.warnings(), List.of(
-                "wrapper.stop.strategy: unknown stop strategy ****, skipped; known: [terminate]"));
+                "wrapper.stop.strategy: unknown stop strategy ****, skipped; known: [agent, terminate]"));
     }
 
     @Test
     public void terminateIsAddedWhenMissing() throws IOException {
-        StopChain chain = chain("agent");
+        StopChain chain = chain("telepathy");
 
         assertEquals(chain.last().name(), TerminateStopStrategy.NAME);
         assertEquals(chain.warnings().get(1),
@@ -129,10 +129,19 @@ public class StopStrategyRegistryTest {
 
     @Test
     public void onlySkippedNamesAfterTerminateDoNotCountAsMovingIt() throws IOException {
-        StopChain chain = chain("terminate,agent,terminate");
+        StopChain chain = chain("terminate,telepathy,terminate");
 
         assertFalse(chain.warnings().stream().anyMatch(warning -> warning.contains("always the last step")),
                 chain.warnings().toString());
+    }
+
+    @Test
+    public void theAgentStrategyComesBeforeTerminate() throws IOException {
+        StopChain chain = chain("agent, terminate");
+
+        assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME));
+        assertTrue(chain.graceful().get(0).strategy() instanceof AgentStopStrategy);
+        assertEquals(chain.warnings(), List.of());
     }
 
     @Test

@@ -31,6 +31,7 @@ public final class StopStrategyRegistry {
     /** The strategies nyajsw implements. */
     public static StopStrategyRegistry defaults() {
         Map<String, Function<LifecycleConfig, StopStrategy>> factories = new LinkedHashMap<>();
+        factories.put(AgentStopStrategy.NAME, config -> new AgentStopStrategy());
         factories.put(TerminateStopStrategy.NAME, config -> new TerminateStopStrategy());
         return new StopStrategyRegistry(factories);
     }
