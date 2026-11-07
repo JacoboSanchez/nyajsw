@@ -69,6 +69,12 @@ final class ConfigValues {
         return entry(spec).map(entry -> entry.value().isBlank()).orElse(false);
     }
 
+    /** Where {@code spec} is written, by the file or a system property; empty when only its default applies. */
+    Optional<ConfigLocation> writtenAt(KeySpec spec) {
+        return entry(spec).filter(entry -> config.layer(entry.key()).orElseThrow() != ConfigLayer.DEFAULT)
+                .map(ConfigEntry::location);
+    }
+
     /** Where {@code spec} is set, if a layer sets it. */
     Optional<ConfigLocation> location(KeySpec spec) {
         return entry(spec).map(ConfigEntry::location);

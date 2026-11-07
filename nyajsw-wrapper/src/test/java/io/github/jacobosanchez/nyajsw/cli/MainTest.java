@@ -19,6 +19,7 @@ import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -83,7 +84,7 @@ public class MainTest {
         assertTrue(output().contains("wrapper  | jvm 1 exited with code 7"), output());
         assertTrue(output().contains("wrapper  | warning: "), output()); // the unsupported wrapper.tray
         // and the default log file beside the configuration, in YAJSW's default file format
-        String file = Files.readString(dir.resolve("wrapper.log"), java.nio.charset.Charset.defaultCharset());
+        String file = Files.readString(dir.resolve("wrapper.log"), Charset.defaultCharset());
         assertTrue(file.lines().anyMatch(line -> line.startsWith("STATUS | wrapper  | ")
                 && line.endsWith(" | jvm 1 exited with code 7")), file);
         assertTrue(file.lines().anyMatch(line -> line.startsWith("INFO   | jvm 1    | ")
@@ -117,11 +118,15 @@ public class MainTest {
     public void consoleModeRestartsAsTheExitActionsSayAndGivesUpAtTheLimit() throws Exception {
         Path conf = conf("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=5",
                 "wrapper.on_exit.default=RESTART", "wrapper.restart.delay=0", "wrapper.max_failed_invocations=2",
-                "wrapper.pidfile=run/wrapper.pid", "wrapper.java.pidfile=run/java.pid");
+                "wrapper.pidfile=run/wrapper.pid", "wrapper.java.pidfile=run/java.pid", "wrapper.logfile.rollmode=JVM");
 
         int code = Main.run(new String[] {"-c", conf.toString()}, out);
 
         assertEquals(code, 5, output());
+        // the JVM roll mode starts a new file for the restarted application
+        Charset charset = Charset.defaultCharset();
+        assertTrue(Files.readString(dir.resolve("wrapper.log.1"), charset).contains("| jvm 1 exited with code 5"));
+        assertTrue(Files.readString(dir.resolve("wrapper.log"), charset).contains("| jvm 2 exited with code 5"));
         assertTrue(output().contains("launching jvm 2"), output());
         assertFalse(output().contains("launching jvm 3"), output());
         assertTrue(output().contains("supervision ended FAILED; exit code 5 is the application's"), output());

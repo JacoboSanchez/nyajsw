@@ -7,6 +7,7 @@ import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.DEBUG_LEVEL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_FORMAT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_LOGLEVEL;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_MAXDAYS;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_MAXFILES;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_MAXSIZE;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LOGFILE_ROLLMODE;
@@ -33,11 +34,13 @@ import java.util.Optional;
  * @param debug          {@code wrapper.debug}
  * @param debugLevel     {@code wrapper.debug.level} as configured; {@link #debugDetail()} is what applies
  * @param encoding       {@code wrapper.log.encoding}, the JVM's default charset when not set
+ * @param maxDays        {@code wrapper.logfile.maxdays}, days of files kept under the {@code DATE} roll mode;
+ *                       negative keeps every day
  */
 public record LogConfig(Optional<Path> logfile, Optional<LineFormat> logfileFormat, Optional<LogLevel> logfileLevel,
         Optional<Long> maxSizeBytes, Optional<Integer> maxFiles, Optional<RollMode> rollMode,
         Optional<LineFormat> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, DebugDetail debugLevel,
-        Charset encoding) {
+        Charset encoding, int maxDays) {
 
     /** The log file when {@code wrapper.logfile} is not set, in the configuration file's directory (D13). */
     static final String DEFAULT_LOGFILE = "wrapper.log";
@@ -93,18 +96,34 @@ public record LogConfig(Optional<Path> logfile, Optional<LineFormat> logfileForm
 
     static LogConfig from(ConfigValues values) {
         boolean debug = values.required(values.bool(DEBUG), DEBUG);
+        Optional<Path> logfile = logfile(values);
         return new LogConfig(
-                logfile(values),
+                logfile,
                 format(values, LOGFILE_FORMAT),
                 values.enumeration(LOGFILE_LOGLEVEL, LogLevel.class),
                 values.size(LOGFILE_MAXSIZE),
                 maxFiles(values),
-                values.enumeration(LOGFILE_ROLLMODE, RollMode.class),
+                rollMode(values, logfile),
                 format(values, CONSOLE_FORMAT),
                 values.enumeration(CONSOLE_LOGLEVEL, LogLevel.class),
                 debug,
                 debugLevel(values, debug),
-                encoding(values));
+                encoding(values),
+                values.required(values.integer(LOGFILE_MAXDAYS), LOGFILE_MAXDAYS));
+    }
+
+    /** {@code wrapper.logfile.rollmode}; {@code DATE} needs a date in the file name to have a file per day. */
+    private static Optional<RollMode> rollMode(ConfigValues values, Optional<Path> logfile) {
+        Optional<RollMode> mode = values.enumeration(LOGFILE_ROLLMODE, RollMode.class);
+        values.writtenAt(LOGFILE_MAXDAYS).filter(location -> !mode.equals(Optional.of(RollMode.DATE)))
+                .ifPresent(location -> values.warn(location, LOGFILE_MAXDAYS.name() + " has an effect only with "
+                        + LOGFILE_ROLLMODE.name() + "=DATE"));
+        if (mode.equals(Optional.of(RollMode.DATE)) && logfile.isPresent()
+                && !new LogFileNames(logfile.get()).hasDate()) {
+            values.problem(LOGFILE_ROLLMODE, values.location(LOGFILE_ROLLMODE).orElseThrow(), LOGFILE_ROLLMODE.name()
+                    + "=DATE needs " + LogFileNames.DATE + " in the name of " + LOGFILE.name());
+        }
+        return mode;
     }
 
     /** YAJSW turns the file off for a blank {@code wrapper.logfile}; not setting it gives the default file. */
