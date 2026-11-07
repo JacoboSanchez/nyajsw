@@ -180,7 +180,7 @@ older JVMs than the wrapper requires.
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `Scheduler` + `ExecutorScheduler`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
-| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (fixed layout until P4), `LogFormat`, `RollingFileHandler` |
+| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileHandler` |
 | `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (factory), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) |
 | `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
@@ -534,7 +534,8 @@ output, configuration and a clock; probes are stateless or own their state expli
   (YAJSW 11.01+: its `log` folder).
 * Format tokens follow the Tanuki/YAJSW letter convention (`L` level, `P` prefix, `D` thread,
   `T` time, `Z` millisecond time, `M` message) with `wrapper` / `jvm N` prefixes so operators
-  can tell wrapper lines from captured application output.
+  can tell wrapper lines from captured application output. Fields are joined by ` | `; times are
+  local, `yyyy/MM/dd HH:mm:ss` (`.SSS` for `Z`), a format of nyajsw's own (P4.2).
 * Application stdout/stderr are captured by `OutputPump` and logged at `INFO`; the command line
   makes the application write them in UTF-8 (`-Dstdout.encoding`/`-Dsun.stdout.encoding` and the
   `stderr` pair, read by Java 18+ and 8–17 respectively); a value written in the JVM options under
@@ -987,7 +988,20 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       `wrapper.debug=true` with `wrapper.debug.level=0` writes fewer debug lines than
       `wrapper.console.loglevel=DEBUG` alone, and the stack trace of an unexpected error needs level
       1; the migration guide (P8.2) should say so.
-- [ ] P4.2 `LogFormat` tokens for console and file formats.
+- [x] P4.2 `LogFormat` tokens for console and file formats. **Done:** the configuration reads both
+      format keys into a `config.LineFormat` (fields in the order written, letters in either case);
+      a trailing `\n` or `\r\n` (written as those characters, YAJSW's extension) chooses the line
+      ending; spaces are ignored and other characters skipped with a configuration warning at their
+      line; a format without letters, like a blank one, writes nothing. `log.LineFormatter` renders
+      the fields joined by ` | `: `L` level padded to 6, `P` source padded to 8 (longer ones are not
+      cut), `D` thread name (recorded by `WrapperRecord` when the message is logged), `T` local time
+      `yyyy/MM/dd HH:mm:ss`, `Z` the same with milliseconds (YAJSW does not document its time
+      formats; these are ours), `M` message; a chosen line ending also ends the lines inside the
+      message and the stack trace. `WrapperLog.open(LogConfig, console)` builds the configured log:
+      `wrapper.console.format` (blank: no console output), its level and the debug detail.
+      `wrapper.logfile.format` takes effect with the file sink (P4.3). With the console off and no
+      log file, configuration warnings (format ones included) are seen nowhere; the log file of P4.3
+      and the bootstrap log of P4.3a are where they go then.
 - [ ] P4.3 `RollingFileHandler`: size and date rolling, `ROLLNUM`/`YYYYMMDD`, `maxsize`, `maxfiles`,
       Windows rename retries, `maxdays`, `wrapper.log.encoding`, roll modes and `maxsize` combined.
 - [ ] P4.3a Bootstrap log for failures before the configuration is read (and when the configured log

@@ -1,11 +1,16 @@
 package io.github.jacobosanchez.nyajsw.log;
 
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
+import io.github.jacobosanchez.nyajsw.config.LineFormat;
+import io.github.jacobosanchez.nyajsw.config.LogConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 
 import java.io.PrintStream;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 import java.util.logging.Handler;
@@ -16,8 +21,8 @@ import java.util.logging.Logger;
 /**
  * The wrapper's only logging entry point (AGENTS.md §4.4): every wrapper message goes through an
  * instance of this facade, which is passed to the code that logs rather than looked up statically.
- * It sits on {@code java.util.logging} (D6) with the YAJSW level names of {@link LogLevel}; this
- * phase has a console sink, the rolling log file follows in P4.
+ * It sits on {@code java.util.logging} (D6) with the YAJSW level names of {@link LogLevel}, and
+ * writes lines in a {@link LineFormat}; it has a console sink, the rolling log file follows in P4.3.
  *
  * <p>Each sink has its own threshold ({@code wrapper.console.loglevel}, later {@code
  * wrapper.logfile.loglevel}); a message is built and passed on when at least one sink would write
@@ -82,9 +87,36 @@ public final class WrapperLog implements AutoCloseable {
      * A log that writes messages at {@code threshold} and above to {@code out}, which it never closes;
      * of the debug messages, only those of at most {@code debugDetail} ({@code wrapper.debug.level}).
      */
-    public static WrapperLog console(PrintStream out, LogLevel threshold, DebugDetail debugDetail) {
+    static WrapperLog console(PrintStream out, LogLevel threshold, DebugDetail debugDetail) {
         Objects.requireNonNull(debugDetail, "debugDetail");
-        return of(debugDetail, new ConsoleSink(out, new LineFormatter(), WrapperLevel.threshold(threshold)));
+        return of(debugDetail, consoleSink(out, LineFormat.CONSOLE_DEFAULT, ZoneId.systemDefault(), threshold));
+    }
+
+    /**
+     * The log {@code config} describes, with times in the system's zone; see {@link #open(LogConfig,
+     * PrintStream, ZoneId)}.
+     */
+    public static WrapperLog open(LogConfig config, PrintStream console) {
+        return open(config, console, ZoneId.systemDefault());
+    }
+
+    /**
+     * The log {@code config} describes: the console ({@code console}, never closed) in {@code
+     * wrapper.console.format} from {@code wrapper.console.loglevel} up, or no console output when
+     * the format is blank; debug messages up to {@code wrapper.debug.level}.
+     */
+    static WrapperLog open(LogConfig config, PrintStream console, ZoneId zone) {
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(console, "console");
+        Objects.requireNonNull(zone, "zone");
+        List<Handler> sinks = new ArrayList<>();
+        config.consoleFormat().ifPresent(format -> sinks.add(
+                consoleSink(console, format, zone, config.consoleThreshold())));
+        return of(config.debugDetail(), sinks.toArray(Handler[]::new));
+    }
+
+    private static Handler consoleSink(PrintStream out, LineFormat format, ZoneId zone, LogLevel threshold) {
+        return new ConsoleSink(out, new LineFormatter(format, zone), WrapperLevel.threshold(threshold));
     }
 
     /**
@@ -141,7 +173,7 @@ public final class WrapperLog implements AutoCloseable {
     }
 
     private void write(LogLevel level, String message, Throwable error) {
-        LogRecord record = new LogRecord(WrapperLevel.of(level), message);
+        LogRecord record = new WrapperRecord(WrapperLevel.of(level), message);
         record.setLoggerName(source);
         record.setThrown(error);
         logger.log(record);

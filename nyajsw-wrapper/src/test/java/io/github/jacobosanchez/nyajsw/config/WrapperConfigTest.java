@@ -332,11 +332,27 @@ public class WrapperConfigTest {
         LogConfig absent = load().log();
         LogConfig blank = load("wrapper.logfile.format=", "wrapper.console.format=").log();
 
-        assertEquals(absent.logfileFormat(), Optional.of("LPTM"));
-        assertEquals(absent.consoleFormat(), Optional.of("PM"));
-        // YAJSW turns the output off for a blank format; P4 implements that, so it must stay visible here.
+        assertEquals(absent.logfileFormat().map(LineFormat::toString), Optional.of("LPTM"));
+        assertEquals(absent.consoleFormat(), Optional.of(LineFormat.CONSOLE_DEFAULT));
+        // YAJSW turns the output off for a blank format.
         assertEquals(blank.logfileFormat(), Optional.empty());
         assertEquals(blank.consoleFormat(), Optional.empty());
+    }
+
+    @Test
+    public void whatIsWrongWithAFormatIsAWarningAtItsLine() throws IOException {
+        WrapperConfig config = load("wrapper.console.format=L?M\\n", "wrapper.logfile.format=none");
+
+        assertEquals(config.log().consoleFormat().map(LineFormat::toString), Optional.of("LM"));
+        assertEquals(config.log().consoleFormat().orElseThrow().lineSeparator(), "\n");
+        assertEquals(config.log().logfileFormat(), Optional.empty(), "no letter of 'none' is a field");
+        List<String> warnings = config.warnings().stream().map(ConfigWarning::toString).toList();
+        assertTrue(warnings.stream().anyMatch(w -> w.endsWith(
+                "wrapper.conf:1: wrapper.console.format: '?' is not a format letter (L P D T Z M); skipped")),
+                warnings.toString());
+        assertTrue(warnings.stream().anyMatch(
+                w -> w.contains("wrapper.logfile.format: no format letter, so nothing is written there")),
+                warnings.toString());
     }
 
     @Test
