@@ -73,6 +73,18 @@ public class LineFormatterTest {
     }
 
     @Test
+    public void theStackTraceGoesThroughTheMask() {
+        LogRecord record = record(WrapperLevel.ERROR, "wrapper", "failed");
+        record.setThrown(new IllegalStateException("password hunter2 rejected"));
+
+        String text = new LineFormatter(new LineFormat(List.of(MESSAGE), "\n"), ZoneOffset.UTC,
+                trace -> trace.replace("hunter2", "****")).format(record);
+
+        assertTrue(text.startsWith("failed\njava.lang.IllegalStateException: password **** rejected\n\tat "), text);
+        assertEquals(text.indexOf('\r'), -1, "masked before the line ending is chosen");
+    }
+
+    @Test
     public void aChosenLineEndingAlsoEndsTheLinesOfTheMessageAndTheStackTrace() {
         LogRecord record = record(WrapperLevel.ERROR, "wrapper", "first" + NL + "second");
         record.setThrown(new IllegalStateException("boom"));

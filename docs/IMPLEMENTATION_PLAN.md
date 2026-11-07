@@ -1029,7 +1029,10 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       open is started again without a roll; records that arrive after `close()` are dropped. A file
       that cannot be opened is a masked error on the console, and the log goes on without it.
       `WrapperLog` stamps records from its `Clock`, so the line times and the file's date agree and
-      tests are deterministic.
+      tests are deterministic. A log opened from the configuration also masks the stack traces of
+      logged exceptions with the configuration's secrets, on the console and in the file, since
+      their messages never pass the configuration layer (this settles the P3.6 review finding that
+      the supervisor's stack traces were printed unmasked).
 - [x] P4.3b Roll modes: `wrapper.logfile.rollmode` `JVM` (roll at wrapper start and before each
       restarted JVM), `WRAPPER` (at wrapper start), `DATE` (a new file when the date changes, none
       on days without output; `YYYYMMDD` required) with `wrapper.logfile.maxdays`; roll modes and
@@ -1191,7 +1194,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.6a: `SecretMasker` hides secrets by matching their text, so a short or common secret also masks
   unrelated text and the mask's position can hint at it (password `Java` shows as `C:\****\bin`).
   Tracking during interpolation which values were built from secret keys (or from names a secret
-  referred to) would avoid both; do it if real configurations show the problem.
+  referred to) would avoid both; do it if real configurations show the problem. Since P4 also
+  masks stack traces, a short secret spoils them more (a password `at` hides every `at` of every
+  frame).
 - P1.3: no bound on interpolation depth or expanded size; a very long reference chain overflows the
   stack and doubling chains grow exponentially. Low risk (files are written by administrators); add
   limits if real configurations show the need.
@@ -1205,10 +1210,6 @@ entry names the commit/plan item it came from; remove entries when addressed.
   carry them.
 - P2.5: usage messages and "not implemented yet" go to standard output with everything else; standard
   error would suit scripts better.
-- P3.6 (review of PR #5): the supervisor logs unexpected exceptions with their stack traces
-  (`fail`, a failing stop strategy or listener, a lost exit), which `LineFormatter` prints
-  unmasked; today's launch code wraps its errors in masked `LaunchException`s, but give the
-  supervisor the `SecretMasker`, or mask throwables centrally in the log layer (P4).
 - P3.6: `ConsoleMode` assembles the whole supervision stack (stop chain, pid files, readiness
   runner, scheduler, probe executor, launcher); the service host (P6) needs the same, so extract a
   lifecycle-level assembly then instead of copying it. Launch errors that cannot fix themselves (a
@@ -1246,7 +1247,13 @@ entry names the commit/plan item it came from; remove entries when addressed.
   bootstrap file lives in the temporary directory, which for `LocalSystem` is `C:\Windows\Temp`,
   where any user may create a file of that name first (and so read the wrapper's early errors,
   or keep it from being written); decide in P6 whether a directory with a restricted ACL (beside
-  the configuration, or under `%ProgramData%\nyajsw`) suits better.
+  the configuration, or under `%ProgramData%\nyajsw`) suits better. The bootstrap log masks no
+  stack trace (it may run before any secret is known): once the configuration is read, log
+  exceptions only to the configured log, or give `bootstrap` the configuration's mask. Three debug
+  messages put exception text into the message unmasked (`Supervisor` cancelling a timer,
+  `OutputPump` and `ApplicationProcess` on a closed pipe); they carry I/O errors, not values, but a
+  `debug(…, Throwable)` would let them attach the exception instead (and `Main.unexpected` drop
+  its own masking).
 - P4.3: the file name in messages is masked as text, while a
   secret copied into `wrapper.logfile` reaches the path normalised (`/` turned into `\` on Windows,
   `.` and `..` resolved), so a password such as `pa/ss` would not be recognised; register the
