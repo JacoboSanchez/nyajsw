@@ -82,6 +82,12 @@ public class MainTest {
         assertTrue(output().contains("jvm 1    | to stderr"), output());
         assertTrue(output().contains("wrapper  | jvm 1 exited with code 7"), output());
         assertTrue(output().contains("wrapper  | warning: "), output()); // the unsupported wrapper.tray
+        // and the default log file beside the configuration, in YAJSW's default file format
+        String file = Files.readString(dir.resolve("wrapper.log"), java.nio.charset.Charset.defaultCharset());
+        assertTrue(file.lines().anyMatch(line -> line.startsWith("STATUS | wrapper  | ")
+                && line.endsWith(" | jvm 1 exited with code 7")), file);
+        assertTrue(file.lines().anyMatch(line -> line.startsWith("INFO   | jvm 1    | ")
+                && line.endsWith(" | to stderr")), file);
     }
 
     @Test

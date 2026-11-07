@@ -6,6 +6,7 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -337,6 +338,41 @@ public class WrapperConfigTest {
         // YAJSW turns the output off for a blank format.
         assertEquals(blank.logfileFormat(), Optional.empty());
         assertEquals(blank.consoleFormat(), Optional.empty());
+    }
+
+    @Test
+    public void theLogFileIsWrapperLogBesideTheConfigurationUnlessSetAndOffWhenBlank() throws IOException {
+        assertEquals(load().log().logfile(), Optional.of(dir.resolve("wrapper.log")));
+        assertEquals(load("wrapper.logfile=logs/w.log").log().logfile(), Optional.of(dir.resolve("logs/w.log")));
+        assertEquals(load("wrapper.logfile=").log().logfile(), Optional.empty());
+        assertEquals(load("wrapper.logfile=  ").log().logfile(), Optional.empty());
+    }
+
+    @Test
+    public void theLogFileLevelIsRaisedByDebugAndTheEncodingDefaultsToTheJvms() throws IOException {
+        LogConfig plain = load("wrapper.logfile.loglevel=ERROR").log();
+        LogConfig debug = load("wrapper.logfile.loglevel=ERROR", "wrapper.debug=true").log();
+
+        assertEquals(plain.logfileThreshold(), LogLevel.ERROR);
+        assertEquals(debug.logfileThreshold(), LogLevel.DEBUG);
+        assertEquals(plain.encoding(), Charset.defaultCharset());
+        assertEquals(load("wrapper.log.encoding=windows-1252").log().encoding(), Charset.forName("windows-1252"));
+        assertEquals(load("wrapper.log.encoding=  ").log().encoding(), Charset.defaultCharset());
+    }
+
+    @Test
+    public void anUnknownLogEncodingANegativeMaxfilesOrAnUnusableFileNameIsAnError() {
+        ConfigException error = expectThrows(ConfigException.class,
+                () -> load("wrapper.log.encoding=klingon-8", "wrapper.logfile.maxfiles=-1",
+                        "wrapper.logfile=logs/ROLLNUM"));
+
+        List<String> problems = error.problems().stream().map(Throwable::getMessage).toList();
+        assertTrue(problems.stream().anyMatch(p -> p.contains("unknown character encoding 'klingon-8' for"
+                + " wrapper.log.encoding")), problems.toString());
+        assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.logfile.maxfiles=-1 is negative")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(p -> p.contains("wrapper.logfile: the file name is only ROLLNUM")),
+                problems.toString());
     }
 
     @Test

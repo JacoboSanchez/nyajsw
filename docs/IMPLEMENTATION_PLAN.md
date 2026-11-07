@@ -124,6 +124,10 @@ the key registry so divergences are visible.
   takes effect.
 * `wrapper.ntservice.autoreport.startup=false` (wait for the application to report through
   YAJSW's API) is not honoured; readiness probes take that role.
+* Without `wrapper.logfile` the log is `wrapper.log` beside the configuration file (D13), not beside
+  the wrapper executable (YAJSW 11.01+: its `log` folder); a blank value turns the file off in both.
+  The time fields of the log formats are nyajsw's (`yyyy/MM/dd HH:mm:ss`), since YAJSW documents
+  none (P4.2).
 * Extensions (probes, stop strategies) are new `wrapper.*`
   keys tagged as nyajsw extensions in the matrix.
 
@@ -180,7 +184,7 @@ older JVMs than the wrapper requires.
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `Scheduler` + `ExecutorScheduler`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
-| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileHandler` |
+| `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileSink`, `LogFileNames` |
 | `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (factory), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) |
 | `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
@@ -529,9 +533,9 @@ output, configuration and a clock; probes are stateless or own their state expli
   console output). YAJSW describes rollmodes `JVM` (roll at wrapper start and before each restarted
   JVM) and `DATE`, and names `WRAPPER` without describing it; the registry declares these three
   (`RollMode`). How they combine with `maxsize` is open (the reference says `JVM` files have no
-  size limit), and Tanuki values such as `SIZE` now warn as invalid; P4.3 settles both. Default
-  file: `wrapper.log` beside the wrapper
-  (YAJSW 11.01+: its `log` folder).
+  size limit), and Tanuki values such as `SIZE` now warn as invalid; P4.3b settles both. Default
+  file: `wrapper.log` beside the configuration file (YAJSW: beside the wrapper, since 11.01 in its
+  `log` folder; §3.4).
 * Format tokens follow the Tanuki/YAJSW letter convention (`L` level, `P` prefix, `D` thread,
   `T` time, `Z` millisecond time, `M` message) with `wrapper` / `jvm N` prefixes so operators
   can tell wrapper lines from captured application output. Fields are joined by ` | `; times are
@@ -1000,8 +1004,33 @@ Goal: `wrapper.logfile.*` / `wrapper.console.*` behaviour.
       `wrapper.logfile.format` takes effect with the file sink (P4.3). With the console off and no
       log file, configuration warnings (format ones included) are seen nowhere; the log file of P4.3
       and the bootstrap log of P4.3a are where they go then.
-- [ ] P4.3 `RollingFileHandler`: size and date rolling, `ROLLNUM`/`YYYYMMDD`, `maxsize`, `maxfiles`,
-      Windows rename retries, `maxdays`, `wrapper.log.encoding`, roll modes and `maxsize` combined.
+- [x] P4.3 Rolling log file: rolling by size, `ROLLNUM`/`YYYYMMDD` names, `maxsize`, `maxfiles`,
+      Windows rename retries, `wrapper.log.encoding`. **Done:** `RollingFileSink` (the plan's
+      `RollingFileHandler`) appends to `wrapper.logfile` (directories created; not set: `wrapper.log`
+      beside the configuration file; blank: no file), in `wrapper.logfile.format` from
+      `wrapper.logfile.loglevel` up (raised by `wrapper.debug`; `NONE` or a blank format: no file),
+      encoded in `wrapper.log.encoding` (default the JVM's charset; an unknown name is an error), and
+      flushes every record, so the D21 halt loses nothing. A record that would take the file past
+      `wrapper.logfile.maxsize` rolls it first (an empty file never rolls, so a huge record is still
+      written); copy 1 is the newest, `wrapper.logfile.maxfiles` copies are kept (not set or 0: all;
+      negative: an error). `config.LogFileNames` (a name it cannot work with, such as only
+      `ROLLNUM` or the token twice, is an error of the key): `YYYYMMDD` is the date the file is
+      opened, `ROLLNUM` the copy number, dropped with a `.`/`_`/`-` before it for the current file
+      (`wrapper.ROLLNUM.log` → `wrapper.log`, `wrapper.1.log`); without it copies are `<file>.N`;
+      tokens only count in the file name. A roll moves the copies below the first free number up
+      one (deleting the last copy only when every number up to the limit is taken); each move or
+      delete is tried 5 times, 100 ms apart. When one still fails the file is written on, the
+      failure reported (masked, without the exception) to the sink's error manager, and the roll
+      tried again a minute later by a monotonic ticker; since a retry only fills the gap the failed
+      attempt left, a locked file or copy costs no further old copy. A current file removed while
+      open is started again without a roll; records that arrive after `close()` are dropped. A file
+      that cannot be opened is a masked error on the console, and the log goes on without it.
+      `WrapperLog` stamps records from its `Clock`, so the line times and the file's date agree and
+      tests are deterministic.
+- [ ] P4.3b Roll modes: `wrapper.logfile.rollmode` `JVM` (roll at wrapper start and before each
+      restarted JVM), `WRAPPER` (at wrapper start), `DATE` (a new file when the date changes, none
+      on days without output; `YYYYMMDD` required) with `wrapper.logfile.maxdays`; roll modes and
+      `maxsize` combined.
 - [ ] P4.3a Bootstrap log for failures before the configuration is read (and when the configured log
       file cannot be opened): `%TEMP%\nyajsw-bootstrap.log` through the file sink of P4.3, for the
       service mode of P6, where there is no console.
@@ -1151,8 +1180,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
   missing executable or working directory) are retried like any failed invocation: with the
   defaults about 20 s and five error lines before exit 1, where P2.5 failed at once; consider a
   kind of `LaunchException` that is not retried, or say it in the migration guide (P8.2, which
-  should also mention that invalid `on_exit` values now stop the wrapper). The console stop hook
-  flushes only standard output before `halt`; P4's file sink must be flushed there too (D21). The
+  should also mention that invalid `on_exit` values now stop the wrapper). The
   clamp in the `forceStop` message (a real timer fires late) is covered only by `MainTest`'s real
   timing; a fake scheduler that fires late would test it. `ApplicationProcess.waitFor()` and
   `waitFor(Duration)` are now used only by tests.
@@ -1178,6 +1206,14 @@ entry names the commit/plan item it came from; remove entries when addressed.
   them), and in console mode it shares the console and its Ctrl+C. P6 must decide (P3.6 left it
   as is): redirect its output, detach it from the console, and keep it out of the kill-on-close
   job of P6.4.
+- P4.3: the sink reports its failures (a locked file, a full disk) to the JDK's default
+  `ErrorManager`, which writes only the sink's first failure, to standard error; as a service (P6)
+  that is lost. P4.3a/P6 should give the sink an error manager that writes to the bootstrap log
+  and does not stop after the first failure. The file name in messages is masked as text, while a
+  secret copied into `wrapper.logfile` reaches the path normalised (`/` turned into `\` on Windows,
+  `.` and `..` resolved), so a password such as `pa/ss` would not be recognised; register the
+  normalised form with `SecretMasker` if secrets in log file names ever matter. A roll that is
+  interrupted (the interrupt flag of the logging thread set) gets no retries.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
@@ -1234,7 +1270,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D3 | Maven multi-module: `nyajsw-agent`, `nyajsw-wrapper`, `nyajsw-dist`; wrapper depends on agent for `AgentProtocol`, never the reverse | Separate compilation target for the agent; one definition of the protocol | Accepted (P0.4 build plugins, parent POM properties: clean 3.5.0, resources 3.5.0, compiler 3.16.0, surefire 3.5.6, jar 3.5.1, install 3.2.0, deploy 3.2.0, enforcer 3.7.0, dependency 3.11.0) |
 | D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
 | D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (P0.4: JNA and `jna-platform` 5.19.1, managed in the parent POM; added to `nyajsw-wrapper` in P5.2) |
-| D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Proposed (confirm in P4) |
+| D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Accepted (P4.3: `RollingFileSink`, a JUL `Handler`) |
 | D7 | Custom line parser (§4.5); odd-trailing-`\` continuation, skipping blank/comment lines inside it; in file values a backslash before `\ , " ' # = : !` or a space stands for that character (YAJSW's escapes, as the owner's real files show; P1.9), every other backslash literal (YAJSW would read `\t`, `\n`, `\r`, `\f`, `\b`, `\uXXXX` as control characters and Unicode); UTF-8 with BOM skipped, windows-1252 fallback with a warning, UTF-16 rejected unless declared through `-Dwrapper.conf.encoding`; `wrapper.conf.encoding` decoded strictly; `#include` (optional: missing file warns), `#include.required` and case-insensitive `include =` (required); `${sys:}`/`${env:}` prefixes. Deliberate deviations from Commons Configuration: only `=` separates key and value (no `:`/whitespace separator); no comma splitting of values, `include` included; nested includes resolve against the including file first; a value continued at end of file is kept with a warning instead of dropped; UTF-8 files are read as UTF-8 (Commons Configuration defaults to ISO-8859-1; YAJSW defaults to the platform charset, i.e. the JVM default, UTF-8 on Java 18+ per JEP 400, else the ANSI code page), so non-ASCII text may now read differently, and on non-Western Windows (windows-1251, MS932, GBK) a file without `wrapper.conf.encoding` falls back to windows-1252 with a warning; a declared encoding is decoded strictly where YAJSW's reader probably replaced bad bytes silently | Windows paths dominate; match what YAJSW's Commons Configuration parser accepted; avoid `java.util.Properties` escape surprises; never silently drop input | Proposed (P1.1 implemented without real files; confirm with §10 Q1). Evidence from YAJSW's public parameter page (2026-11-06) that differs from this decision, to be resolved in P1.2/P1.3 with real fixtures: it names `=` as the separator, `,` as a list delimiter (escaped `\\,`) while advising against lists, backslash as an escape character with `/` preferred in paths, `include=` as an ordinary property whose value may contain `${...}`, environment names lower-cased in `${...}`, and encodings set by `wrapper.conf.encoding`, defaulting to the platform charset. Follow-ups: verify the backslash and lower-cased-environment behaviour against a real file; `${...}` in include paths is supported since P1.3 and `wrapper.conf.encoding` since P1.9 |
 | D8 | Single key registry drives parsing, validation, warnings and generated docs. Keys are `public static final KeySpec` constants in `ConfigKeys`, collected into one immutable `KeyRegistry`; derived defaults are declared there by description and computed by the typed view that owns the key (P1.6), or by the loader for `wrapper.conf.encoding`, because they depend on typed values (e.g. `wrapper.agent.enabled`) or the configuration file's location rather than on raw strings | One source of truth; no drift between code and docs; constants let code refer to keys without repeating names | Accepted (P1.2) |
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
