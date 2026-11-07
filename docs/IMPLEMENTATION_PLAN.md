@@ -1328,8 +1328,8 @@ Goal: the wrapper itself runs under the SCM.
       is built; a process that ended before it could join the job (Windows refuses it with 5) is
       a debug line, not an error; the tree is read before the job is ended; the user guide says
       that under `TIGHT`/`APPLICATION` everything the application started ends with supervision.
-- [ ] P6.5 `windows-integration` end-to-end: install → start → `RUNNING` → stop → `STOPPED` →
-      remove, with a test application and the wrapper log attached on failure. **Status:** written
+- [x] P6.5 `windows-integration` end-to-end: install → start → `RUNNING` → stop → `STOPPED` →
+      remove, with a test application and the wrapper log attached on failure. **Done:**
       (`platform.windows.WindowsServiceEndToEndTest`, group `windows-integration`): the service's
       binary path runs `--service` on the test JVM's full classpath (surefire's
       `surefire.test.class.path`: the wrapper's classes, JNA, the test application); a
@@ -1343,11 +1343,13 @@ Goal: the wrapper itself runs under the SCM.
       After each test the service is stopped (a pending one is waited for, then killed as a last
       resort) and removed, and the directory is deleted once the wrapper's process has let go of
       the JNA library it unpacked there; that fixture, `ThrowawayService`, is shared with the P5.6
-      test, which now also installs the real classpath. The configuration is a minimal generated one; the phase's
-      "unmodified YAJSW-style `wrapper.conf`" needs a real fixture (P8.3). Unelevated on Windows 10, the registered command line, run from a console, starts
-      the wrapper, which refuses with 1063 and the hint, exit code 3, in the bootstrap log named
-      after the configuration file; install is refused with 5. The elevated run (`mvn -q verify
-      -Pwindows-integration` as Administrator) is still to be done before this box is ticked.
+      test, which now also installs the real classpath. Unelevated on Windows 10, the registered
+      command line, run from a console, starts the wrapper, which refuses with 1063 and the hint,
+      exit code 3, in the bootstrap log named after the configuration file; install is refused
+      with 5. The owner's elevated run (`mvn -q verify -Pwindows-integration` as Administrator,
+      Windows 10, 2026-11-08) passed: the four end-to-end tests, the five P5.6 tests and the two
+      job-object tests, none skipped. The configuration is a minimal generated one, so the phase's
+      "unmodified YAJSW-style `wrapper.conf`" is left to a real fixture in P8.3.
 Done when: a real service runs a test application from an unmodified YAJSW-style `wrapper.conf`.
 
 ### P7 — Probes and agent
