@@ -138,7 +138,10 @@ public class FixtureConfigurationsTest {
             assertTrue(expected, "unexpected warning: " + message);
         }
         // Positive controls, so the filter above cannot go vacuous when wording changes.
-        assertTrue(messages.contains("wrapper.control" + notYet), messages.toString());
+        assertTrue(messages.contains("wrapper.ping.interval" + notYet), messages.toString());
+        assertTrue(messages.stream().noneMatch(message -> message.startsWith("wrapper.control")
+                || message.startsWith("wrapper.on_exit") || message.startsWith("wrapper.restart.delay")),
+                "supported since P3.6: " + messages);
         assertTrue(messages.stream().noneMatch(message -> message.startsWith("wrapper.java.additional")),
                 "supported since P2.5: " + messages);
         assertTrue(messages.contains("optional include skipped, file not found: "

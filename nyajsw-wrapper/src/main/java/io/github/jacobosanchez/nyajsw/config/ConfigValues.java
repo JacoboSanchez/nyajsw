@@ -61,6 +61,11 @@ final class ConfigValues {
         return typed(spec, value -> value);
     }
 
+    /** Where {@code spec} is set, if a layer sets it. */
+    Optional<ConfigLocation> location(KeySpec spec) {
+        return entry(spec).map(ConfigEntry::location);
+    }
+
     /**
      * A text value that means something only when it is not empty (a name, a command, a URL): an
      * empty value gives an empty result, so a derived default computed by the caller applies. A
@@ -252,10 +257,23 @@ final class ConfigValues {
                 // Reported by ConfigValidator; fall back to the default below.
             }
         }
-        if (spec.defaultValue() instanceof KeyDefault.Constant constant) {
-            return Optional.of(parser.apply(constant.value()));
+        if (spec.defaultValue() instanceof KeyDefault.Constant) {
+            return Optional.of(constantDefault(spec, parser));
         }
         return Optional.empty();
+    }
+
+    /**
+     * The constant default of {@code spec}, parsed: also what a key that does not take effect yet
+     * amounts to, whatever the file says.
+     *
+     * @throws IllegalStateException when the key has no constant default
+     */
+    <T> T constantDefault(KeySpec spec, Function<String, T> parser) {
+        if (spec.defaultValue() instanceof KeyDefault.Constant constant) {
+            return parser.apply(constant.value());
+        }
+        throw new IllegalStateException(spec.name() + " has no constant default");
     }
 
     private Optional<Path> toPath(KeySpec spec, ConfigEntry entry, String text, Path base) {

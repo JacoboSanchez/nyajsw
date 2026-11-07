@@ -137,7 +137,8 @@ Rules:
   exposed as unmodifiable. No static mutable state (the only static state allowed is the JNA
   callback references the service host must keep alive, and that is documented in place).
 * `System.exit` only in the CLI entry point (and in the agent's `STOP` handler, whose whole purpose
-  is to end the application JVM). Everything else returns results or throws.
+  is to end the application JVM); likewise `Runtime.halt`, used only by the CLI's console shutdown
+  hook to exit with the application's code (plan D21). Everything else returns results or throws.
 * Exceptions: a small hierarchy (`NyajswException` → `ConfigException`, `LaunchException`,
   `ServiceException`, `PlatformException`). Include the Win32 error code and message when relevant.
 * Logging only through the project's `WrapperLog` facade. Secrets are masked by the config layer, so
