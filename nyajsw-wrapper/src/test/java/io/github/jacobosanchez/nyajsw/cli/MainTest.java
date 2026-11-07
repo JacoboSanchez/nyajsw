@@ -141,6 +141,16 @@ public class MainTest {
     }
 
     @Test(timeOut = 120_000)
+    public void theConsoleUsesTheConfiguredFormat() throws Exception {
+        Path conf = conf("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=0", "wrapper.console.format=LM");
+
+        assertEquals(Main.run(new String[] {"-c", conf.toString()}, out), 0, output());
+
+        assertTrue(output().contains("STATUS | supervision ended STOPPED"), output());
+        assertFalse(output().contains("wrapper  |"), output());
+    }
+
+    @Test(timeOut = 120_000)
     public void debugWritesTheDebugMessagesUpToTheDebugLevel() throws Exception {
         ByteArrayOutputStream supervision = new ByteArrayOutputStream();
         List<String> settings = List.of("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=0",

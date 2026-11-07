@@ -6,13 +6,17 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
+import io.github.jacobosanchez.nyajsw.config.LineFormat;
+import io.github.jacobosanchez.nyajsw.config.LogConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -193,6 +197,47 @@ public class WrapperLogTest {
         }
 
         assertEquals(lines(), List.of("wrapper  | shown"));
+    }
+
+    private static LogConfig config(Optional<LineFormat> consoleFormat, LogLevel consoleLevel, boolean debug) {
+        return new LogConfig(Optional.empty(), Optional.empty(), Optional.of(LogLevel.INFO), Optional.of(0L),
+                Optional.empty(), Optional.empty(), consoleFormat, Optional.of(consoleLevel), debug,
+                DebugDetail.APPLICATION);
+    }
+
+    private static Optional<LineFormat> format(String separator, LineFormat.Field... fields) {
+        return Optional.of(new LineFormat(List.of(fields), separator));
+    }
+
+    @Test
+    public void anOpenedLogWritesTheConsoleInItsConfiguredFormatLevelAndDetail() throws InterruptedException {
+        LogConfig config = config(format("\n", LineFormat.Field.LEVEL, LineFormat.Field.THREAD,
+                LineFormat.Field.MESSAGE), LogLevel.ERROR, true);
+        try (WrapperLog log = WrapperLog.open(config, out, ZoneOffset.UTC)) {
+            inThread("nyajsw-a", () -> {
+                log.debug(DebugDetail.APPLICATION, "debug raised the level");
+                log.debug(DebugDetail.SUPERVISION, "beyond the detail");
+            });
+            inThread("nyajsw-b", () -> log.forSource("jvm 1").error("x"));
+        }
+
+        assertEquals(text(), "DEBUG  | nyajsw-a | debug raised the level\nERROR  | nyajsw-b | x\n");
+    }
+
+    private static void inThread(String name, Runnable task) throws InterruptedException {
+        Thread thread = Thread.ofPlatform().name(name).start(task);
+        thread.join();
+    }
+
+    @Test
+    public void aBlankConsoleFormatTurnsTheConsoleOff() {
+        try (WrapperLog log = WrapperLog.open(config(Optional.empty(), LogLevel.INFO, false), out)) {
+            log.fatal("not shown");
+
+            assertFalse(log.isEnabled(LogLevel.FATAL));
+        }
+
+        assertEquals(text(), "");
     }
 
     @Test

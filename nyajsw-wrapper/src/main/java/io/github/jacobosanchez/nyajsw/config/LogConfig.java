@@ -20,19 +20,19 @@ import java.util.Optional;
  * logging phase (P4) decides their behaviour and declares the defaults in the registry.
  *
  * @param logfile        {@code wrapper.logfile}, which may contain {@code ROLLNUM}/{@code YYYYMMDD}
- * @param logfileFormat  {@code wrapper.logfile.format}
+ * @param logfileFormat  {@code wrapper.logfile.format}; empty when blank, which turns the file off
  * @param logfileLevel   {@code wrapper.logfile.loglevel}
  * @param maxSizeBytes   {@code wrapper.logfile.maxsize} in bytes
  * @param maxFiles       {@code wrapper.logfile.maxfiles}
  * @param rollMode       {@code wrapper.logfile.rollmode}
- * @param consoleFormat  {@code wrapper.console.format}
+ * @param consoleFormat  {@code wrapper.console.format}; empty when blank, which turns the console off
  * @param consoleLevel   {@code wrapper.console.loglevel}
  * @param debug          {@code wrapper.debug}
  * @param debugLevel     {@code wrapper.debug.level} as configured; {@link #debugDetail()} is what applies
  */
-public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, Optional<LogLevel> logfileLevel,
+public record LogConfig(Optional<Path> logfile, Optional<LineFormat> logfileFormat, Optional<LogLevel> logfileLevel,
         Optional<Long> maxSizeBytes, Optional<Integer> maxFiles, Optional<RollMode> rollMode,
-        Optional<String> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, DebugDetail debugLevel) {
+        Optional<LineFormat> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, DebugDetail debugLevel) {
 
     public LogConfig {
         Objects.requireNonNull(logfile, "logfile");
@@ -76,12 +76,12 @@ public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, 
     static LogConfig from(ConfigValues values) {
         return new LogConfig(
                 values.path(LOGFILE),
-                values.text(LOGFILE_FORMAT),
+                format(values, LOGFILE_FORMAT),
                 values.enumeration(LOGFILE_LOGLEVEL, LogLevel.class),
                 values.size(LOGFILE_MAXSIZE),
                 values.integer(LOGFILE_MAXFILES),
                 values.enumeration(LOGFILE_ROLLMODE, RollMode.class),
-                values.text(CONSOLE_FORMAT),
+                format(values, CONSOLE_FORMAT),
                 values.enumeration(CONSOLE_LOGLEVEL, LogLevel.class),
                 values.required(values.bool(DEBUG), DEBUG),
                 debugLevel(values, values.required(values.bool(DEBUG), DEBUG)));
@@ -92,6 +92,21 @@ public record LogConfig(Optional<Path> logfile, Optional<String> logfileFormat, 
      * effect, under {@code wrapper.debug}, so that a leftover in a file that does not debug cannot
      * stop the wrapper.
      */
+    /**
+     * A format key; what is wrong with its letters is a warning, since YAJSW gives no rule for it and
+     * a line with the remaining fields still says what happened.
+     */
+    private static Optional<LineFormat> format(ConfigValues values, KeySpec spec) {
+        Optional<String> text = values.text(spec);
+        if (text.isEmpty()) {
+            return Optional.empty();
+        }
+        LineFormat.Parsed parsed = LineFormat.parse(text.get());
+        ConfigLocation location = values.location(spec).orElse(ConfigLocation.of("built-in default"));
+        parsed.problems().forEach(problem -> values.warn(location, spec.name() + ": " + problem));
+        return parsed.format();
+    }
+
     private static DebugDetail debugLevel(ConfigValues values, boolean debug) {
         int level = values.required(values.integer(DEBUG_LEVEL), DEBUG_LEVEL);
         if (DebugDetail.isLevel(level)) {

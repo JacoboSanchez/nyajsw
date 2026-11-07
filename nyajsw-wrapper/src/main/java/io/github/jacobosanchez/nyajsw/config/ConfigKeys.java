@@ -648,7 +648,7 @@ public final class ConfigKeys {
             .status(PLANNED, "P4")
             .description("Format tokens of log file lines")
             .defaultValue("LPTM")
-            .notes("Tokens: L level, P prefix, D thread, T time, Z milliseconds, M message")
+            .notes("Same letters as wrapper.console.format")
             .build();
 
     public static final KeySpec LOGFILE_LOGLEVEL = yajsw("wrapper.logfile.loglevel", ENUM, LOGGING)
@@ -694,10 +694,13 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec CONSOLE_FORMAT = yajsw("wrapper.console.format", STRING, LOGGING)
-            .status(PLANNED, "P4")
+            .status(SUPPORTED)
             .description("Format tokens of console lines")
             .defaultValue("PM")
-            .notes("Same tokens as wrapper.logfile.format")
+            .notes("One field per letter, in either case, separated by ' | ': L level, P prefix (wrapper or jvm N),"
+                    + " D thread, T time (yyyy/MM/dd HH:mm:ss), Z time with milliseconds, M message; spaces are"
+                    + " ignored, other characters skipped with a warning. A trailing \\n or \\r\\n chooses the line"
+                    + " ending. Blank turns the console output off")
             .build();
 
     public static final KeySpec CONSOLE_LOGLEVEL = yajsw("wrapper.console.loglevel", ENUM, LOGGING)

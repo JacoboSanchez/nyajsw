@@ -127,7 +127,7 @@ public class ConfigKeysTest {
                 {"wrapper.logfile.maxsize", PLANNED, YAJSW},
                 {"wrapper.logfile.maxfiles", PLANNED, YAJSW},
                 {"wrapper.logfile.rollmode", PLANNED, YAJSW},
-                {"wrapper.console.format", PLANNED, YAJSW},
+                {"wrapper.console.format", SUPPORTED, YAJSW},
                 {"wrapper.console.loglevel", SUPPORTED, YAJSW},
                 {"wrapper.console.visible", UNSUPPORTED, YAJSW},
                 {"wrapper.console.title", UNSUPPORTED, YAJSW},

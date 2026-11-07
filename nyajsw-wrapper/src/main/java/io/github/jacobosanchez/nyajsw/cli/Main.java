@@ -79,7 +79,7 @@ public final class Main {
                 return ExitCode.CONFIGURATION_ERROR.code();
             }
         }
-        try (WrapperLog log = WrapperLog.console(out, config.log().consoleThreshold(), config.log().debugDetail())) {
+        try (WrapperLog log = WrapperLog.open(config.log(), out)) {
             ConsoleMode mode;
             try {
                 mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());

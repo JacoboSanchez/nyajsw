@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 30 |
-| planned | 42 |
+| supported | 31 |
+| planned | 41 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -145,7 +145,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | Key | Meaning | Type | Default | Status | Notes |
 |---|---|---|---|---|---|
 | `wrapper.logfile` | Wrapper log file; may contain the ROLLNUM and YYYYMMDD tokens | path | — | **planned** (P4) |  |
-| `wrapper.logfile.format` | Format tokens of log file lines | text | `LPTM` | **planned** (P4) | Tokens: L level, P prefix, D thread, T time, Z milliseconds, M message |
+| `wrapper.logfile.format` | Format tokens of log file lines | text | `LPTM` | **planned** (P4) | Same letters as wrapper.console.format |
 | `wrapper.logfile.loglevel` | Lowest level written to the log file | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | `INFO` | **planned** (P4) |  |
 | `wrapper.logfile.maxsize` | Size at which the log file rolls; 0 turns rolling by size off | size | `0` | **planned** (P4) |  |
 | `wrapper.logfile.maxfiles` | Number of rolled log files kept, per day under the DATE roll mode | integer | — | **planned** (P4) |  |
@@ -153,7 +153,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.logfile.rollmode` | When the log file rolls, besides rolling by size | one of `JVM`, `WRAPPER`, `DATE` | — | **planned** (P4) | *Verify:* values |
 | `wrapper.logfile.desc` | Roll by renaming only the newest file, which then gets the highest number | boolean | — | **unsupported** (P9) |  |
 | `wrapper.log.encoding` | Character encoding of the wrapper log file | text | — | **planned** (P4) | YAJSW defaults to the JVM's default charset |
-| `wrapper.console.format` | Format tokens of console lines | text | `PM` | **planned** (P4) | Same tokens as wrapper.logfile.format |
+| `wrapper.console.format` | Format tokens of console lines | text | `PM` | **supported** | One field per letter, in either case, separated by ' \| ': L level, P prefix (wrapper or jvm N), D thread, T time (yyyy/MM/dd HH:mm:ss), Z time with milliseconds, M message; spaces are ignored, other characters skipped with a warning. A trailing \\n or \\r\\n chooses the line ending. Blank turns the console output off |
 | `wrapper.console.loglevel` | Lowest level written to the console | one of `NONE`, `FATAL`, `ERROR`, `STATUS`, `INFO`, `DEBUG` | `INFO` | **supported** |  |
 | `wrapper.console.visible` | Show a console window for the service | boolean | — | **unsupported** (P9) |  |
 | `wrapper.console.title` | Title of the console window | text | — | **unsupported** (P9) |  |
