@@ -1,0 +1,24 @@
+package io.github.jacobosanchez.nyajsw.platform;
+
+import java.time.Duration;
+
+/**
+ * How a {@link ServiceBody} reports its progress to the service manager. Each pending report is a
+ * promise to report again within its wait hint; the manager takes a service that does not as hung.
+ * A host may raise a very short wait hint to a floor of its own (2 s on Windows). Reports fail with
+ * a {@link ServiceException} when the manager refuses them.
+ */
+public interface ServiceContext {
+
+    /** The service's name, as the service manager started it. */
+    String serviceName();
+
+    /** Still starting ({@link ServiceState#START_PENDING}), accepting no requests; the next report is due within {@code waitHint}. */
+    void starting(Duration waitHint);
+
+    /** Started ({@link ServiceState#RUNNING}): from now on it accepts stop requests, also at system shutdown. */
+    void running();
+
+    /** Stopping ({@link ServiceState#STOP_PENDING}), accepting no requests; the next report is due within {@code waitHint}. */
+    void stopping(Duration waitHint);
+}

@@ -188,10 +188,10 @@ older JVMs than the wrapper requires.
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
 | `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileSink`, `LogFileNames` |
-| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status), `ServiceStatus` + `ServiceState`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
-| `platform.windows` | Windows implementations. | `ScmApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
+| `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status) with `ServiceBody`, `ServiceContext`, `ServiceControl` and `ServiceExit`, `ServiceStatus` + `ServiceState`, `ProcessTools`, `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
+| `platform.windows` | Windows implementations. | `ScmApi`, `ServiceHostApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaServiceHostApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `Win32Errors` |
 | `platform.windows.jna` | Hand-written JNA bindings for what `jna-platform` lacks (§4.4). | `Advapi32Ext`, `Kernel32Ext`, structures |
-| `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `UnsupportedPlatformException`, which `cli` maps to exit code 4. | `UnsupportedPlatform`, `UnsupportedServiceController` |
+| `platform.unsupported` | Console-only fallback for non-Windows hosts; service operations throw `UnsupportedPlatformException`, which `cli` maps to exit code 4. | `UnsupportedPlatform`, `UnsupportedServiceController`, `UnsupportedServiceHost` |
 | `agent` (module `nyajsw-agent`) | Agent `premain` and the shared protocol. | `Agent`, `AgentProtocol` |
 
 Design rules that keep this maintainable (see AGENTS.md §4.4): registries over `if/else` chains,
@@ -220,9 +220,10 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   functions to grant "Log on as a service" (`LsaOpenPolicy`,
   `LsaAddAccountRights`, `LsaClose`, `LsaNtStatusToWinError`). Every structure gets a layout test
   (`size()`, field order) and is used only through the `ScmApi` / `ProcessApi` facades.
-* `ScmApi` (service control) and `ProcessApi` (job objects, `OpenProcess`, console functions) are
-  **our** interfaces with one method per Win32 call we use. `JnaScmApi` and `JnaProcessApi`
-  implement them and are the only classes that read the last error (`Native.getLastError()`),
+* `ScmApi` (service control), `ServiceHostApi` (running as a service, P6.1), `LsaApi` (P5.5) and
+  `ProcessApi` (job objects, `OpenProcess`, console functions) are **our** interfaces with one
+  method per Win32 call we use. Their `Jna*` implementations are the only classes that read the
+  last error (`Native.getLastError()`),
   wrapping it into `ServiceException` / `PlatformException` with the Win32 code and message. Tests
   mock the facades; JNA types never leave `platform.windows`. (`W32ServiceManager`/`W32Service` from `jna-platform` are not used: they
   cannot create or delete services, throw their own exception type and are not mockable — D5.)
@@ -252,24 +253,37 @@ interfaces at the OS boundary, immutable config records, one place per concern.
 * **Running as the service** (`--service`): `Main` calls `StartServiceCtrlDispatcher` before
   anything else, so the SCM's 30-second start window is never at risk. The table entry name may be
   empty for `SERVICE_WIN32_OWN_PROCESS`; the real name arrives in `ServiceMain`'s `argv[0]`.
-  `ServiceMain` (a JNA callback thread, named through `CallbackThreadInitializer`) registers the
-  handler, reports `START_PENDING` with `dwControlsAccepted = 0`, loads configuration and logging,
-  starts the supervisor, and reports `RUNNING` (accepting `STOP`, `SHUTDOWN`, `PRESHUTDOWN`) once
-  readiness passes. It blocks until the supervisor is terminal and reports `STOPPED` last. The
-  control handler reports `STOP_PENDING` synchronously, queues the event to the supervisor and
-  returns. Callback objects are kept in static fields so the native pointers stay valid (the one
-  sanctioned static state, AGENTS.md §4.4). When the application cannot be kept running, the
+  The dispatcher runs on a daemon thread of its own (`nyajsw-service-dispatcher`), so the caller
+  is not stuck when Windows would never release it (below).
+  `ServiceMain` (a JNA callback thread, named `nyajsw-service` through `CallbackThreadInitializer`)
+  registers the handler, reports `START_PENDING` with `dwControlsAccepted = 0` and a 10 s wait hint
+  at once, then runs the service body (P6.2: configuration and logging, the supervisor), which
+  reports `RUNNING` (accepting `STOP`, `SHUTDOWN`, `PRESHUTDOWN`) once readiness passes. It blocks
+  until the body has ended and reports `STOPPED` last. The control handler reports `STOP_PENDING`
+  synchronously with a 10 s wait hint, then tells the body, which queues the event to the
+  supervisor and returns. Reports go one way: a `starting` after `running`, or either after a stop,
+  is ignored. `INTERROGATE` returns `NO_ERROR` without a report, other controls
+  `ERROR_CALL_NOT_IMPLEMENTED`. Since `START_PENDING` and `STOP_PENDING` accept no controls, Windows
+  refuses a stop during the start with 1061, and sends no `SHUTDOWN`/`PRESHUTDOWN` to a service
+  already stopping; the start must therefore stay bounded (P6.2). If the service thread cannot
+  register its handler or report `STOPPED`, Windows keeps the dispatcher blocked and the SCM does
+  not end the process, so `ServiceHost.run` returns by itself and throws why. Callback objects are
+  kept in static fields so the native pointers stay valid (the one sanctioned static state,
+  AGENTS.md §4.4). When the application cannot be kept running, the
   service ends with `dwWin32ExitCode = ERROR_SERVICE_SPECIFIC_ERROR` (1066) and the reason in
   `dwServiceSpecificExitCode`.
-* **Pending states**: the checkpoint is incremented on every report and the wait hint is at least
-  twice the readiness interval with a 2-second floor, so long readiness checks never trip the SCM.
+* **Pending states**: the checkpoint is incremented on every report (from 1 in each pending state)
+  and the wait hint is at least twice the readiness interval with a 2-second floor, so long
+  readiness checks never trip the SCM; the host enforces the floor (P6.1), P6.2 the rest.
   `PRESHUTDOWN` is accepted by default because plain `SHUTDOWN` only leaves the few seconds of
   `WaitToKillServiceTimeout`.
 * **Error mapping** (`Win32Errors`): 5 `ERROR_ACCESS_DENIED` → "run as Administrator";
   1053 `ERROR_SERVICE_REQUEST_TIMEOUT`; 1056 `ERROR_SERVICE_ALREADY_RUNNING`;
   1057 `ERROR_INVALID_SERVICE_ACCOUNT`; 1060 `ERROR_SERVICE_DOES_NOT_EXIST`;
   1062 `ERROR_SERVICE_NOT_ACTIVE`; 1069 `ERROR_SERVICE_LOGON_FAILED` → logon-right hint;
-  1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; 1332 `ERROR_NONE_MAPPED`
+  1063 `ERROR_FAILED_SERVICE_CONTROLLER_CONNECT` (`--service` run outside the SCM: use `-t` or
+  `-c`, P6.1); 1072 `ERROR_SERVICE_MARKED_FOR_DELETE`; 1073 `ERROR_SERVICE_EXISTS`; 1332
+  `ERROR_NONE_MAPPED`
   (no such account, P5.5); anything else through
   `Kernel32Util.formatMessage`.
 * **Native library loading**: in service mode `jna.tmpdir` is baked into the binary path at install
@@ -1206,10 +1220,28 @@ Done when: unit tests cover every `ScmApi` interaction with mocks; integration j
 
 ### P6 — Service host (running as the service)
 Goal: the wrapper itself runs under the SCM.
-- [ ] P6.1 `ServiceHost` interface + `FakeServiceHost` for tests; `WindowsServiceHost` with
+- [x] P6.1 `ServiceHost` interface + `FakeServiceHost` for tests; `WindowsServiceHost` with
       `StartServiceCtrlDispatcher`, `RegisterServiceCtrlHandlerEx`, `SetServiceStatus`,
       checkpoint/wait-hint reporting, `STOP`, `SHUTDOWN`, `PRESHUTDOWN` (accepted by default),
-      `INTERROGATE`; named callback thread; `STOPPED` reported last.
+      `INTERROGATE`; named callback thread; `STOPPED` reported last. **Done:** `ServiceHost.run`
+      runs a `ServiceBody` (`run(ServiceContext)` → `ServiceExit`, `stop(ServiceControl)`) and
+      returns once `STOPPED` is reported, rethrowing what the body threw; the body reports
+      `starting(waitHint)`, `running()` and `stopping(waitHint)`. `Platform.serviceHost()` gives
+      `WindowsServiceHost` on `JnaServiceHostApi` (no hand-written binding: `jna-platform` has the
+      three calls and their callback types), and on other hosts `UnsupportedServiceHost` (exit code
+      4). The checkpoint restarts at 1 in each pending state; a failed `ServiceExit` is reported as
+      1066 with its code, an exception of the body as 1066 with code 1. The callbacks are held in
+      static fields, the one sanctioned static state. Shared with the controller:
+      `NativeLibrary.cannotLoad` for a JNA that cannot be loaded. Tested on a fake dispatcher
+      (`FakeServiceHostApi`, which runs the service main on a thread of its own and sends controls
+      on the dispatcher's); `FakeServiceHost` is the platform-neutral double for P6.2. On Windows
+      the real `StartServiceCtrlDispatcher` fails with 1063 from a console process
+      (`windows-integration`). If `RegisterServiceCtrlHandlerEx` or the final `SetServiceStatus`
+      fails, Windows never releases the dispatcher, which runs on a daemon thread
+      (`nyajsw-service-dispatcher`) for that reason: `run` returns by itself and throws the
+      failure, so the caller can log it and end the process. Reports go one way (no
+      `START_PENDING` after `RUNNING`, nothing after `STOPPED`), and a pending wait hint is at least
+      2 s. `FakeServiceHost` accepts a stop only while `RUNNING`, as Windows does.
 - [ ] P6.2 `--service <conf>` command: dispatcher first, then configuration, file-only logging,
       supervisor wiring with `START_PENDING` until `ProbeRunner` readiness (`process` probe),
       `ERROR_SERVICE_SPECIFIC_ERROR` on `FAILED`; `-Xrs` for the application JVM in service mode
@@ -1416,6 +1448,12 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `catch (RuntimeException)` that deletes a half-installed service; a `LinkageError` from the
   first use of the LSA binding skips that clean-up, and `Main.service()` shows its stack trace.
   Unlikely (`advapi32` is a system library); catch it there like `call()` does.
+- P6.1 (review): `STOP_PENDING` accepts no controls, so an operator stop that is still running
+  when the system shuts down gets no `PRESHUTDOWN` and only `WaitToKillServiceTimeout`; decide in
+  P6.2 whether `STOP_PENDING` should keep accepting `PRESHUTDOWN` (and what the body does with
+  it). Not tested: a stop control that arrives between the handler's registration and the first
+  `START_PENDING`, which Windows cannot send (nothing is accepted yet); the final `STOPPED` is not
+  retried before `run` gives up.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.
