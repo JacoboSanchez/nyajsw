@@ -5,6 +5,9 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
+import io.github.jacobosanchez.nyajsw.agent.AgentProtocol;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentJar;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentListener;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
@@ -21,6 +24,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +33,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -211,6 +216,46 @@ public class ApplicationProcessTest {
                 Optional.of(job));
         started.add(process);
         return process;
+    }
+
+    @Test(timeOut = 120_000)
+    public void theRealAgentConnectsAnswersAndEndsTheApplicationOnStop() throws Exception {
+        // Both ends of the channel for real (plan P7.3): the agent jar the build made, in a child JVM.
+        Path jar = AgentJar.locate().orElseThrow(() -> new SkipException("the agent's jar is not built; run the"
+                + " whole build (mvn verify), which packages nyajsw-agent first"));
+        WrapperConfig config = config("wrapper.app.parameter.1=park");
+        AgentListener listener = AgentListener.open("jvm 1", log, new SecureRandom());
+        List<String> classpath = ClasspathExpander.forThisHost()
+                .expand(config.java().classpath(), config.java().workingDir(), config.secrets()).entries();
+        JavaCommand command = JavaCommandBuilder.forThisJvm().build(config.java(), classpath,
+                listener.jvmOptions(jar), config.secrets());
+        ApplicationProcess process = ApplicationProcess.start(command, config.java(), 1, config.secrets(), log,
+                Optional.empty(), Optional.of(listener));
+        started.add(process);
+
+        long deadline = System.nanoTime() + GENEROUS.toNanos();
+        while (process.agent().isEmpty()) {
+            assertTrue(System.nanoTime() < deadline, "the agent did not connect: " + logLines());
+            Thread.sleep(50); // a real JVM starting; nothing to wait on
+        }
+        assertTrue(process.agent().get().ping(Duration.ofSeconds(30)));
+        assertTrue(process.agent().get().stop(Duration.ofSeconds(30)));
+
+        assertEquals(process.waitFor(GENEROUS), Optional.of(0), "System.exit(0) through the agent");
+        assertTrue(process.agent().isEmpty(), "the session ends with the process");
+        assertFalse(logLines().stream().anyMatch(line -> line.contains(listener.token())), "the token is never logged");
+        assertFalse(command.loggable().contains(listener.token()));
+    }
+
+    @Test(timeOut = 120_000)
+    public void anApplicationWithoutAnAgentGetsNoTokenEvenWhenTheConfigurationSetsOne() throws Exception {
+        WrapperConfig config = config("wrapper.app.parameter.1=report", "wrapper.app.parameter.2=0",
+                "wrapper.app.env." + AgentProtocol.TOKEN_VARIABLE + "=inherited");
+
+        ApplicationProcess process = start(config, 1);
+
+        assertEquals(process.waitFor(GENEROUS), Optional.of(0));
+        assertTrue(logLines().contains("jvm 1    | token=null"), logLines().toString());
     }
 
     @Test(timeOut = 120_000)

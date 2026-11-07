@@ -213,9 +213,9 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.liveness.failures` | Consecutive liveness failures before wrapper.liveness.action is taken | integer | `3` | **supported**<br>nyajsw extension |  |
 | `wrapper.liveness.action` | Action when the liveness probes keep failing | one of `RESTART`, `SHUTDOWN` | `RESTART` | **supported**<br>nyajsw extension |  |
 | `wrapper.agent.enabled` | Load the nyajsw agent into the application JVM | boolean | `true` | **planned** (P7)<br>nyajsw extension |  |
-| `wrapper.port` | Port of the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |
-| `wrapper.port.min` | Lowest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |
-| `wrapper.port.max` | Highest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The nyajsw agent listens on a loopback port chosen at launch |
+| `wrapper.port` | Port of the channel between the wrapper and the application | integer | — | **ignored** | The wrapper listens for the nyajsw agent on a loopback port chosen at each launch |
+| `wrapper.port.min` | Lowest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The wrapper listens for the nyajsw agent on a loopback port chosen at each launch |
+| `wrapper.port.max` | Highest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The wrapper listens for the nyajsw agent on a loopback port chosen at each launch |
 
 ## Out of scope
 

@@ -260,6 +260,14 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
     }
 
     /**
+     * Whether the agent is injected into the application: enabled and implemented ({@link
+     * #agentInEffect(boolean)}).
+     */
+    public boolean agentInEffect() {
+        return agentInEffect(agentEnabled);
+    }
+
+    /**
      * Whether derived defaults may count on the agent: it is enabled and implemented. While
      * {@code wrapper.agent.enabled} is only planned it has no effect, like every planned key, so the
      * defaults behave as without the agent until P7 makes it supported.

@@ -186,7 +186,7 @@ older JVMs than the wrapper requires.
 | `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess` (a `RunningApplication`, started per invocation through an `ApplicationLauncher`), `OutputPump`, `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `Scheduler` + `ExecutorScheduler`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
-| `agentlink` | Wrapper side of the agent channel (listener, per-connection session), used by `probe` and `lifecycle`. | `AgentListener`, `AgentChannel` |
+| `agentlink` | Wrapper side of the agent channel (listener, per-connection session, the agent's jar), used by `launch`, `probe`, `lifecycle` and `cli`. | `AgentListener`, `AgentChannel`, `AgentJar` |
 | `log` | Wrapper logging facade and rolling file output honouring `wrapper.logfile.*`. | `WrapperLog` (levels: `config.LogLevel`, as `java.util.logging` levels in `WrapperLevel`), `ConsoleSink`, `LineFormatter` (renders a `config.LineFormat`, P4.2), `RollingFileSink`, `LogFileNames` |
 | `platform` | OS boundary. Everything the core needs from the OS, as interfaces. | `Platform` (chosen by `Platforms`, P5.1), `ServiceController` (install/remove/start/stop/status), `ServiceHost` (run as service, report status) with `ServiceBody`, `ServiceContext`, `ServiceControl` and `ServiceExit`, `ServiceStatus` + `ServiceState`, `ProcessTools` and `ProcessJob` (P6.4), `ServiceException` (SCM operations), `PlatformException` (OS-level) and `UnsupportedPlatformException` (exit code 4), `HostOs` |
 | `platform.windows` | Windows implementations. | `ScmApi`, `ServiceHostApi` and `ProcessApi` (thin facades, one method per Win32 call we use), `JnaScmApi`, `JnaServiceHostApi`, `JnaProcessApi`, `WindowsServiceController`, `WindowsServiceHost`, `ServiceCommandLine`, `WindowsProcessTools`, `KernelHandle`, `Win32Errors`, `Win32Failures` |
@@ -1450,9 +1450,43 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         `127.0.0.1`) before the launch, accept one authenticated session per invocation and then
         stop listening; processes the application starts inherit `NYAJSW_AGENT_TOKEN`, so a second
         session with the right token must be refused too.
-  - [ ] P7.3b the wrapper side: `agentlink`, `-javaagent` injection, `AgentProbe`,
-        `AgentStopStrategy`.
+  - [x] P7.3b the wrapper side: `agentlink`, `-javaagent` injection, `AgentProbe`,
+        `AgentStopStrategy`. **Done:** `agentlink.AgentListener` is opened per invocation before
+        the launch: it binds a port of its own on `127.0.0.1` without address reuse, draws a token,
+        takes the first connection that introduces itself with it (protocol 1) as the
+        `AgentChannel` and then stops listening, so no second session can follow. Every connection
+        is introduced on a thread of its own and must send its whole `HELLO` line within 2 s, so a
+        local user who connects and says nothing, or drips bytes, cannot keep the agent out; at
+        most 16 introductions run at once. Another version or token, or a late `HELLO`, is refused:
+        the first refusal as a warning, later ones at debug level, never showing the token. Without
+        an agent after 60 s the listener stops with a warning. The channel pings with a number and
+        a timeout (a late answer is skipped, a slow one keeps the session, a broken one closes it)
+        and asks for the stop, one exchange at a time behind a lock whose wait counts against each
+        exchange's own timeout (no monitor, so a waiting virtual thread does not pin its carrier).
+        `ApplicationProcess.start` takes the listener: its token goes into the environment as
+        `NYAJSW_AGENT_TOKEN` (removed when there is no agent, so the application never sees one of
+        somebody else's), `-javaagent:<jar>` and `-Dnyajsw.agent.port` among the wrapper's JVM
+        options, and the listener is closed when the process has ended; `RunningApplication.agent()`
+        (abstract, passed on by `PidFiles`) is the open session. `agentlink.AgentJar` finds the
+        jar: the one the agent classes came from when its manifest names the agent, else
+        `nyajsw-agent.jar` beside it. `Supervision` injects the agent when it is in effect and the
+        application is a JVM (not with `wrapper.image`), warning when the jar is not found (or its
+        path holds `=`, which `-javaagent` would cut), and when a probe list or the stop chain names
+        the agent while it is not injected; until P7.3c makes `wrapper.agent.enabled` supported it
+        never is. New: the `agent` probe (the
+        session answers a ping within 30 s, YAJSW's `wrapper.ping.timeout`) and the `agent` stop
+        strategy (asks on a thread of its own and returns; without a session it does not apply).
+        Tests: the listener and channel against a fake agent on real sockets, the probe and the
+        strategy, the jar lookup, and both real ends: the packaged agent in a child JVM connects,
+        answers and ends it with exit code 0 (skipped when the agent is not packaged, as in
+        `-pl nyajsw-wrapper`).
   - [ ] P7.3c the defaults (`agent,terminate`, liveness `agent`) and the `wrapper.ping.*` mapping.
+        Constraints from the P7.3b review: the derived defaults must follow the same predicate as
+        the injection (`Supervision.agentWanted`: in effect and no `wrapper.image`), and an
+        invocation that runs without the agent (no jar found, the listener could not be opened)
+        must not fail a default `agent` liveness probe; expose the per-invocation state (no agent,
+        waiting, connected, lost) rather than an empty `Optional`. Test `Supervision.launch`'s
+        injection (the options, the listener closed when the start fails) once it is switched on.
 - [ ] P7.4 `docs/probes.md` user guide.
 Done when: each probe has unit tests; an end-to-end Windows test reaches `RUNNING` only after an
 HTTP probe passes and stops gracefully through the agent.
@@ -1501,6 +1535,11 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7.3b: `AgentChannel` is a final class, so probe and strategy tests use real loopback sockets
+  with `FakeAgent`; extract an interface if a test needs a pure fake. `AgentChannel.exchange`
+  recomputes its read timeout per line, not per byte (only an authenticated agent that misbehaves
+  could stretch it). The shaded `nyajsw.jar` of P8.1 must not carry the agent's `Premain-Class`,
+  or `AgentJar` would inject the whole wrapper; check the jar's contents too then.
 - P7.3a: the jar's real manifest is not tested (`AgentJarTest` builds its own from the compiled
   classes), so a typo in the POM's `Premain-Class` would pass every test; check the packaged jar
   in `nyajsw-dist` (P8.1). A challenge-response would keep the token off the wire; the P7.3b

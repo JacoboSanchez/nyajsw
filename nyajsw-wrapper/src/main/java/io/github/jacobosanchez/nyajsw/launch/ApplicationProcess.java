@@ -1,5 +1,8 @@
 package io.github.jacobosanchez.nyajsw.launch;
 
+import io.github.jacobosanchez.nyajsw.agent.AgentProtocol;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentListener;
 import io.github.jacobosanchez.nyajsw.config.JavaConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
@@ -55,15 +58,18 @@ public final class ApplicationProcess implements RunningApplication {
     /** Completes once, with the exit code, after the output is drained and the exit logged. */
     private final CompletableFuture<Integer> exit;
     private final OutputLines output;
+    /** The listener of its agent, if it has one; closed when the process has ended. */
+    private final Optional<AgentListener> agent;
 
     private ApplicationProcess(Process process, String name, List<Thread> pumps, WrapperLog log,
-            Optional<ProcessJob> job, OutputLines output) {
+            Optional<ProcessJob> job, OutputLines output, Optional<AgentListener> agent) {
         this.process = process;
         this.name = name;
         this.pumps = pumps;
         this.log = log;
         this.job = job;
         this.output = output;
+        this.agent = agent;
         // Draining may block for DRAIN, so it runs on its own thread, not on the JDK's process reaper.
         this.exit = process.onExit().thenApplyAsync(this::ended,
                 task -> Thread.ofPlatform().daemon().name("nyajsw-" + name.replace(' ', '-') + "-exit").start(task));
@@ -92,7 +98,21 @@ public final class ApplicationProcess implements RunningApplication {
      */
     public static ApplicationProcess start(JavaCommand command, JavaConfig java, int invocation,
             SecretMasker secrets, WrapperLog log, Optional<ProcessJob> job) {
+        return start(command, java, invocation, secrets, log, job, Optional.empty());
+    }
+
+    /**
+     * As {@link #start(JavaCommand, JavaConfig, int, SecretMasker, WrapperLog, Optional)}, with the
+     * listener of the invocation's agent when it has one: its token goes into the environment as
+     * {@code NYAJSW_AGENT_TOKEN} (the command line carries the agent's options), and the process
+     * closes it once it has ended. Without one the variable is removed, so that the application
+     * never sees a token of somebody else's. When the start fails ({@link LaunchException}) the
+     * listener stays the caller's to close.
+     */
+    public static ApplicationProcess start(JavaCommand command, JavaConfig java, int invocation,
+            SecretMasker secrets, WrapperLog log, Optional<ProcessJob> job, Optional<AgentListener> agent) {
         Objects.requireNonNull(job, "job");
+        Objects.requireNonNull(agent, "agent");
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(java, "java");
         Objects.requireNonNull(secrets, "secrets");
@@ -112,6 +132,8 @@ public final class ApplicationProcess implements RunningApplication {
         try {
             ProcessBuilder builder = new ProcessBuilder(command.arguments()).directory(java.workingDir().toFile());
             applyEnvironment(builder.environment(), java.environment(), windows);
+            applyEnvironment(builder.environment(), Map.of(AgentProtocol.TOKEN_VARIABLE,
+                    agent.map(AgentListener::token).orElse("")), windows);
             process = builder.start();
         } catch (IOException | IllegalArgumentException e) {
             // An IllegalArgumentException names a value the JDK rejected (a NUL in it), which may be a secret.
@@ -131,7 +153,7 @@ public final class ApplicationProcess implements RunningApplication {
                 pump(new OutputPump(process.getErrorStream(), command.stderrCharset(), output, LogLevel.INFO,
                         secrets, lines::add), name, "stderr"));
         log.status(name + " started, pid " + process.pid());
-        return new ApplicationProcess(process, name, pumps, log, joined, lines);
+        return new ApplicationProcess(process, name, pumps, log, joined, lines, agent);
     }
 
     /** Puts {@code process} in {@code job}; whether it is in it. */
@@ -249,6 +271,11 @@ public final class ApplicationProcess implements RunningApplication {
         return output;
     }
 
+    @Override
+    public Optional<AgentChannel> agent() {
+        return agent.flatMap(AgentListener::channel);
+    }
+
     /**
      * Kills the process and everything it started, at once. On Windows {@code Process.destroy()} is
      * already a hard kill and leaves grandchildren, such as a JVM started by a batch file, running;
@@ -282,6 +309,7 @@ public final class ApplicationProcess implements RunningApplication {
 
     private int ended(Process ended) {
         int code = ended.exitValue();
+        agent.ifPresent(AgentListener::close);
         try {
             drain();
         } catch (InterruptedException e) {

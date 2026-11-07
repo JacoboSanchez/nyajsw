@@ -1,5 +1,8 @@
 package io.github.jacobosanchez.nyajsw.launch;
 
+import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -44,4 +47,7 @@ public interface RunningApplication {
      * call, so that a wrapper that forgets to pass it on is noticed rather than showing no output.
      */
     OutputLines output();
+
+    /** The session with its agent, once the agent has connected and while the session is open (plan §4.7). */
+    Optional<AgentChannel> agent();
 }

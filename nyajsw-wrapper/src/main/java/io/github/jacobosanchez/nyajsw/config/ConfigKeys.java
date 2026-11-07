@@ -1042,19 +1042,19 @@ public final class ConfigKeys {
     public static final KeySpec PORT = yajsw("wrapper.port", INTEGER, PROBES)
             .status(IGNORED)
             .description("Port of the channel between the wrapper and the application")
-            .notes("The nyajsw agent listens on a loopback port chosen at launch")
+            .notes("The wrapper listens for the nyajsw agent on a loopback port chosen at each launch")
             .build();
 
     public static final KeySpec PORT_MIN = yajsw("wrapper.port.min", INTEGER, PROBES)
             .status(IGNORED)
             .description("Lowest port tried for the channel between the wrapper and the application")
-            .notes("The nyajsw agent listens on a loopback port chosen at launch")
+            .notes("The wrapper listens for the nyajsw agent on a loopback port chosen at each launch")
             .build();
 
     public static final KeySpec PORT_MAX = yajsw("wrapper.port.max", INTEGER, PROBES)
             .status(IGNORED)
             .description("Highest port tried for the channel between the wrapper and the application")
-            .notes("The nyajsw agent listens on a loopback port chosen at launch")
+            .notes("The wrapper listens for the nyajsw agent on a loopback port chosen at each launch")
             .build();
 
     // ---- out of scope ----
