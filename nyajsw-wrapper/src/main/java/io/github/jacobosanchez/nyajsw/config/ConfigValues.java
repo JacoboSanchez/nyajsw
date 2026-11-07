@@ -110,6 +110,24 @@ final class ConfigValues {
         return typed(spec, ValueParser::parseList).orElse(List.of());
     }
 
+    /**
+     * A list of names, such as stop strategies or probe types, as configured; or nothing (the
+     * default applies) when the value holds a secret copied in with <code>${...}</code>: a secret
+     * names nothing, and once the value is split into names, a secret with a comma would reach the
+     * log in pieces that no masker recognises. The warning does not echo the value.
+     *
+     * @param what what one name names, for the warning
+     */
+    List<String> names(KeySpec spec, String what) {
+        Optional<String> raw = string(spec);
+        if (raw.isPresent() && !masker.maskText(raw.get()).equals(raw.get())) {
+            location(spec).ifPresent(location -> warn(location, spec.name() + " contains a secret, which cannot"
+                    + " name a " + what + "; ignored, the default applies"));
+            return List.of();
+        }
+        return list(spec);
+    }
+
     <E extends Enum<E>> Optional<E> enumeration(KeySpec spec, Class<E> type) {
         return typed(spec, value -> Enum.valueOf(type, ValueParser.parseEnum(spec, value)));
     }

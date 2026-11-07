@@ -912,14 +912,15 @@ public final class ConfigKeys {
     // ---- readiness, liveness and agent ----
 
     public static final KeySpec READINESS_TYPE = nyajsw("wrapper.readiness.type", LIST, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Readiness probes that must all pass before the service reports RUNNING")
             .defaultValue("process")
-            .notes("Probe types and their settings: implementation plan, section 4.7")
+            .notes("Probe types and their settings: implementation plan, section 4.7; an unknown type is an error"
+                    + " when the wrapper starts the application")
             .build();
 
     public static final KeySpec READINESS_INTERVAL = nyajsw("wrapper.readiness.interval", DURATION, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Pause between readiness checks")
             .defaultValue("1")
             .build();
@@ -994,25 +995,26 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec LIVENESS_TYPE = nyajsw("wrapper.liveness.type", LIST, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Liveness probes checked while the application runs")
+            .notes("An unknown type is an error when the wrapper starts the application")
             .derivedDefault("agent when wrapper.agent.enabled is true (from P7), otherwise none (D16)")
             .build();
 
     public static final KeySpec LIVENESS_INTERVAL = nyajsw("wrapper.liveness.interval", DURATION, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Pause between liveness checks")
             .defaultValue("10")
             .build();
 
     public static final KeySpec LIVENESS_FAILURES = nyajsw("wrapper.liveness.failures", INTEGER, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Consecutive liveness failures before wrapper.liveness.action is taken")
             .defaultValue("3")
             .build();
 
     public static final KeySpec LIVENESS_ACTION = nyajsw("wrapper.liveness.action", ENUM, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Action when the liveness probes keep failing")
             .values(names(FailureAction.class))
             .defaultValue("RESTART")

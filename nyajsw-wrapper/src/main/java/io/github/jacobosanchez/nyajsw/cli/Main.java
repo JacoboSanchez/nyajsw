@@ -142,8 +142,7 @@ public final class Main {
                 new ServiceCommands(platform.get().serviceController(), log).run(action, config);
                 return ExitCode.SUCCESS.code();
             } catch (ConfigException e) {
-                e.problems().forEach(problem -> log.error(config.secrets().maskText(problem.getMessage())));
-                return ExitCode.of(e).code();
+                return configurationError(e, config, log);
             } catch (NyajswException e) {
                 log.error(config.secrets().maskText(e.getMessage()));
                 return ExitCode.of(e).code();
@@ -191,6 +190,8 @@ public final class Main {
             try {
                 mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost(),
                         platform.get().processTools());
+            } catch (ConfigException e) {
+                return configurationError(e, config, log);
             } catch (RuntimeException e) {
                 return unexpected(e, config, log);
             }
@@ -228,6 +229,15 @@ public final class Main {
             out.flush();
             halt.accept(code);
         };
+    }
+
+    /**
+     * Logs a configuration problem found after loading (by a service command, or an unknown probe
+     * type when supervision is set up), each problem masked, and returns its exit code, 2.
+     */
+    static int configurationError(ConfigException e, WrapperConfig config, WrapperLog log) {
+        e.problems().forEach(problem -> log.error(config.secrets().maskText(problem.getMessage())));
+        return ExitCode.of(e).code();
     }
 
     static int unexpected(RuntimeException e, WrapperConfig config, WrapperLog log) {

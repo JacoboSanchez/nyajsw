@@ -1,6 +1,8 @@
 package io.github.jacobosanchez.nyajsw.probe;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.TestConfigs;
@@ -133,6 +135,14 @@ public class ProbeRunnerTest {
         IllegalArgumentException unknown = expectThrows(IllegalArgumentException.class,
                 () -> registry.create(List.of("tcp"), config));
         assertEquals(unknown.getMessage(), "unknown probe type tcp; known: [process]");
+        List<ProbeRegistry.NamedProbe> spelled = registry.create(List.of(" Process "), config);
+        assertEquals(spelled.get(0).type(), ProcessProbe.TYPE, "case and blanks do not matter");
+    }
+
+    @Test
+    public void aRunnerWithoutProbesIsEmpty() {
+        assertTrue(new ProbeRunner(List.of(), SECOND).isEmpty());
+        assertFalse(new ProbeRunner(List.of(probe("process", new ProcessProbe())), SECOND).isEmpty());
     }
 
     private static ProbeConfig defaultProbeConfig() throws Exception {

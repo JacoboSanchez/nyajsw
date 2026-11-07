@@ -26,12 +26,17 @@ public enum State {
     /** The application is ready. */
     RUNNING,
 
-    /** The application is being stopped; it exits because the wrapper asked, so no exit action applies. */
+    /**
+     * The application is being stopped; it exits because the wrapper asked, so no exit action
+     * applies. A stop after failed liveness checks ({@code wrapper.liveness.action=SHUTDOWN}) ends
+     * {@link #FAILED}, every other {@link #STOPPED}.
+     */
     STOPPING,
 
     /**
      * The next invocation waits for {@code wrapper.restart.delay}: the application has ended or could
-     * not be started, or it did not become ready and, terminated, is ending first.
+     * not be started, or it did not become ready or failed its liveness checks and, terminated, is
+     * ending first.
      */
     RESTART_WAIT,
 

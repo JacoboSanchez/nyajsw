@@ -462,6 +462,9 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
 * **Startup**: `wrapper.startup.timeout` (default 30 s, 0 for no limit) bounds readiness. On
   timeout the invocation is treated as failed (whatever its run time), the application is
   terminated and the restart policy applies (P3.3).
+* **Liveness**: while `RUNNING`, `wrapper.liveness.failures` failed checks in a row terminate the
+  application at once; `wrapper.liveness.action=RESTART` then restarts it under the restart
+  policy, `SHUTDOWN` ends supervision `FAILED` (P7.1, D24).
 * **Stop sequence**: an ordered chain of `StopStrategy` instances from `StopStrategyRegistry`,
   selected by `wrapper.stop.strategy`. The registry and the `terminate` strategy exist from P3;
   P7 registers `agent` and changes the default to `agent,terminate` whenever
@@ -1349,9 +1352,23 @@ Done when: a real service runs a test application from an unmodified YAJSW-style
 
 ### P7 — Probes and agent
 Goal: configurable readiness/liveness; graceful stop through the agent.
-- [ ] P7.1 `wrapper.readiness.*` / `wrapper.liveness.*` configuration (probe selection, intervals,
+- [x] P7.1 `wrapper.readiness.*` / `wrapper.liveness.*` configuration (probe selection, intervals,
       failure counts) and liveness failures → action. The `START_PENDING`-until-ready flow already
       exists from P6 with the `process` probe.
+      **Done:** `wrapper.readiness.type`/`interval` and `wrapper.liveness.type`/`interval`/
+      `failures`/`action` are supported (the per-probe keys stay planned for P7.2). An interval of
+      0 or a failure count below 1 is a configuration error; a type list holding a secret is
+      ignored whole with a warning, the default applying, through the helper `wrapper.stop.strategy`
+      now shares (`ConfigValues.names`). Type names ignore case; an unknown type is a
+      `ConfigException` naming the key when supervision is set up, so console and service mode end
+      with exit code 2 before anything starts. `Supervisor` takes a `Liveness` (probes, failures,
+      action; `Liveness.NONE` without probes) and checks it while `RUNNING`: first one interval
+      after readiness, the next only once the previous result is in; once the process has ended
+      checks no longer count, so the exit action decides an exit seen during the output drain.
+      Enough failures in a row terminate the application at once and then restart it (its run time,
+      up to the first failed check, counts towards `wrapper.successful_invocation_time`) or, after
+      waiting in `STOPPING` for it to end, end supervision `FAILED` (D24). Tests: fake clock in
+      `SupervisorLivenessTest`; the configuration, console and service-mode errors end to end.
 - [ ] P7.2 `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe` (tests with
       local `ServerSocket`/`HttpServer`, temp files, fake clock).
 - [ ] P7.3 `nyajsw-agent`: `premain`, `AgentProtocol`, loopback connection with token from
@@ -1409,6 +1426,17 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7.1: an unknown probe type is found only when supervision is set up, so `-i` installs a
+  service that then fails with exit code 2 on every start, and the error has no `file:line`.
+  Validate the type lists against the registry in a check that `-c`, `-i` and `-t` share, with the
+  key's location. The configured liveness interval, failures and action are not asserted end to
+  end through `Supervision` (only the unknown type is). A startup timeout that fires after the
+  process ended but before its exit is reported (the output drain, up to 2 s) still terminates
+  and restarts it instead of letting the exit action decide; liveness ignores that window. After a
+  liveness `RESTART` (as after a startup timeout) that reaches `wrapper.max_failed_invocations`,
+  supervision ends `FAILED` without waiting for the terminated application, so console mode may
+  exit before its pid file is removed. `ConfigValues.names` detects a secret by its text, so a
+  short password that occurs in a type name (such as `process`) discards the list (warned).
 - P1.2: `KeyPattern.commonExample` only finds overlaps with one segment per placeholder; free
   placeholders that span several segments in different shapes can still overlap undetected. No
   declared key is affected; revisit if a template with two free placeholders is added. Since P1.11
@@ -1422,9 +1450,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P1.9: the default fallback for files that are not valid UTF-8 is a fixed windows-1252; using the
   JVM's `native.encoding` (the Windows ANSI code page, Java 17+) would read files from non-Western
   installations correctly without `wrapper.conf.encoding`. Decide with real files (Q1).
-- P1.6b: no range checks: `wrapper.java.maxmemory=-5`, `wrapper.readiness.tcp.port=70000` or
-  `wrapper.liveness.failures=0` are accepted. Add min/max to `KeySpec` (checked by `ValueParser`)
-  when the consuming phases implement those keys.
+- P1.6b: no range checks: `wrapper.java.maxmemory=-5` or `wrapper.readiness.tcp.port=70000` are
+  accepted. Add min/max to `KeySpec` (checked by `ValueParser`) when the consuming phases
+  implement those keys. P7.1 checks the probe intervals and `wrapper.liveness.failures` where
+  `ProbeConfig` reads them (`ConfigValues.problem`); move them to `KeySpec` with the others.
 - P1.6b: `ProbeConfig` is one flat record; P7 should split it into per-probe settings registered
   with the probe types (AGENTS.md §4.4), and move `wrapper.ping.*` there from `LifecycleConfig`
   (D16). P7 must also keep the agent's derived defaults off when `wrapper.image` runs a non-Java
@@ -1464,12 +1493,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
   `NamedFactories` if a third registry appears. In the Tanuki format a `wrapper.shutdown.timeout` or
   `wrapper.jvm_exit.timeout` of 0 means "wait forever"; nyajsw reads a budget of 0 as "terminate at
   once", since a service stop must end; unconfirmed for YAJSW (§10 Q1).
-- P3.3: when P7 makes `wrapper.readiness.type` supported, an unknown type must be a
-  `ConfigException` naming the key, not the registry's `IllegalArgumentException`, and a value
-  holding a secret must be refused whole, as `wrapper.stop.strategy` is (list items cut a secret
-  into pieces the masker does not know); the same holds for every list key whose items are
-  echoed; the probe
-  factories will also change when `ProbeConfig` is split per probe (see the P1.6b entry).
+- P3.3: every list key whose items are echoed must refuse a value holding a secret whole (list
+  items cut a secret into pieces the masker does not know); `wrapper.stop.strategy` and the probe
+  type lists do (`ConfigValues.names`, P7.1). The probe factories will change when `ProbeConfig`
+  is split per probe (see the P1.6b entry).
   `ProbeContext` hands probes the whole `RunningApplication`, `terminateTree()` included; a
   narrower view would suit probes that are not ours. The meaning of `wrapper.startup.timeout=0`
   (no limit) comes from the Tanuki format and is unconfirmed for YAJSW (§10 Q1).
@@ -1647,6 +1674,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D22 | `wrapper.logfile.rollmode` takes YAJSW's `JVM`, `WRAPPER`, `DATE` and Tanuki's `SIZE`, `NONE`, `SIZE_OR_JVM`, `SIZE_OR_WRAPPER` (the last two as aliases of `JVM` and `WRAPPER`); `wrapper.logfile.maxsize` rolls in every mode but `NONE`, `JVM` included; `WRAPPER` rolls at wrapper start only | YAJSW documents `JVM` (no size limit) and `DATE`, and names `WRAPPER` without describing it; files derived from Tanuki templates carry its values, and an error would break the "swap the wrapper, not the configuration" goal. Keeping size rolling under `JVM` honours a configured size and keeps a restarting application from filling the disk | Proposed (P4.3b; confirm against YAJSW 13.18, §10 Q1) |
 | D21 | In console mode the shutdown hook (Ctrl+C, closing the session) stops through the supervisor, waits at most the stop budget + 10 s + 10 s, then ends the JVM with `Runtime.halt(<exit code>)`; `halt` is allowed only there, beside `System.exit` in `Main` | Once a signal has begun the JVM's shutdown its exit code is the signal's (130, `0xC000013A`) and `System.exit` blocks; `halt` is the only way to return the application's code, as §3.2 promises. It skips hooks that have not run yet, which nyajsw does not rely on; the console is flushed first (a file log, P4, must be flushed too) | Accepted (P3.6) |
 | D23 | Exit codes follow the exception type (`cli.ExitCode.of`): `ConfigException` → 2, `ServiceException` (the SCM refused or failed, P5.2) → 3, `UnsupportedPlatformException` (a `PlatformException` subclass: the host has no such operation) → 4, anything else → 1. A plain `PlatformException` (an OS call failed on a platform that has the operation, §4.4, such as a native library that cannot be loaded) is not an unsupported platform and ends as 1, also from a service command (P5.4) | §3.2 named `PlatformException` → 4, but §4.4 also uses `PlatformException` for Win32 failures of job objects and console functions, which must not read as "wrong platform" | Accepted (P5.1) |
+| D24 | A liveness failure (`wrapper.liveness.failures` failed checks in a row) terminates the application at once instead of stopping it gracefully. `RESTART` then restarts it like an invocation that ended by itself, its run time measured up to the first failed check of the streak, so that one unhealthy from the start reaches `wrapper.max_failed_invocations` however long the checks take; `SHUTDOWN` waits in `STOPPING` for it to end (at most 10 s) and ends supervision `FAILED` (console: the application's exit code, never 0; the service `STOPPED` with 1066), never `STOPPED` with success. Once the process has ended, checks no longer count: the exit action decides | An application that fails its checks may not answer a graceful stop either; YAJSW kills the JVM when its ping times out, and the startup timeout (P3.3) terminates the same way. A deliberate shutdown of an unhealthy application must not read as success, so that scripts and SCM recovery see it | Proposed (P7.1; revisit once the agent's graceful stop exists, P7.3) |
 
 ## 10. Open questions for the project owner
 

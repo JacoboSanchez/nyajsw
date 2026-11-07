@@ -178,6 +178,16 @@ public class ServiceModeTest {
     }
 
     @Test(timeOut = 120_000)
+    public void anUnknownProbeTypeFailsTheServiceWithTheConfigurationErrorCode() throws Exception {
+        FakeServiceHost host = new FakeServiceHost("svc");
+
+        host.run(mode(conf("wrapper.readiness.type=telepathy")));
+
+        assertEquals(host.exit(), Optional.of(new ServiceExit(ExitCode.CONFIGURATION_ERROR.code())), log());
+        assertTrue(log().contains("wrapper.readiness.type: unknown probe type telepathy"), log());
+    }
+
+    @Test(timeOut = 120_000)
     public void anApplicationThatCannotBeKeptRunningFailsTheServiceWithItsCode() throws Exception {
         FakeServiceHost host = new FakeServiceHost("svc");
 

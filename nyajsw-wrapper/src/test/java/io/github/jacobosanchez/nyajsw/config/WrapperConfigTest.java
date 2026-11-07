@@ -113,9 +113,7 @@ public class WrapperConfigTest {
         assertEquals(log.maxSizeBytes(), Optional.of(10L * 1024 * 1024));
         assertEquals(log.logfileLevel(), Optional.of(LogLevel.INFO));
 
-        // Planned until P7: what applies is the default, whatever the file says.
-        assertEquals(config.probes().readinessTypes(),
-                ConfigKeys.READINESS_TYPE.status().takesEffect() ? List.of("tcp", "http") : List.of("process"));
+        assertEquals(config.probes().readinessTypes(), List.of("tcp", "http"));
         assertEquals(config.probes().tcpPort(), Optional.of(8080));
         assertEquals(config.file(), dir.resolve("wrapper.conf"));
     }
@@ -281,12 +279,61 @@ public class WrapperConfigTest {
 
     @Test
     public void invalidValueOfAPlannedKeyFallsBackToTheDefaultWithWarning() throws IOException {
-        WrapperConfig config = load("wrapper.readiness.interval=soon", "wrapper.liveness.action=SOMETIMES");
+        WrapperConfig config = load("wrapper.ping.interval=soon", "wrapper.readiness.http.timeout=later");
 
-        assertEquals(config.probes().readinessInterval(), Duration.ofSeconds(1));
-        assertEquals(config.probes().livenessAction(), FailureAction.RESTART);
+        assertEquals(config.lifecycle().pingInterval(), Optional.of(Duration.ofSeconds(5)));
+        assertEquals(config.probes().httpTimeout(), Optional.empty());
         assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'soon'")),
                 messages(config).toString());
+        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'later'")),
+                messages(config).toString());
+    }
+
+    @Test
+    public void readinessAndLivenessSettingsTakeEffect() throws IOException {
+        ProbeConfig probes = load("wrapper.readiness.type=process", "wrapper.readiness.interval=2",
+                "wrapper.liveness.type=process", "wrapper.liveness.interval=7", "wrapper.liveness.failures=1",
+                "wrapper.liveness.action=shutdown").probes();
+
+        assertEquals(probes.readinessTypes(), List.of("process"));
+        assertEquals(probes.readinessInterval(), Duration.ofSeconds(2));
+        assertEquals(probes.livenessTypes(), List.of("process"));
+        assertEquals(probes.livenessInterval(), Duration.ofSeconds(7));
+        assertEquals(probes.livenessFailures(), 1);
+        assertEquals(probes.livenessAction(), FailureAction.SHUTDOWN);
+    }
+
+    @Test
+    public void probeTypesHoldingASecretAreIgnoredWholeWithAWarning() throws IOException {
+        WrapperConfig config = load("wrapper.ntservice.password=Pa5,5w0rd",
+                "wrapper.readiness.type=x${wrapper.ntservice.password}",
+                "wrapper.liveness.type=process,x${wrapper.ntservice.password}");
+
+        assertEquals(config.probes().readinessTypes(), List.of("process"));
+        assertEquals(config.probes().livenessTypes(), List.of());
+        assertTrue(messages(config).contains("wrapper.readiness.type contains a secret, which cannot name a probe type;"
+                + " ignored, the default applies"), messages(config).toString());
+        assertTrue(messages(config).contains("wrapper.liveness.type contains a secret, which cannot name a probe type;"
+                + " ignored, the default applies"), messages(config).toString());
+        assertTrue(messages(config).stream().noneMatch(m -> m.contains("5w0rd")), messages(config).toString());
+    }
+
+    @Test
+    public void probeIntervalsOfZeroAndFailureCountsBelowOneAreErrors() {
+        ConfigException error = expectThrows(ConfigException.class, () -> load("wrapper.readiness.interval=0",
+                "wrapper.liveness.interval=0", "wrapper.liveness.failures=0", "wrapper.liveness.action=SOMETIMES"));
+
+        List<String> problems = error.problems().stream().map(ConfigException::getMessage).toList();
+        assertEquals(problems.size(), 4, problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.interval must be at least 1 s")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.liveness.interval must be at least 1 s")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.liveness.failures must be at least 1")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("invalid value 'SOMETIMES' for wrapper.liveness.action")),
+                problems.toString());
+        expectThrows(ConfigException.class, () -> load("wrapper.liveness.failures=-2"));
     }
 
     @Test

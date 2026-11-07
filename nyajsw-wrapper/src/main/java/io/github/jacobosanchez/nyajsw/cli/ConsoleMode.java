@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
+import io.github.jacobosanchez.nyajsw.config.ConfigException;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
@@ -37,7 +38,7 @@ public final class ConsoleMode {
 
     /**
      * @param processes the platform's help with the application's processes ({@link ProcessTools#NONE} for none)
-     * @throws IllegalArgumentException when a readiness probe type is not known
+     * @throws ConfigException when a readiness or liveness probe type is not known
      */
     public ConsoleMode(WrapperConfig config, WrapperLog log, JavaCommandBuilder builder, ClasspathExpander expander,
             ProcessTools processes) {
