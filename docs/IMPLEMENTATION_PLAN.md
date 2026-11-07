@@ -1398,6 +1398,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
   user guide. Built-in accounts are recognised by spelling; comparing the looked-up SID with the
   well-known ones would also catch localised names (`NT-AUTORITÄT\...`). `JnaLsaApi` borrows the
   system-text helper of `JnaScmApi`; a small shared `Win32Failures` would read better.
+- PR #7 (review): in `WindowsServiceController.install` the logon grant runs inside the
+  `catch (RuntimeException)` that deletes a half-installed service; a `LinkageError` from the
+  first use of the LSA binding skips that clean-up, and `Main.service()` shows its stack trace.
+  Unlikely (`advapi32` is a system library); catch it there like `call()` does.
 - P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
   §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
   P7 is planned in detail.

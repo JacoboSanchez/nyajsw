@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -217,6 +218,27 @@ public class ServiceCommandsTest {
 
         assertEquals(empty.getProperty("jna.tmpdir"), dir.resolve("jna").toString());
         assertEquals(set.getProperty("jna.tmpdir"), "C:/given");
+    }
+
+    @Test
+    public void aSecretInTheServiceNameIsMaskedInEveryResult() throws IOException {
+        String conf = conf("wrapper.ntservice.password=hunter2",
+                "wrapper.ntservice.name=svc-${wrapper.ntservice.password}");
+        when(services.install(any())).thenReturn(List.of("about svc-hunter2"));
+        when(services.status("svc-hunter2")).thenReturn(Optional.empty());
+
+        for (String command : List.of("-i", "-r", "-t", "-p", "-q")) {
+            assertEquals(run(command, conf), 0, output());
+        }
+
+        // The real name still reaches the service manager.
+        verify(services).remove("svc-hunter2");
+        verify(services).start(eq("svc-hunter2"), any());
+        verify(services).stop(eq("svc-hunter2"), any());
+        assertTrue(output().contains("installed the service 'svc-****'"), output());
+        assertTrue(output().contains("the service 'svc-****' is not installed"), output());
+        assertTrue(output().contains("warning: about svc-****"), output());
+        assertFalse(output().contains("hunter2"), output());
     }
 
     @Test
