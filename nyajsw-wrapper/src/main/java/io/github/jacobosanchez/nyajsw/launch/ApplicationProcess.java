@@ -5,6 +5,7 @@ import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import io.github.jacobosanchez.nyajsw.platform.HostOs;
+import io.github.jacobosanchez.nyajsw.platform.ProcessJob;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -39,6 +40,10 @@ import java.util.concurrent.TimeoutException;
  * <p>The Java executable is checked when it has a directory; a bare name such as {@code java} is
  * looked up by the operating system on the wrapper's own {@code PATH}, not on {@code
  * wrapper.app.env.PATH}.
+ *
+ * <p>Given a {@link ProcessJob} (plan P6.4), the process is put in it as soon as it has started, so
+ * that it and what it starts from then on end with the job; {@link #terminateTree()} ends the job
+ * first. A process that cannot be put in it runs without, with an error logged.
  */
 public final class ApplicationProcess implements RunningApplication {
 
@@ -49,14 +54,18 @@ public final class ApplicationProcess implements RunningApplication {
     private final String name;
     private final List<Thread> pumps;
     private final WrapperLog log;
+    /** The job the process is in, if any. */
+    private final Optional<ProcessJob> job;
     /** Completes once, with the exit code, after the output is drained and the exit logged. */
     private final CompletableFuture<Integer> exit;
 
-    private ApplicationProcess(Process process, String name, List<Thread> pumps, WrapperLog log) {
+    private ApplicationProcess(Process process, String name, List<Thread> pumps, WrapperLog log,
+            Optional<ProcessJob> job) {
         this.process = process;
         this.name = name;
         this.pumps = pumps;
         this.log = log;
+        this.job = job;
         // Draining may block for DRAIN, so it runs on its own thread, not on the JDK's process reaper.
         this.exit = process.onExit().thenApplyAsync(this::ended,
                 task -> Thread.ofPlatform().daemon().name("nyajsw-" + name.replace(' ', '-') + "-exit").start(task));
@@ -76,6 +85,16 @@ public final class ApplicationProcess implements RunningApplication {
      */
     public static ApplicationProcess start(JavaCommand command, JavaConfig java, int invocation,
             SecretMasker secrets, WrapperLog log) {
+        return start(command, java, invocation, secrets, log, Optional.empty());
+    }
+
+    /**
+     * As {@link #start(JavaCommand, JavaConfig, int, SecretMasker, WrapperLog)}, putting the process
+     * in {@code job} when one is given.
+     */
+    public static ApplicationProcess start(JavaCommand command, JavaConfig java, int invocation,
+            SecretMasker secrets, WrapperLog log, Optional<ProcessJob> job) {
+        Objects.requireNonNull(job, "job");
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(java, "java");
         Objects.requireNonNull(secrets, "secrets");
@@ -100,6 +119,7 @@ public final class ApplicationProcess implements RunningApplication {
             // An IllegalArgumentException names a value the JDK rejected (a NUL in it), which may be a secret.
             throw new LaunchException("cannot start " + name + ": " + secrets.maskText(String.valueOf(e.getMessage())));
         }
+        Optional<ProcessJob> joined = job.filter(target -> join(target, process, name, log));
         try {
             process.getOutputStream().close();
         } catch (IOException e) {
@@ -112,7 +132,23 @@ public final class ApplicationProcess implements RunningApplication {
                 pump(new OutputPump(process.getErrorStream(), command.stderrCharset(), output, LogLevel.INFO,
                         secrets), name, "stderr"));
         log.status(name + " started, pid " + process.pid());
-        return new ApplicationProcess(process, name, pumps, log);
+        return new ApplicationProcess(process, name, pumps, log, joined);
+    }
+
+    /** Puts {@code process} in {@code job}; whether it is in it. */
+    private static boolean join(ProcessJob job, Process process, String name, WrapperLog log) {
+        try {
+            job.add(process.pid());
+            return true;
+        } catch (RuntimeException e) {
+            if (!process.isAlive()) { // Windows refuses an ended process with "access is denied"
+                log.debug(() -> name + " ended before it could be put in the job object");
+            } else {
+                log.error(name + " runs outside the job object, so it may outlive the wrapper if that is killed: "
+                        + e.getMessage());
+            }
+            return false;
+        }
     }
 
     private static Thread pump(OutputPump pump, String name, String stream) {
@@ -219,7 +255,9 @@ public final class ApplicationProcess implements RunningApplication {
      */
     @Override
     public void terminateTree() {
+        // The tree is read before the job ends it, so that it names processes that are still alive.
         Deque<ProcessHandle> pending = new ArrayDeque<>(process.toHandle().descendants().toList());
+        job.ifPresent(this::terminateJob);
         process.destroyForcibly();
         Set<Long> seen = new HashSet<>();
         int descendants = 0;
@@ -241,6 +279,15 @@ public final class ApplicationProcess implements RunningApplication {
                     + " descendant process(es) could not be killed");
         } else {
             log.status(name + " terminated with " + descendants + " descendant process(es)");
+        }
+    }
+
+    /** Ends everything in the job at once; the walk of the process tree after it catches what was outside. */
+    private void terminateJob(ProcessJob target) {
+        try {
+            target.terminate();
+        } catch (RuntimeException e) {
+            log.error("cannot end the job object of " + name + ": " + e.getMessage() + "; ending its process tree");
         }
     }
 

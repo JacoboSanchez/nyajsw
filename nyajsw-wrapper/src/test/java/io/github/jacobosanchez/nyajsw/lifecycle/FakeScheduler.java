@@ -5,7 +5,7 @@ import java.util.Comparator;
 import java.util.PriorityQueue;
 
 /** A {@link Scheduler} on a fake clock: tasks run only when a test {@linkplain #advance advances} time. */
-final class FakeScheduler implements Scheduler {
+public final class FakeScheduler implements Scheduler {
 
     private record Task(Duration due, long order, Runnable action) {
     }
@@ -32,7 +32,7 @@ final class FakeScheduler implements Scheduler {
     }
 
     /** Moves the clock forward by {@code by}, running every task that falls due, in order, on this thread. */
-    void advance(Duration by) {
+    public void advance(Duration by) {
         Duration until;
         synchronized (this) {
             until = now.plus(by);

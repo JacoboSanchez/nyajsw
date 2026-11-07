@@ -1,8 +1,9 @@
 package io.github.jacobosanchez.nyajsw.platform.windows;
 
 /**
- * A handle the Service Control Manager gave out (to itself or to a service), opaque to everything
- * but {@link JnaScmApi}: a plain value, so that {@link ScmApi} can be mocked without native code.
+ * A handle the Service Control Manager gave out (to itself, to a service, or a service's status
+ * handle), opaque to everything but the {@code Jna*} facades: a plain value, so that {@link ScmApi}
+ * and {@link ServiceHostApi} can be mocked without native code.
  *
  * @param value the handle's native value
  */

@@ -18,21 +18,22 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 /**
  * The command-line entry point (plan §3.2, §4.9) and the only place in the wrapper that calls
  * {@code System.exit} (and, in the console shutdown hook, {@code Runtime.halt}, which sets the exit
- * code once the JVM is already shutting down). It runs console mode ({@code -c}) and the service
- * commands ({@code -i -r -t -p -q}, {@link ServiceCommands}); {@code --service}, the entry point the
- * Service Control Manager runs, follows in P6 and is recognised already, so that it gets a clear
- * answer instead of a usage error.
+ * code once the JVM is already shutting down). It runs console mode ({@code -c}), the service
+ * commands ({@code -i -r -t -p -q}, {@link ServiceCommands}) and service mode ({@code --service},
+ * {@link ServiceMode}), the command line the Service Control Manager runs.
  */
 public final class Main {
 
     private static final Set<String> CONSOLE = Set.of("-c", "--console");
-    private static final Set<String> NOT_YET = Set.of("--service");
+    private static final String SERVICE = "--service";
 
     private Main() {
     }
@@ -65,17 +66,64 @@ public final class Main {
             out.println("nyajsw " + version());
             return ExitCode.SUCCESS.code();
         }
-        if (NOT_YET.contains(command)) {
-            out.println(command + " is not implemented yet in this version of nyajsw");
-            return ExitCode.UNEXPECTED_ERROR.code();
-        }
         Optional<ServiceCommands.Action> action = ServiceCommands.Action.of(command);
-        if (arguments.size() != 2 || (action.isEmpty() && !CONSOLE.contains(command))) {
+        if (arguments.size() != 2 || (action.isEmpty() && !CONSOLE.contains(command) && !command.equals(SERVICE))) {
             out.println(usage());
             return ExitCode.UNEXPECTED_ERROR.code();
         }
+        if (command.equals(SERVICE)) {
+            return serviceMode(new ServiceMode(arguments.get(1), JavaCommandBuilder.forThisJvm(),
+                    ClasspathExpander.forThisHost(), bootstrapFiles(arguments.get(1)),
+                    () -> platform.get().processTools()), out, platform);
+        }
         return action.isPresent() ? service(action.get(), arguments.get(1), out, platform)
-                : console(arguments.get(1), out);
+                : console(arguments.get(1), out, platform);
+    }
+
+    /**
+     * Service mode: the process connects to the Service Control Manager before anything else (plan
+     * §4.4), and its exit code is the service's result. What keeps it from running as a service at
+     * all goes to the console, for someone who ran it by hand, and to the service's bootstrap log,
+     * since a service has no console ({@link ServiceMode#bootstrapLog}).
+     */
+    static int serviceMode(ServiceMode mode, PrintStream out, Supplier<Platform> platform) {
+        try {
+            platform.get().serviceHost().run(mode);
+            return mode.exitCode();
+        } catch (NyajswException e) {
+            report(e.getMessage(), mode, out);
+            return ExitCode.of(e).code();
+        } catch (RuntimeException | Error e) {
+            report("unexpected error: " + e, mode, out);
+            return ExitCode.UNEXPECTED_ERROR.code();
+        }
+    }
+
+    /**
+     * Where service mode's bootstrap log goes: beside the configuration file ({@link
+     * WrapperLog#bootstrapFile(Path, String)}), or in the temporary directory when its path cannot
+     * be parsed.
+     */
+    static Function<String, Path> bootstrapFiles(String file) {
+        try {
+            Path directory = Path.of(file).toAbsolutePath().getParent();
+            if (directory != null) {
+                return name -> WrapperLog.bootstrapFile(directory, name);
+            }
+        } catch (InvalidPathException e) {
+            // the configuration cannot be read either; say so where a file can be written
+        }
+        return WrapperLog::bootstrapFile;
+    }
+
+    private static void report(String message, ServiceMode mode, PrintStream out) {
+        String masked = mode.mask(message);
+        try (WrapperLog console = WrapperLog.console(out, LogLevel.INFO)) {
+            console.fatal(masked);
+        }
+        try (BootstrapLog bootstrap = mode.bootstrapLog()) {
+            bootstrap.fatal(masked);
+        }
     }
 
     /**
@@ -85,7 +133,7 @@ public final class Main {
     private static int service(ServiceCommands.Action action, String file, PrintStream out,
             Supplier<Platform> platform) {
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
-            Optional<WrapperConfig> loaded = load(file, log);
+            Optional<WrapperConfig> loaded = load(file, log::error);
             if (loaded.isEmpty()) {
                 return ExitCode.CONFIGURATION_ERROR.code();
             }
@@ -106,19 +154,19 @@ public final class Main {
     }
 
     /**
-     * The configuration in {@code file}, or empty once {@code log} has said why it cannot be loaded.
+     * The configuration in {@code file}, or empty once {@code errors} has been told why it cannot be loaded.
      * Its {@code wrapper.tmp.path} becomes {@code jna.tmpdir} (unless the command line sets that)
      * before anything can load JNA, which unpacks its native library there (plan §4.4).
      */
-    private static Optional<WrapperConfig> load(String file, WrapperLog log) {
+    static Optional<WrapperConfig> load(String file, Consumer<String> errors) {
         try {
             WrapperConfig config = WrapperConfig.from(ConfigLoader.forCurrentProcess().load(Path.of(file)));
             useTmpPath(config, System.getProperties());
             return Optional.of(config);
         } catch (ConfigException e) {
-            e.problems().forEach(problem -> log.error(problem.getMessage()));
+            e.problems().forEach(problem -> errors.accept(problem.getMessage()));
         } catch (InvalidPathException e) {
-            log.error("not a valid path for the configuration file: " + file);
+            errors.accept("not a valid path for the configuration file: " + file);
         }
         return Optional.empty();
     }
@@ -129,10 +177,10 @@ public final class Main {
                 .ifPresent(tmp -> properties.setProperty("jna.tmpdir", tmp.toAbsolutePath().normalize().toString()));
     }
 
-    private static int console(String file, PrintStream out) {
+    private static int console(String file, PrintStream out, Supplier<Platform> platform) {
         WrapperConfig config;
         try (WrapperLog early = WrapperLog.console(out, LogLevel.INFO)) {
-            Optional<WrapperConfig> loaded = load(file, early);
+            Optional<WrapperConfig> loaded = load(file, early::error);
             if (loaded.isEmpty()) {
                 return ExitCode.CONFIGURATION_ERROR.code();
             }
@@ -141,7 +189,8 @@ public final class Main {
         try (WrapperLog log = WrapperLog.open(config.log(), out, config.secrets())) {
             ConsoleMode mode;
             try {
-                mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost());
+                mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(), ClasspathExpander.forThisHost(),
+                        platform.get().processTools());
             } catch (RuntimeException e) {
                 return unexpected(e, config, log);
             }
@@ -181,7 +230,7 @@ public final class Main {
         };
     }
 
-    private static int unexpected(RuntimeException e, WrapperConfig config, WrapperLog log) {
+    static int unexpected(RuntimeException e, WrapperConfig config, WrapperLog log) {
         log.fatal("unexpected error: " + config.secrets().maskText(String.valueOf(e)));
         log.debug(DebugDetail.APPLICATION, () -> config.secrets().maskText(stackTrace(e)));
         return ExitCode.UNEXPECTED_ERROR.code();
@@ -206,6 +255,7 @@ public final class Main {
                 "       nyajsw -t <wrapper.conf>    start the service and wait until it runs",
                 "       nyajsw -p <wrapper.conf>    stop the service and wait until it has stopped",
                 "       nyajsw -q <wrapper.conf>    show the service's state",
+                "       nyajsw --service <wrapper.conf>  run as the service (the Service Control Manager runs this)",
                 "       nyajsw --help | --version",
                 "Long forms: --console --install --remove --start --stop --query.");
     }

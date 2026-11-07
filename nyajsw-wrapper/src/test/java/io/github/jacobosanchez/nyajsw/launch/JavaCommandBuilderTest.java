@@ -124,6 +124,18 @@ public class JavaCommandBuilderTest {
     }
 
     @Test
+    public void theWrappersOwnOptionsComeBeforeTheConfiguredOnes() throws IOException {
+        WrapperConfig config = load("wrapper.java.app.mainclass=Main", "wrapper.java.maxmemory=64",
+                "wrapper.java.library.path.1=native", "wrapper.java.additional.1=-Dx=1");
+
+        JavaCommand command = new JavaCommandBuilder(JAVA_HOME, false).build(config.java(), List.of(), List.of("-Xrs"),
+                config.secrets());
+
+        assertEquals(args(command).subList(1, 5), List.of("-Xmx64m", "-Djava.library.path="
+                + dir.resolve("native"), "-Xrs", "-Dx=1"));
+    }
+
+    @Test
     public void posixUsesColonsAndJavaAndWarnsAboutJavaw() throws IOException {
         JavaCommand command = build(load("wrapper.java.app.mainclass=Main", "wrapper.java.command.javaw=true"),
                 false, "a.jar", "b.jar");
