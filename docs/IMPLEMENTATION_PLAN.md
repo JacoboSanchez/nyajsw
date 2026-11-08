@@ -1514,7 +1514,18 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         must not fail a default `agent` liveness probe; expose the per-invocation state (no agent,
         waiting, connected, lost) rather than an empty `Optional`. Test `Supervision.launch`'s
         injection (the options, the listener closed when the start fails) once it is switched on.
-- [ ] P7.4 `docs/probes.md` user guide.
+- [x] P7.4 `docs/probes.md` user guide. **Done:** readiness and liveness (keys, timing, what a
+      failure does), the settings the two share (D25) and the errors they can give, each probe
+      type with its settings and pitfalls (a leftover file, redirects, user information, the
+      command's environment and `.cmd` files, the output buffer, one pattern for both), the agent
+      (what it does, when it is not injected, how a stop uses it, the local channel), YAJSW's
+      `wrapper.ping.*` mapping, examples, and the log messages to look for. After review: Windows
+      recovery acts on a stop with error 1066 only when the service is set up for it, which nyajsw
+      does not do yet (risk R6); a readiness file must be gone before the launch, since the first
+      check runs at once; a service whose first start keeps failing cannot be stopped meanwhile;
+      `wrapper.conf` escaping applies to patterns and commands; the cases without the agent and the
+      ping defaults of a file that does not write them are spelled out. `windows-service.md` links
+      to the guide.
 Done when: each probe has unit tests; an end-to-end Windows test reaches `RUNNING` only after an
 HTTP probe passes and stops gracefully through the agent.
 
@@ -1562,6 +1573,10 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7.4: a service whose first start never succeeds stays *starting* and cannot be stopped through
+  the SCM (1061) until `wrapper.max_failed_invocations` is used up, and never with
+  `wrapper.startup.timeout=0`; the guide warns about it, but accepting a stop while starting may be
+  better. README.md does not list the guides yet (P8.5).
 - P7.3c: `Supervision.launch` closing the agent's listener when the build or the start of the
   command fails is not tested (it needs a hook into the listener's life); the options and the
   session are, through console and service mode. A `jlink` runtime is recognised only by its
