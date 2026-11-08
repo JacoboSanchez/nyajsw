@@ -1544,10 +1544,33 @@ HTTP probe passes and stops gracefully through the agent. The test is
 group. Phase 7 is done.
 
 ### P8 — Packaging, migration, release
-- [ ] P8.1 `nyajsw-dist`: shaded `nyajsw.jar` (no relocation of `com.sun.jna`, native resources
+- [x] P8.1 `nyajsw-dist`: shaded `nyajsw.jar` (no relocation of `com.sun.jna`, native resources
       kept), `nyajsw-agent.jar`, `bin/*.bat` mirroring YAJSW script names, `conf/wrapper.conf`
       fully commented template, zip assembly.
-- [ ] P8.2 `docs/migration-from-yajsw.md`: the reinstall procedure (§10 Q8): as Administrator,
+      *Done:* `target/nyajsw-<version>.zip` holds `nyajsw.jar` (the wrapper, the agent's protocol
+      and JNA; only the module's own manifest is kept, with `Main-Class` and
+      `Implementation-Version`, so it carries neither the agent's `Premain-Class` nor JNA's
+      `Main-Class`), `nyajsw-agent.jar` beside it (where `AgentJar` looks), `bin/`, `conf/`,
+      `docs/*.md`, `LICENSE`, `README.md` and `THIRD-PARTY.txt` (JNA, used under Apache-2.0; its
+      version filtered in). `bin\nyajsw.bat` runs `java -jar nyajsw.jar` with its arguments on
+      `NYAJSW_JAVA`, else `JAVA_HOME`'s `java.exe`, else `java` from the `PATH`, plus
+      `NYAJSW_OPTS`; a switch without a file gets the installation's `conf\wrapper.conf`.
+      `runConsole`, `installService`, `uninstallService`, `startService`, `stopService` and
+      `queryService` call it with `-c`, `-i`, `-r`, `-t`, `-p` and `-q` and an optional file, and
+      pass its exit code on. The template loads without warnings as shipped and with any one
+      commented-out setting switched on, and its commented-out values are the registry's fixed
+      defaults where a key has one and change nothing when written (`ConfigTemplateTest`), which is
+      why `wrapper.ping.*` are described rather than shown: written, they change the heartbeat's
+      timing (D16). The shaded jar is a file of its own (`outputFile`): replacing the module's jar
+      under its name let the jar plugin take an earlier shaded jar for up to date, whose stale
+      classes then won. `PackagedDistributionTest` runs after `package` (a second surefire
+      execution; skipped elsewhere): it unpacks the zip under a directory with blanks and
+      parentheses and checks the layout, the manifests, that `nyajsw.jar` holds the classes just
+      built, the bundled native libraries, `--version` and a console run that finds the agent
+      beside the wrapper; running the scripts (also through a quoted `JAVA_HOME`) is in
+      `windows-integration` (they need `cmd.exe`, not elevation). The zip ships every
+      `docs/*.md`, the plan included, so that the documents' links resolve.
+- [x] P8.2 `docs/migration-from-yajsw.md`: the reinstall procedure (§10 Q8): as Administrator,
       stop (`-p`) and remove (`-r`) the service with YAJSW before deleting the YAJSW installation,
       wait until it is gone (close the Services console; until then `-i` fails with 1072,
       `ERROR_SERVICE_MARKED_FOR_DELETE`), then `-i` with nyajsw on the same `wrapper.conf`. The new
@@ -1560,10 +1583,29 @@ group. Phase 7 is done.
       `wrapper.ntservice.starttype` before `-i` (recovery actions have no key until P9). Then:
       what changes, how to read the warnings, differences (§3.4), SCM recovery interplay (R6), one
       JVM option or argument per key (`-Xms1g -Xmx2g` in one value is one argument, D19).
+      *Done:* the guide starts with moving the configuration out of the YAJSW folder (the service
+      keeps its absolute path and logs beside it) and a check that changes nothing (`-q` from any
+      prompt prints every configuration warning and the state of the service of that name; what
+      only a start shows, with an optional console run once YAJSW's service is stopped), lists the settings
+      that do not come along with the place each moves to (and the domain policy that can take
+      back the logon right, P5.5), then the move step by step with the way back, the warnings and
+      errors and what they mean, the differences in starting and stopping (no bootstrap class and
+      the Tanuki `WrapperSimpleApp`/`WrapperStartStopApp` parameters, whose stop class is never
+      called, the UTF-8 output options, unquoted paths, readiness, the agent's stop
+      and heartbeat, 0 timeouts, the job, launch errors retried and invalid `on_exit` values as
+      errors, P3.6, `STOP`, D20, values resolved at every start), in the file (separator, no list
+      splitting, escapes, D19, encoding, path bases, D13) and in logging (location, time format,
+      `maxsize` under `JVM`, the debug levels, P4.1), and SCM recovery (R6: nyajsw sets neither
+      the failure actions nor their flag; `sc failure` and `sc failureflag` after `-i`). The
+      template and `windows-service.md` link to it.
 - [ ] P8.3 Run the owner's real configuration(s) end to end on Windows; close gaps; matrix updated.
 - [ ] P8.4 *(recommended)* Release process: version tag, CI builds and attaches the zip to a GitHub
       release.
-- [ ] P8.5 Complete `README.md`.
+- [x] P8.5 Complete `README.md`.
+      *Done:* status (not released; P8.3 and P8.4 open), what nyajsw does, a quick start from the
+      zip (layout, the scripts with their default configuration, console run, install and start,
+      the Java the scripts choose), the guides, building (where the zip lands, which tests need
+      elevation), modules, contributing and licence (JNA bundled under Apache-2.0).
 Done when: a YAJSW deployment is switched to nyajsw with no configuration edits (warnings only).
 
 ### P9 — Backlog (not scheduled; pick up only when asked)
@@ -1587,6 +1629,10 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P8.1 (review): the named scripts pass their arguments on through `call`, which doubles carets, so
+  a configuration path with `^` in it reaches the wrapper changed (a cmd.exe limitation; such
+  paths are rare). The installed `nyajsw-dist` POM still declares the wrapper and the agent, which its
+  shaded jar already holds; harmless while nothing depends on that artifact.
 - PR review of Phase 7 (masking): `SecretMasker` knows a secret as written, unquoted, with doubled
   backslashes undone and with `\` for `/`, but not as Windows' `Path` otherwise rewrites it
   (doubled separators collapsed, a trailing one dropped, `.` and `..` removed by `normalize()`),
@@ -1603,7 +1649,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P7.4: a service whose first start never succeeds stays *starting* and cannot be stopped through
   the SCM (1061) until `wrapper.max_failed_invocations` is used up, and never with
   `wrapper.startup.timeout=0`; the guide warns about it, but accepting a stop while starting may be
-  better. README.md does not list the guides yet (P8.5).
+  better.
 - P7.3c: `Supervision.launch` closing the agent's listener when the build or the start of the
   command fails is not tested (it needs a hook into the listener's life); the options and the
   session are, through console and service mode. A `jlink` runtime is recognised only by its
@@ -1611,12 +1657,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P7.3b: `AgentChannel` is a final class, so probe and strategy tests use real loopback sockets
   with `FakeAgent`; extract an interface if a test needs a pure fake. `AgentChannel.exchange`
   recomputes its read timeout per line, not per byte (only an authenticated agent that misbehaves
-  could stretch it). The shaded `nyajsw.jar` of P8.1 must not carry the agent's `Premain-Class`,
-  or `AgentJar` would inject the whole wrapper; check the jar's contents too then.
-- P7.3a: the jar's real manifest is not tested (`AgentJarTest` builds its own from the compiled
-  classes), so a typo in the POM's `Premain-Class` would pass every test; check the packaged jar
-  in `nyajsw-dist` (P8.1). A challenge-response would keep the token off the wire; the P7.3b
-  constraints make the one-way handshake safe enough for a loopback channel.
+  could stretch it).
+- P7.3a: a challenge-response would keep the token off the wire; the P7.3b constraints make the
+  one-way handshake safe enough for a loopback channel. (The packaged jars' manifests are checked
+  by `PackagedDistributionTest` since P8.1.)
 - P7.2c: `OutputLines` keeps 10,000 lines and 2 million characters per invocation, filled whether
   or not a `log` probe reads the captured output; an application that logs more than that per
   liveness interval pushes its heartbeat out before the check sees it (the check fails, saying how
@@ -1694,8 +1738,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P3.6: Launch errors that cannot fix themselves (a missing executable or working directory) are
   retried like any failed invocation: with the defaults about 20 s and five error lines before
   exit 1, where P2.5 failed at once; consider a
-  kind of `LaunchException` that is not retried, or say it in the migration guide (P8.2, which
-  should also mention that invalid `on_exit` values now stop the wrapper). The
+  kind of `LaunchException` that is not retried. The
   clamp in the `forceStop` message (a real timer fires late) is covered only by `MainTest`'s real
   timing; a fake scheduler that fires late would test it. `ApplicationProcess.waitFor()` and
   `waitFor(Duration)` are now used only by tests.
@@ -1772,9 +1815,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
   running service (Tanuki's stops it first); nyajsw leaves it to Windows, so `-r` then `-i` on a
   running service fails with 1072 until it stops.
 - P5.5 (review): the grant of the logon right is silent; `-i` could say it (a notice next to the
-  returned warnings). A domain GPO that defines "Log on as a service" overwrites the local grant at
-  the next policy refresh, and 1069 comes back later, as with the Services console: say so in the
-  user guide. Built-in accounts are recognised by spelling; comparing the looked-up SID with the
+  returned warnings). Built-in accounts are recognised by spelling; comparing the looked-up SID with the
   well-known ones would also catch localised names (`NT-AUTORITÄT\...`). `JnaLsaApi` borrows the
   system-text helper of `JnaScmApi`, which uses the shared `Win32Failures` since P6.4.
 - PR #7 (review): in `WindowsServiceController.install` the logon grant runs inside the
@@ -1867,7 +1908,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 |---|---|---|---|
 | D1 | Clean-room reimplementation, Apache-2.0; compatibility only at the configuration/CLI surface | The owner is moving off YAJSW (§10 Q9); YAJSW lists Apache-2.0 alongside LGPLv3, so a clean room avoids licence entanglement and inherits none of its legacy design | Accepted |
 | D2 | Wrapper requires Java 21; agent compiled to Java 8 bytecode with zero dependencies (tests on 21) | Wrapped applications may run old JVMs; agent is injected into them | Accepted |
-| D3 | Maven multi-module: `nyajsw-agent`, `nyajsw-wrapper`, `nyajsw-dist`; wrapper depends on agent for `AgentProtocol`, never the reverse | Separate compilation target for the agent; one definition of the protocol | Accepted (P0.4 build plugins, parent POM properties: clean 3.5.0, resources 3.5.0, compiler 3.16.0, surefire 3.5.6, jar 3.5.1, install 3.2.0, deploy 3.2.0, enforcer 3.7.0, dependency 3.11.0) |
+| D3 | Maven multi-module: `nyajsw-agent`, `nyajsw-wrapper`, `nyajsw-dist`; wrapper depends on agent for `AgentProtocol`, never the reverse | Separate compilation target for the agent; one definition of the protocol | Accepted (P0.4 build plugins, parent POM properties: clean 3.5.0, resources 3.5.0, compiler 3.16.0, surefire 3.5.6, jar 3.5.1, install 3.2.0, deploy 3.2.0, enforcer 3.7.0, dependency 3.11.0; P8.1: shade 3.6.2, assembly 3.8.0) |
 | D4 | TestNG + Mockito (inline mock maker via `-javaagent` in surefire); Windows-only tests in group/profile `windows-integration` | Owner requirement; keep unit suite portable; avoid JDK 21 dynamic-agent warnings. Surefire stays on the 3.5.x line with an explicit `surefire-testng` provider: 3.6.x ships no `surefire-testng` and runs TestNG only through the JUnit Platform `testng-engine` bridge, which does not support `testng.xml` suites and turns TestNG's default reporters (`testng-results.xml`) off unless configured | Accepted (P0.4: TestNG 7.12.0, Mockito 5.24.0, surefire + surefire-testng 3.5.6) |
 | D5 | JNA + `jna-platform` for SCM calls; our own `ScmApi` facade; hand-written bindings in `platform.windows.jna` for delayed-auto-start/pre-shutdown structures, job objects, console functions and LSA; `W32ServiceManager`/`W32Service` not used (no create/delete, own exception type, not mockable) | Reuse maintained generic bindings where they exist; mockable boundary; known gaps listed up front | Accepted (P0.4: JNA and `jna-platform` 5.19.1, managed in the parent POM; added to `nyajsw-wrapper` in P5.2) |
 | D6 | Logging on `java.util.logging` with a custom rolling handler; no SLF4J/Logback | Zero deps; exact control over `wrapper.logfile.*` semantics | Accepted (P4.3: `RollingFileSink`, a JUL `Handler`) |

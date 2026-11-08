@@ -15,6 +15,11 @@
     <description>Assembly of the shaded wrapper jar, the agent jar, scripts and configuration
         templates (plan P8.1).</description>
 
+    <properties>
+        <!-- The packaged distribution, which the tests of PackagedDistributionTest unpack. -->
+        <nyajsw.dist.name>nyajsw-${project.version}</nyajsw.dist.name>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>io.github.jacobosanchez.nyajsw</groupId>
@@ -25,4 +30,109 @@
             <artifactId>nyajsw-agent</artifactId>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>nyajsw-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <!-- A file of its own rather than the replaced module jar: the jar
+                                 plugin would take an earlier shaded jar of that name for up to
+                                 date, and its stale classes would win over the wrapper's. -->
+                            <outputFile>${project.build.directory}/nyajsw.jar</outputFile>
+                            <!-- com.sun.jna is not relocated: JNA finds its native library
+                                 (com/sun/jna/<os>-<arch>/jnidispatch) under its own package name. -->
+                            <filters>
+                                <filter>
+                                    <!-- The same licence files as jna's, which are kept. -->
+                                    <artifact>net.java.dev.jna:jna-platform</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/LICENSE</exclude>
+                                        <exclude>META-INF/AL2.0</exclude>
+                                        <exclude>META-INF/LGPL2.1</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <!-- Only this module's manifest is kept, so neither the agent's
+                                     Premain-Class nor JNA's Main-Class reaches the wrapper's jar:
+                                     AgentJar would otherwise take nyajsw.jar for the agent. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>io.github.jacobosanchez.nyajsw.cli.Main</mainClass>
+                                    <manifestEntries>
+                                        <Implementation-Title>nyajsw</Implementation-Title>
+                                        <Implementation-Version>${project.version}</Implementation-Version>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>dist-zip</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <descriptors>
+                                <descriptor>src/assembly/dist.xml</descriptor>
+                            </descriptors>
+                            <finalName>${nyajsw.dist.name}</finalName>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <!-- Not a Maven artifact: releases attach the zip themselves (P8.4). -->
+                            <attach>false</attach>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <configuration>
+                            <excludes>
+                                <exclude>**/Packaged*Test.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- Tests of the packaged zip, so after the package phase. -->
+                        <id>packaged-distribution</id>
+                        <phase>integration-test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/Packaged*Test.java</include>
+                            </includes>
+                            <systemPropertyVariables>
+                                <nyajsw.dist.zip>${project.build.directory}/${nyajsw.dist.name}.zip</nyajsw.dist.zip>
+                                <nyajsw.dist.name>${nyajsw.dist.name}</nyajsw.dist.name>
+                                <nyajsw.dist.version>${project.version}</nyajsw.dist.version>
+                                <nyajsw.test.classesDir>${project.build.testOutputDirectory}</nyajsw.test.classesDir>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
