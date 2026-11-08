@@ -23,7 +23,7 @@ wrapper.readiness.http.url=http://127.0.0.1:8080/health
 
 | Key | Default | Meaning |
 |---|---|---|
-| `wrapper.readiness.type` | `process` | The probes to check, separated by commas. All of them must pass. |
+| `wrapper.readiness.type` | `process` | The probes to check, separated by commas. All of them must pass, checked in order: after one fails, only `log` probes are still checked, so they keep reading. |
 | `wrapper.readiness.interval` | `1` | Seconds between two checks, at least 1. |
 | `wrapper.startup.timeout` | `30` | Seconds the application has to become ready; `0` means no limit. |
 
@@ -36,7 +36,8 @@ If the application is not ready within `wrapper.startup.timeout`:
 - It counts as a failed start under `wrapper.max_failed_invocations`.
 - nyajsw starts it again after `wrapper.restart.delay` if the restart policy allows.
 
-The wrapper log shows the last check that failed. A service keeps showing as *starting* during
+The wrapper log shows the last check that failed, with the reason of each probe checked that
+failed, such as `last check: http: ...; log: ...`. A service keeps showing as *starting* during
 that time, and Windows refuses to stop a service that is starting (error 1061).
 
 A service whose first start keeps failing stays *starting* through its restarts. It can only be
@@ -57,7 +58,7 @@ wrapper.liveness.failures=4
 
 | Key | Default | Meaning |
 |---|---|---|
-| `wrapper.liveness.type` | `agent` when the agent is on, else none | The probes to check while the application runs. |
+| `wrapper.liveness.type` | `agent` when the agent is on, else none | The probes to check while the application runs, in order as for readiness. |
 | `wrapper.liveness.interval` | `10` | Seconds between two checks, at least 1. |
 | `wrapper.liveness.failures` | `3` | Failed checks in a row that trigger the action, at least 1. |
 | `wrapper.liveness.action` | `RESTART` | `RESTART` or `SHUTDOWN`. |
@@ -196,24 +197,26 @@ How the command runs:
 ### `log`
 
 Passes when a line that came since the previous check contains a match of the pattern. For the
-first check of an invocation, that means since its launch.
+first check of an invocation, that means since its launch. As readiness, once a line has
+matched, the later readiness checks of that run pass too, so the line still counts while
+another probe of the list, as in `log,http`, is not passing yet.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `wrapper.readiness.log.pattern` | (required) | A Java regular expression, matched anywhere in a line. |
-
-`wrapper.conf` reads the value first: `${...}` is expanded, and a backslash before a space, before
-another backslash, or before one of `, " ' # = : !` is its escape. `\d` and `\s` work as
-written; a pattern for one literal backslash is written `\\\\`.
 | `wrapper.readiness.log.file` | (none) | A file to read, relative to `wrapper.working.dir`; without it, the application's captured output. |
+
+`wrapper.conf` reads the pattern first: `${...}` is expanded, and a backslash before a space,
+before another backslash, or before one of `, " ' # = : !` is its escape. `\d` and `\s` work as
+written; a pattern for one literal backslash is written `\\\\`.
 
 What it reads:
 
 - **Captured output**: by default, the application's standard output and error, as the wrapper
   logs them, with secrets masked. Long lines come in pieces. The wrapper keeps the latest 10,000
   lines, and at most 2 million characters, of each run. An application that logs more than that
-  between two checks pushes its oldest lines out, and the detail of a failed check says how many it
-missed. A pattern cannot match across two pieces of a long line.
+  between two checks pushes its oldest lines out, and the detail of a failed check says how many
+  it missed. A pattern cannot match across two pieces of a long line.
 - **A log file**: with `wrapper.readiness.log.file`, the lines appended to that file since the
   launch, read as UTF-8. A pattern in plain ASCII matches in any ASCII-based encoding.
   - A file that becomes shorter than what was read, after a log rotation, is read again from its

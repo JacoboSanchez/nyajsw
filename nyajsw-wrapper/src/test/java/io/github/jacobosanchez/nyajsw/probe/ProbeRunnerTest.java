@@ -65,6 +65,59 @@ public class ProbeRunnerTest {
     }
 
     @Test
+    public void aProbeThatReadsEveryCheckIsCheckedAfterAFailureToo() {
+        List<String> checked = new ArrayList<>();
+        Probe reader = new Probe() {
+            @Override
+            public ProbeResult check(ProbeContext context) {
+                checked.add("log");
+                return ProbeResult.fail("no new line");
+            }
+
+            @Override
+            public boolean readsEveryCheck() {
+                return true;
+            }
+        };
+        ProbeRunner runner = new ProbeRunner(List.of(
+                probe("http", context -> {
+                    checked.add("http");
+                    return ProbeResult.fail("refused");
+                }),
+                probe("command", context -> {
+                    checked.add("command");
+                    return ProbeResult.pass("fine");
+                }),
+                probe("log", reader)), SECOND);
+
+        assertEquals(runner.check(context(true)), ProbeResult.fail("http: refused; log: no new line"));
+        assertEquals(checked, List.of("http", "log"), "the command is still gated by the failure");
+
+    }
+
+    @Test
+    public void anInterruptEndsTheRound() {
+        // The wrapper closing interrupts a check in flight; nothing after it should start a process.
+        List<String> checked = new ArrayList<>();
+        ProbeRunner runner = new ProbeRunner(List.of(
+                probe("file", context -> {
+                    checked.add("file");
+                    Thread.currentThread().interrupt();
+                    return ProbeResult.pass("exists");
+                }),
+                probe("command", context -> {
+                    checked.add("command");
+                    return ProbeResult.pass("fine");
+                })), SECOND);
+        try {
+            assertEquals(runner.check(context(true)), ProbeResult.fail("the check was interrupted"));
+            assertEquals(checked, List.of("file"));
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
     public void whenAllPassTheResultNamesTheTypes() {
         ProbeRunner runner = new ProbeRunner(List.of(probe("process", new ProcessProbe()),
                 probe("other", context -> ProbeResult.pass("fine"))), SECOND);

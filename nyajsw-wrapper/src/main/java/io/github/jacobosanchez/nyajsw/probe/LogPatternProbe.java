@@ -35,6 +35,11 @@ import java.util.regex.Pattern;
  * check; a file that grew more is read from where that much is left. A line whose end has not come
  * yet is matched as far as it goes, and counts once.
  *
+ * <p>As readiness, once a line has matched, later checks of the same invocation pass too: the
+ * readiness line comes once, and another readiness probe in the list (such as {@code log,http})
+ * may still be failing when it does, which fails the whole check. As liveness, every check needs a
+ * new match.
+ *
  * <p>Its state belongs to the invocation it last checked; a new invocation starts afresh. A check
  * that finds the previous one still running (a file share that hangs) fails at once rather than
  * waiting for it.
@@ -61,6 +66,8 @@ public final class LogPatternProbe implements Probe {
     private final ByteArrayOutputStream partial = new ByteArrayOutputStream();
     /** Whether the kept start of a line has matched already, so that the whole line does not count again. */
     private boolean partialMatched;
+    /** The readiness check that first passed for the invocation, kept for its later readiness checks. */
+    private ProbeResult ready;
 
     LogPatternProbe(Pattern pattern, Optional<Path> file) {
         this.pattern = Objects.requireNonNull(pattern, "pattern");
@@ -92,6 +99,12 @@ public final class LogPatternProbe implements Probe {
         }
     }
 
+    /** It reads what came since its previous check, so it must read on while another probe fails. */
+    @Override
+    public boolean readsEveryCheck() {
+        return true;
+    }
+
     @Override
     public ProbeResult check(ProbeContext context) {
         if (!checking.tryLock()) {
@@ -103,8 +116,17 @@ public final class LogPatternProbe implements Probe {
                 position = file.isPresent() ? sizeAtLaunch : 0;
                 partial.reset();
                 partialMatched = false;
+                ready = null;
             }
-            return file.isPresent() ? checkFile(file.get()) : checkOutput(context.application());
+            boolean readiness = context.purpose() == ProbeContext.Purpose.READINESS;
+            if (readiness && ready != null) {
+                return ready;
+            }
+            ProbeResult result = file.isPresent() ? checkFile(file.get()) : checkOutput(context.application());
+            if (readiness && result.passed()) {
+                ready = result;
+            }
+            return result;
         } finally {
             checking.unlock();
         }
