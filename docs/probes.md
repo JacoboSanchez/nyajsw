@@ -80,9 +80,10 @@ answer that either. Then the action applies:
 
 - **`RESTART`**: nyajsw starts the application again after `wrapper.restart.delay`, whatever
   `wrapper.on_exit.*` says; only the restart policy can prevent it. Its run time is counted up to
-  the first failed check. If that check came within `wrapper.successful_invocation_time` of the
-  launch, the run counts as a failed invocation under `wrapper.max_failed_invocations`, however
-  long the checks took to give up.
+  the moment it was last seen healthy: when the last check that passed began, readiness or
+  liveness. If that is within `wrapper.successful_invocation_time` of the launch, the run counts
+  as a failed invocation under `wrapper.max_failed_invocations`, however long the checks took to
+  give up.
 - **`SHUTDOWN`**: nyajsw waits for the application to end, then ends supervision as failed. In
   console mode the exit code is the application's, and never 0. A service stops with error 1066,
   and `sc query` shows the code. Windows recovery acts on such a stop only if the service has

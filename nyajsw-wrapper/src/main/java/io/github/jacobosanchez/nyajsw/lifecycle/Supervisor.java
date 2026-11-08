@@ -26,7 +26,6 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.BiFunction;
 
 /**
  * Supervises the application (plan §4.6): starts it, waits until it is ready, decides what an exit
@@ -59,8 +58,9 @@ import java.util.function.BiFunction;
  * After {@code wrapper.liveness.failures} failed checks in a row the application is terminated at
  * once, as YAJSW does when its ping times out, since an application that fails its checks may not
  * answer a graceful stop either; then {@code wrapper.liveness.action} decides: {@code RESTART}
- * starts it again like an invocation that ended by itself, its run time counted up to the first
- * check of the failing streak (towards {@code wrapper.successful_invocation_time}); {@code SHUTDOWN}
+ * starts it again like an invocation that ended by itself, its run time counted up to when the last
+ * check that passed began, readiness or liveness, since the application was not seen healthy after
+ * that (towards {@code wrapper.successful_invocation_time}); {@code SHUTDOWN}
  * waits in {@code STOPPING} for it to end and then ends supervision {@link State#FAILED FAILED}, so
  * that the wrapper does not report the end of an unhealthy application as success. A check that
  * passes resets the count. Once the process has ended, checks no longer count: its exit is on the
@@ -171,10 +171,18 @@ public final class Supervisor {
     private record StopRequested() implements Event {
     }
 
-    private record ReadinessChecked(int invocation, ProbeResult result) implements Event {
+    /** {@code startedAt} is when the check was handed to the probe executor, on the scheduler's clock. */
+    private record ReadinessChecked(int invocation, Duration startedAt, ProbeResult result) implements Event {
     }
 
-    private record LivenessChecked(int invocation, ProbeResult result) implements Event {
+    /** {@code startedAt} is when the check was handed to the probe executor, on the scheduler's clock. */
+    private record LivenessChecked(int invocation, Duration startedAt, ProbeResult result) implements Event {
+    }
+
+    /** Makes the event that brings a check's result back to the supervisor's thread. */
+    @FunctionalInterface
+    private interface CheckedEvent {
+        Event of(int invocation, Duration startedAt, ProbeResult result);
     }
 
     private record TimerFired(long id) implements Event {
@@ -205,9 +213,10 @@ public final class Supervisor {
     private Integer lastExitCode;
     /** What the last readiness check of the current invocation found. */
     private String lastReadiness;
-    /** Failed liveness checks in a row of the current invocation, and when the first of them was handled. */
+    /** Failed liveness checks in a row of the current invocation. */
     private int livenessFailures;
-    private Duration livenessFailingSince;
+    /** When the last check that passed began, readiness or liveness: the last time it was seen healthy. */
+    private Duration lastHealthyAt;
     /** Whether the current stop ends supervision {@code FAILED}: a liveness {@code SHUTDOWN}. */
     private boolean failWhenStopped;
     /** When the current stop began and when its budget runs out, on the scheduler's clock. */
@@ -414,9 +423,10 @@ public final class Supervisor {
     }
 
     /** Checks {@code probes} on the probe executor; the result comes back as an event, whatever happens. */
-    private void check(ProbeRunner probes, ProbeContext.Purpose purpose,
-            BiFunction<Integer, ProbeResult, Event> resultEvent) {
+    private void check(ProbeRunner probes, ProbeContext.Purpose purpose, CheckedEvent resultEvent) {
         int current = invocation;
+        // Taken here, before the probes run: a slow check's own time must not count as healthy run time.
+        Duration startedAt = scheduler.now();
         String kind = purpose.name().toLowerCase(Locale.ROOT);
         ProbeContext context = new ProbeContext(application, purpose);
         probeExecutor.execute(() -> {
@@ -428,7 +438,7 @@ public final class Supervisor {
             } catch (RuntimeException e) {
                 result = ProbeResult.fail("the " + kind + " check threw " + e.getClass().getName());
             } finally {
-                events.add(resultEvent.apply(current, result));
+                events.add(resultEvent.of(current, startedAt, result));
             }
         });
     }
@@ -442,6 +452,7 @@ public final class Supervisor {
             log.status(application.name() + " is ready (" + result.detail() + ")");
             moveTo(State.RUNNING);
             livenessFailures = 0;
+            lastHealthyAt = checked.startedAt();
             if (liveness.isEnabled()) {
                 startTimer(liveness.probes().interval(), this::checkLiveness);
             }
@@ -481,11 +492,9 @@ public final class Supervisor {
                 log.status(name + " passes its liveness check again (" + result.detail() + ")");
             }
             livenessFailures = 0;
+            lastHealthyAt = checked.startedAt();
             log.debug(DebugDetail.SUPERVISION, () -> name + " is alive: " + result.detail());
         } else {
-            if (livenessFailures == 0) {
-                livenessFailingSince = scheduler.now();
-            }
             livenessFailures++;
             log.status(name + " failed its liveness check (" + livenessFailures + " of " + liveness.failures()
                     + " in a row): " + result.detail());
@@ -508,9 +517,9 @@ public final class Supervisor {
         terminateNow();
         switch (liveness.action()) {
             case RESTART -> {
-                // Run time up to the first failed check: an application that turns unhealthy at once
-                // must count as a failed invocation, however long the checks took to give up on it.
-                restarts.ended(livenessFailingSince.minus(launchedAt));
+                // Run time up to when it was last seen healthy: an application that turns unhealthy
+                // at once must count as a failed invocation, however long the checks took to give up.
+                restarts.ended(lastHealthyAt.minus(launchedAt));
                 restartOnceEnded(name);
             }
             case SHUTDOWN -> {

@@ -224,7 +224,7 @@ public class SupervisorLivenessTest {
         alive.set(false);
         intervals(supervisor, FAILURES);
 
-        assertEquals(supervisor.state(), FAILED, "30 s is less than wrapper.successful_invocation_time");
+        assertEquals(supervisor.state(), FAILED, "a short run: last seen healthy at its readiness check");
         assertTrue(logged().contains("giving up after jvm 1"), logged());
         assertEquals(launched.get(0).terminations(), 1);
     }
@@ -245,9 +245,10 @@ public class SupervisorLivenessTest {
     }
 
     @Test
-    public void theRunTimeOfARestartEndsAtTheFirstFailedCheck() {
-        // 30 s to the first failure, 90 s to the restart: only the 30 s count, which is less than the
-        // 60 s of wrapper.successful_invocation_time, so with one failed invocation allowed it gives up.
+    public void theTimeTheChecksTakeToGiveUpIsNotRunTime() {
+        // 90 s from the launch to the restart, but the application was last seen healthy at its readiness
+        // check: 0 s of run time, less than the 60 s of wrapper.successful_invocation_time, so with one
+        // failed invocation allowed it gives up.
         Supervisor supervisor = running(liveness(FailureAction.RESTART, Duration.ofSeconds(30), FAILURES), 1);
 
         alive.set(false);
@@ -256,6 +257,42 @@ public class SupervisorLivenessTest {
         }
 
         assertEquals(supervisor.state(), FAILED);
+        assertTrue(logged().contains("giving up after jvm 1"), logged());
+    }
+
+    @Test
+    public void aSlowFailingCheckDoesNotCountAsRunTime() {
+        // A check that begins 10 s after the launch and takes 70 s to fail: the run counts as 0 s, since it
+        // was last seen healthy at its readiness check, however long the failing check took.
+        List<Runnable> held = new ArrayList<>();
+        probeExecutor = held::add;
+        Supervisor supervisor = started(liveness(FailureAction.RESTART, INTERVAL, 1), 1);
+        held.remove(0).run(); // readiness
+        supervisor.runPending();
+        assertEquals(supervisor.state(), RUNNING);
+
+        alive.set(false);
+        advance(supervisor, INTERVAL);
+        assertEquals(held.size(), 1, "the liveness check has begun");
+        advance(supervisor, Lifecycles.SUCCESSFUL_TIME.plusSeconds(10));
+        held.remove(0).run();
+        supervisor.runPending();
+
+        assertEquals(supervisor.state(), FAILED, logged());
+        assertTrue(logged().contains("giving up after jvm 1"), logged());
+    }
+
+    @Test
+    public void theRunTimeEndsWhereTheLastPassingCheckBegan() {
+        // Checks pass at 10 s to 50 s, and the one that begins at 60 s fails: the application was last
+        // seen healthy at 50 s, less than the 60 s of wrapper.successful_invocation_time.
+        Supervisor supervisor = running(liveness(FailureAction.RESTART, INTERVAL, 1), 1);
+
+        intervals(supervisor, 5);
+        alive.set(false);
+        advance(supervisor, INTERVAL);
+
+        assertEquals(supervisor.state(), FAILED, logged());
         assertTrue(logged().contains("giving up after jvm 1"), logged());
     }
 
