@@ -66,6 +66,18 @@ public class ConfigDumpTest {
     }
 
     @Test
+    public void aSecretWithASlashIsMaskedInAPathAsWindowsShowsIt() {
+        LoadedConfig config = new LoadedConfig(Path.of("w.conf").toAbsolutePath(), List.of(
+                new ConfigEntry("wrapper.app.password", "ab/cd", ConfigLocation.of("x"))),
+                Map.of("wrapper.app.password", ConfigLayer.FILE), List.of());
+
+        SecretMasker masker = new SecretMasker(ConfigKeys.registry(), config);
+
+        assertEquals(masker.maskText("C:\\flags\\ab\\cd.ready does not exist"), "C:\\flags\\****.ready does not exist");
+        assertEquals(masker.maskText("/flags/ab/cd.ready"), "/flags/****.ready");
+    }
+
+    @Test
     public void longerSecretsAreMaskedWholeAndEmptySecretsMaskNothing() {
         LoadedConfig config = new LoadedConfig(Path.of("w.conf").toAbsolutePath(), List.of(
                 new ConfigEntry("wrapper.app.password", "abc", ConfigLocation.of("x")),

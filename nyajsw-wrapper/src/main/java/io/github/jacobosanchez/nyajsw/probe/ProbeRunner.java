@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 /**
@@ -16,13 +17,22 @@ public final class ProbeRunner {
 
     private final List<ProbeRegistry.NamedProbe> probes;
     private final Duration interval;
+    private final UnaryOperator<String> mask;
+
+    /** As {@link #ProbeRunner(List, Duration, UnaryOperator)}, for probes whose details hold no secret. */
+    public ProbeRunner(List<ProbeRegistry.NamedProbe> probes, Duration interval) {
+        this(probes, interval, UnaryOperator.identity());
+    }
 
     /**
      * @param probes   the probes, checked in this order; none means always ready
      * @param interval the pause between two checks, positive
+     * @param mask     hides secrets in a failure's detail, which is logged: a probe's settings may hold
+     *                 a password copied in with {@code ${...}} (the configuration's {@code SecretMasker})
      */
-    public ProbeRunner(List<ProbeRegistry.NamedProbe> probes, Duration interval) {
+    public ProbeRunner(List<ProbeRegistry.NamedProbe> probes, Duration interval, UnaryOperator<String> mask) {
         this.probes = List.copyOf(probes);
+        this.mask = Objects.requireNonNull(mask, "mask");
         this.interval = Objects.requireNonNull(interval, "interval");
         if (interval.isNegative() || interval.isZero()) {
             throw new IllegalArgumentException("the probe interval must be positive: " + interval);
@@ -67,7 +77,7 @@ public final class ProbeRunner {
      * configured value.
      *
      * @return a pass when every probe passed, else the failures of the probes checked, each detail
-     *         prefixed with its type, joined with {@code "; "}
+     *         prefixed with its type, joined with {@code "; "}, secrets masked
      */
     public ProbeResult check(ProbeContext context) {
         List<String> failures = new ArrayList<>();
@@ -95,6 +105,6 @@ public final class ProbeRunner {
             }
         }
         return failures.isEmpty() ? ProbeResult.pass(probes.isEmpty() ? "no probes" : types())
-                : ProbeResult.fail(String.join("; ", failures));
+                : ProbeResult.fail(mask.apply(String.join("; ", failures)));
     }
 }
