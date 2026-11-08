@@ -1,0 +1,10 @@
+Third-party software in this distribution
+
+nyajsw.jar contains Java Native Access (JNA) and JNA Platform, version ${jna.version}
+(https://github.com/java-native-access/jna), unmodified. JNA is licensed under the Apache
+License 2.0 or the GNU Lesser General Public License 2.1 or later, at your choice; nyajsw uses it
+under the Apache License 2.0. Its licence files are in nyajsw.jar under META-INF: LICENSE, AL2.0
+and LGPL2.1.
+
+nyajsw itself is licensed under the Apache License 2.0 (LICENSE). It contains no code or
+documentation from YAJSW or the Tanuki Java Service Wrapper.
