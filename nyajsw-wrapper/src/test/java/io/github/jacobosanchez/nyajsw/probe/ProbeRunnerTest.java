@@ -7,6 +7,7 @@ import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.ProbeConfig;
+import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 
 import java.nio.file.Files;
@@ -212,6 +213,25 @@ public class ProbeRunnerTest {
     public void aRunnerWithoutProbesIsEmpty() {
         assertTrue(new ProbeRunner(List.of(), SECOND).isEmpty());
         assertFalse(new ProbeRunner(List.of(probe("process", new ProcessProbe())), SECOND).isEmpty());
+    }
+
+    @Test
+    public void aPasswordCopiedIntoAProbeSettingIsMaskedInTheFailure() throws Exception {
+        Path dir = Files.createTempDirectory("nyajsw-probe");
+        try {
+            WrapperConfig config = TestConfigs.load(dir, "wrapper.ntservice.password=s3cr3t-value",
+                    "wrapper.readiness.file.path=flags/${wrapper.ntservice.password}.ready");
+            ProbeRunner runner = new ProbeRunner(ProbeRegistry.defaults().create(List.of("file"), config.probes()),
+                    SECOND, config.secrets()::maskText);
+
+            ProbeResult result = runner.check(context(true));
+
+            assertFalse(result.passed());
+            assertFalse(result.detail().contains("s3cr3t-value"), result.detail());
+            assertTrue(result.detail().contains("****.ready"), result.detail());
+        } finally {
+            TestConfigs.delete(dir);
+        }
     }
 
     private static ProbeConfig defaultProbeConfig() throws Exception {

@@ -1411,6 +1411,10 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         the pattern (D25), so both need an alternation such as `Started|alive`. As readiness, a
         match keeps passing for the rest of the invocation's start (PR review): with `log,http` the
         start-up line often comes while the port still refuses, and the whole check fails then.
+        `ProbeRunner` masks secrets in failure details with the configuration's `SecretMasker`, since
+        a probe setting may hold a password copied in with `${...}`; the http probe shows its URL
+        masked before it is cut at a `?` or `#`, and `SecretMasker` also knows a secret's form with
+        `\` for `/`, as Windows shows paths (PR review).
         The captured output reaches it through `RunningApplication.output()`: the output pumps
         also hand every line, as logged (masked, long ones in pieces), to the invocation's
         `launch.OutputLines`, which keeps the latest 10,000 lines and 2 million characters and
@@ -1581,6 +1585,12 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- PR review of Phase 7 (masking): `SecretMasker` knows a secret as written, unquoted, with doubled
+  backslashes undone and with `\` for `/`, but not as Windows' `Path` otherwise rewrites it
+  (doubled separators collapsed, a trailing one dropped, `.` and `..` removed by `normalize()`),
+  so a password such as `ab//cd` copied into a probe's path may still show. `ProbeRunner` keeps a
+  public constructor without a mask for tests and `Liveness.NONE`; main code that builds a runner
+  must pass the configuration's mask.
 - PR review of Phase 7: a readiness check still running when the startup timeout ends its
   invocation may still reach a `log` probe listed after a failing one and reset its state; the new
   invocation's next check reads again from its launch, so nothing is lost, only work repeated.

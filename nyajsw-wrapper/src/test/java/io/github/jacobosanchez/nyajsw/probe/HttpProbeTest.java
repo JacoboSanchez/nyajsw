@@ -146,6 +146,25 @@ public class HttpProbeTest {
     }
 
     @Test
+    public void aPasswordInThePathIsMaskedBeforeTheQueryIsCutOff() throws IOException {
+        // Cut at its '?' first, the password would leave its start in the path the messages show.
+        Path dir = Files.createTempDirectory("nyajsw-http-probe");
+        try {
+            ProbeConfig config = TestConfigs.load(dir, "wrapper.ntservice.password=Sum?mer2024",
+                    "wrapper.readiness.http.url=http://127.0.0.1:" + server.getAddress().getPort()
+                            + "/${wrapper.ntservice.password}/health").probes();
+
+            Probe probe = ProbeRegistry.defaults().create(List.of("http"), config).get(0).probe();
+            ProbeResult result = probe.check(FakeRunningApplication.running());
+
+            assertFalse(result.detail().contains("Sum"), result.detail());
+            assertTrue(result.detail().startsWith("GET " + url("/****/health") + " "), result.detail());
+        } finally {
+            TestConfigs.delete(dir);
+        }
+    }
+
+    @Test
     public void failsWhenNothingListens() {
         URI url = url("/health");
         server.stop(0);

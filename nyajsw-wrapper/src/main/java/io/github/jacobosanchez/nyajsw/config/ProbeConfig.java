@@ -43,6 +43,9 @@ import java.util.regex.PatternSyntaxException;
  * @param tcpPort               {@code wrapper.readiness.tcp.port}, if set: 1 to 65535
  * @param httpUrl               {@code wrapper.readiness.http.url}, if set: an absolute {@code http} or
  *                              {@code https} URL with a host
+ * @param httpUrlShown          {@code httpUrl} with secrets masked, for messages: masked before the
+ *                              probe cuts it to scheme, host, port and path, since a cut inside a
+ *                              secret (at a {@code ?} or {@code #} it holds) would leave its start
  * @param httpStatus            {@code wrapper.readiness.http.status}, e.g. {@code 200-399}
  * @param httpTimeout           {@code wrapper.readiness.http.timeout}, at least 1 s
  * @param logPattern            {@code wrapper.readiness.log.pattern}, if set: a valid regular expression
@@ -72,7 +75,8 @@ import java.util.regex.PatternSyntaxException;
  *                              wrapper.image}, which may start any executable
  */
 public record ProbeConfig(List<String> readinessTypes, Duration readinessInterval, String tcpHost,
-        Optional<Integer> tcpPort, Optional<String> httpUrl, StatusRanges httpStatus, Duration httpTimeout,
+        Optional<Integer> tcpPort, Optional<String> httpUrl, Optional<String> httpUrlShown, StatusRanges httpStatus,
+        Duration httpTimeout,
         Optional<Pattern> logPattern, Optional<Path> logFile, Optional<Path> filePath, List<String> command,
         Duration commandTimeout, Path workingDir, List<String> livenessTypes, Duration livenessInterval,
         int livenessFailures, FailureAction livenessAction, boolean agentEnabled, Optional<Duration> agentTimeout,
@@ -84,6 +88,7 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
         Objects.requireNonNull(tcpHost, "tcpHost");
         Objects.requireNonNull(tcpPort, "tcpPort");
         Objects.requireNonNull(httpUrl, "httpUrl");
+        Objects.requireNonNull(httpUrlShown, "httpUrlShown");
         Objects.requireNonNull(httpStatus, "httpStatus");
         Objects.requireNonNull(httpTimeout, "httpTimeout");
         Objects.requireNonNull(logPattern, "logPattern");
@@ -122,13 +127,15 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
                 : livenessTypes;
         Duration interval = livenessInterval(values);
         Ping ping = ping(values, liveness, interval);
+        Optional<String> url = httpUrl(values);
         return new ProbeConfig(
                 readinessTypes.isEmpty() ? values.constantDefault(READINESS_TYPE, ValueParser::parseList)
                         : readinessTypes,
                 positive(values, READINESS_INTERVAL),
                 values.required(values.string(READINESS_TCP_HOST), READINESS_TCP_HOST),
                 port(values),
-                httpUrl(values),
+                url,
+                url.map(values.masker()::maskText),
                 httpStatus(values),
                 positive(values, READINESS_HTTP_TIMEOUT),
                 logPattern(values),

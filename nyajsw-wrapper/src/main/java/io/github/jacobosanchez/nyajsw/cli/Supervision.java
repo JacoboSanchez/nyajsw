@@ -96,9 +96,9 @@ final class Supervision {
         ProbeConfig probes = config.probes();
         ProbeRegistry registry = ProbeRegistry.defaults();
         ProbeRunner readiness = new ProbeRunner(probes(registry, ConfigKeys.READINESS_TYPE, probes.readinessTypes()),
-                probes.readinessInterval());
+                probes.readinessInterval(), config.secrets()::maskText);
         ProbeRunner livenessProbes = new ProbeRunner(probes(registry, ConfigKeys.LIVENESS_TYPE, probes.livenessTypes()),
-                probes.livenessInterval());
+                probes.livenessInterval(), config.secrets()::maskText);
         Liveness liveness = new Liveness(livenessProbes, probes.livenessFailures(), probes.livenessAction());
         this.supervisor = new Supervisor(config.lifecycle(), pidFiles.tracking(this::launch), readiness, liveness,
                 probeExecutor, stops, scheduler, log, listener);

@@ -2,6 +2,7 @@ package io.github.jacobosanchez.nyajsw.probe;
 
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ProbeConfig;
+import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.config.StatusRanges;
 import io.github.jacobosanchez.nyajsw.log.Durations;
 
@@ -44,8 +45,13 @@ public final class HttpProbe implements Probe {
     private final HttpClient client;
 
     HttpProbe(URI url, StatusRanges accepted, Duration timeout) {
+        this(url, accepted, timeout, describe(url));
+    }
+
+    /** {@code target} is how messages show the URL, its secrets masked. */
+    HttpProbe(URI url, StatusRanges accepted, Duration timeout, String target) {
         this.url = Objects.requireNonNull(url, "url");
-        this.target = describe(url);
+        this.target = Objects.requireNonNull(target, "target");
         this.accepted = Objects.requireNonNull(accepted, "accepted");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         this.client = HttpClient.newBuilder().connectTimeout(timeout).followRedirects(HttpClient.Redirect.NEVER)
@@ -61,7 +67,8 @@ public final class HttpProbe implements Probe {
         String url = config.httpUrl().orElseThrow(() -> new IllegalArgumentException("the " + TYPE + " probe needs "
                 + ConfigKeys.READINESS_HTTP_URL.name()));
         try {
-            return new HttpProbe(new URI(url), config.httpStatus(), config.httpTimeout());
+            return new HttpProbe(new URI(url), config.httpStatus(), config.httpTimeout(),
+                    shown(config.httpUrlShown().orElse(SecretMasker.MASK)));
         } catch (URISyntaxException e) {
             // ProbeConfig has checked it; the message would quote the URL, so it is not passed on.
             throw new IllegalArgumentException(ConfigKeys.READINESS_HTTP_URL.name() + " is not a valid URL");
@@ -73,6 +80,22 @@ public final class HttpProbe implements Probe {
         String port = url.getPort() < 0 ? "" : ":" + url.getPort();
         String path = url.getRawPath() == null ? "" : url.getRawPath();
         return url.getScheme() + "://" + url.getHost() + port + path;
+    }
+
+    /**
+     * The URL, with its secrets already masked, as log messages show it; a masked host or one that no
+     * longer parses shows as the mask alone.
+     */
+    private static String shown(String masked) {
+        try {
+            URI uri = new URI(masked);
+            if (uri.getHost() != null) {
+                return describe(uri);
+            }
+        } catch (URISyntaxException e) {
+            // falls through
+        }
+        return SecretMasker.MASK;
     }
 
     @Override

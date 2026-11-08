@@ -45,12 +45,13 @@ public final class SecretMasker {
 
     /**
      * The texts a secret may appear as once the configuration is used: as written, without one pair of
-     * surrounding double quotes (the command line drops them, D19), and with doubled backslashes
-     * undone (path values).
+     * surrounding double quotes (the command line drops them, D19), with doubled backslashes undone
+     * (path values), and with each {@code /} turned into {@code \} (a path as Windows shows it).
      */
     private static Stream<String> forms(String secret) {
         String unquoted = ValueParser.unquote(secret);
-        return Stream.of(secret, unquoted, ValueParser.normalisePath(secret), ValueParser.normalisePath(unquoted));
+        return Stream.of(secret, unquoted, ValueParser.normalisePath(secret), ValueParser.normalisePath(unquoted))
+                .flatMap(form -> Stream.of(form, form.replace('/', '\\')));
     }
 
     /** The length of the longest secret text, 0 when there are none. */
