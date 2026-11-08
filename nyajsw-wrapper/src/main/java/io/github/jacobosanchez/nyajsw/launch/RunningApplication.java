@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.launch;
 
 import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -50,4 +51,7 @@ public interface RunningApplication {
 
     /** The session with its agent, once the agent has connected and while the session is open (plan §4.7). */
     Optional<AgentChannel> agent();
+
+    /** Where it stands with its agent: none, waiting for it, connected, or lost. */
+    AgentState agentState();
 }

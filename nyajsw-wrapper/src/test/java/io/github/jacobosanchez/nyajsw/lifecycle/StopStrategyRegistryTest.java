@@ -55,10 +55,10 @@ public class StopStrategyRegistryTest {
     }
 
     @Test
-    public void theDefaultChainIsTerminateAlone() throws IOException {
+    public void theDefaultChainAsksTheAgentThenTerminates() throws IOException {
         StopChain chain = chainOf();
 
-        assertEquals(gracefulNames(chain), List.of());
+        assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME));
         assertEquals(chain.last().name(), TerminateStopStrategy.NAME);
         assertTrue(chain.last().strategy() instanceof TerminateStopStrategy);
         assertEquals(chain.warnings(), List.of());
@@ -88,7 +88,7 @@ public class StopStrategyRegistryTest {
 
             String warnings = String.join("\n", chain.warnings()) + "\n"
                     + config.warnings().stream().map(Object::toString).reduce("", (a, b) -> a + "\n" + b);
-            assertEquals(gracefulNames(chain), List.of(), password);
+            assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME), password);
             assertEquals(chain.warnings(), List.of(), "the default list applies: " + warnings);
             for (String piece : password.split(",")) {
                 assertFalse(warnings.toLowerCase().contains(piece.strip().toLowerCase()), password + ": " + warnings);

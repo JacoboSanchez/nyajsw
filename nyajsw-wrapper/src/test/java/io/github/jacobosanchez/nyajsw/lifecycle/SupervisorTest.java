@@ -14,11 +14,14 @@ import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.config.ControlMode;
 import io.github.jacobosanchez.nyajsw.config.ExitAction;
+import io.github.jacobosanchez.nyajsw.config.FailureAction;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
 import io.github.jacobosanchez.nyajsw.launch.LaunchException;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.probe.Probe;
+import io.github.jacobosanchez.nyajsw.probe.ProbeContext;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRegistry;
 import io.github.jacobosanchez.nyajsw.probe.ProbeResult;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRunner;
@@ -1157,17 +1160,44 @@ public class SupervisorTest {
     }
 
     @Test
-    public void whenTheLastGracefulStepFailsTheApplicationIsTerminatedAtOnce() {
+    public void whenNoGracefulStepCouldAskTheApplicationStillHasTheBudget() {
+        // The default agent,terminate with no agent connected: the application gets the Ctrl+C in
+        // console mode and must have the time to finish its own shutdown.
         List<String> asked = new ArrayList<>();
-        chainOf(recording("broken", asked, Behaviour.THROWS));
+        chainOf(recording("broken", asked, Behaviour.THROWS), recording("absent", asked, Behaviour.NOT_APPLICABLE));
         Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of()));
 
         supervisor.requestStop();
         supervisor.runPending();
+        assertEquals(launched.get(0).terminations(), 0, "not at once");
+        assertTrue(logged().contains("stopping: no graceful step applied; waiting up to 30 s for jvm 1 to end"),
+                logged());
 
+        advance(supervisor, SHUTDOWN_TIMEOUT.minusMillis(1));
+        assertEquals(launched.get(0).terminations(), 0);
+        advance(supervisor, Duration.ofMillis(1));
         assertEquals(launched.get(0).terminations(), 1);
         assertEquals(supervisor.state(), STOPPED);
-        assertTrue(logged().contains("jvm 1 did not end within 0 s; terminating it (terminate)"), logged());
+    }
+
+    @Test
+    public void readinessAndLivenessChecksSayWhatTheyAreFor() {
+        List<ProbeContext.Purpose> purposes = new CopyOnWriteArrayList<>();
+        Probe recording = context -> {
+            purposes.add(context.purpose());
+            return ProbeResult.pass("ok");
+        };
+        readiness = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("r", recording)), READINESS_INTERVAL);
+        Liveness liveness = new Liveness(new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("l", recording)),
+                Duration.ofSeconds(10)), 3, FailureAction.RESTART);
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                liveness, Runnable::run, stops, scheduler, log, (from, to) -> { });
+        supervisor.start();
+        supervisor.runPending();
+
+        advance(supervisor, Duration.ofSeconds(10));
+
+        assertEquals(purposes, List.of(ProbeContext.Purpose.READINESS, ProbeContext.Purpose.LIVENESS));
     }
 
     @Test

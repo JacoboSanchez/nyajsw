@@ -108,8 +108,8 @@ public class ConfigKeysTest {
                 {"wrapper.shutdown.timeout", SUPPORTED, YAJSW},
                 {"wrapper.pidfile", SUPPORTED, YAJSW},
                 {"wrapper.java.pidfile", SUPPORTED, YAJSW},
-                {"wrapper.ping.interval", PLANNED, YAJSW},
-                {"wrapper.ping.timeout", PLANNED, YAJSW},
+                {"wrapper.ping.interval", SUPPORTED, YAJSW},
+                {"wrapper.ping.timeout", SUPPORTED, YAJSW},
                 {"wrapper.restart.reload_configuration", UNSUPPORTED, YAJSW},
                 {"wrapper.stop.conf", UNSUPPORTED, YAJSW},
                 {"wrapper.exit_on_main_terminate", UNSUPPORTED, YAJSW},
@@ -177,7 +177,7 @@ public class ConfigKeysTest {
                 {"wrapper.liveness.interval", SUPPORTED, NYAJSW},
                 {"wrapper.liveness.failures", SUPPORTED, NYAJSW},
                 {"wrapper.liveness.action", SUPPORTED, NYAJSW},
-                {"wrapper.agent.enabled", PLANNED, NYAJSW},
+                {"wrapper.agent.enabled", SUPPORTED, NYAJSW},
                 // Configuration file
                 {"wrapper.conf.encoding", SUPPORTED, YAJSW},
         };

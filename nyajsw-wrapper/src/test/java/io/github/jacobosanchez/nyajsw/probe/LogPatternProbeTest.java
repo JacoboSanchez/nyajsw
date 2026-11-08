@@ -39,7 +39,7 @@ public class LogPatternProbeTest {
     }
 
     private static ProbeContext context(FakeRunningApplication application) {
-        return new ProbeContext(application);
+        return new ProbeContext(application, ProbeContext.Purpose.READINESS);
     }
 
     private void append(Path file, String text) throws IOException {

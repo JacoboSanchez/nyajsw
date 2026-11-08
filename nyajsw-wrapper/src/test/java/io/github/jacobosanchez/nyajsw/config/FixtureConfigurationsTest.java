@@ -112,7 +112,10 @@ public class FixtureConfigurationsTest {
         assertEquals(lifecycle.maxFailedInvocations(), 3);
         assertEquals(lifecycle.startupTimeout(), Duration.ofSeconds(60));
         assertEquals(lifecycle.shutdownTimeout(), Duration.ofSeconds(45));
-        assertEquals(lifecycle.pingInterval(), Optional.of(Duration.ofSeconds(30)));
+        assertEquals(config.probes().livenessInterval(), Duration.ofSeconds(30), "from wrapper.ping.interval");
+        // wrapper.ping.timeout=60: one failed ping of up to 30 s, then 30 s to the next, is the 60 s of silence.
+        assertEquals(config.probes().agentTimeout(), Optional.of(Duration.ofSeconds(30)));
+        assertEquals(config.probes().livenessFailures(), 1);
 
         LogConfig log = config.log();
         assertEquals(log.logfile(), Optional.of(conf.resolve("log\\wrapper_YYYYMMDD.log")));
@@ -138,7 +141,8 @@ public class FixtureConfigurationsTest {
             assertTrue(expected, "unexpected warning: " + message);
         }
         // Positive controls, so the filter above cannot go vacuous when wording changes.
-        assertTrue(messages.contains("wrapper.ping.interval" + notYet), messages.toString());
+        assertTrue(messages.stream().noneMatch(message -> message.startsWith("wrapper.ping")),
+                "supported since P7.3c: " + messages);
         assertTrue(messages.stream().noneMatch(message -> message.startsWith("wrapper.control")
                 || message.startsWith("wrapper.on_exit") || message.startsWith("wrapper.restart.delay")),
                 "supported since P3.6: " + messages);

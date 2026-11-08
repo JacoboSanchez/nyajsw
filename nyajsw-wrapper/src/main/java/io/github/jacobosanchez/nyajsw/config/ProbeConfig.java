@@ -5,6 +5,8 @@ import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LIVENESS_ACTION;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LIVENESS_FAILURES;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LIVENESS_INTERVAL;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.LIVENESS_TYPE;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_INTERVAL;
+import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.READINESS_COMMAND;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.READINESS_COMMAND_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.READINESS_FILE_PATH;
@@ -54,17 +56,27 @@ import java.util.regex.PatternSyntaxException;
  * @param commandTimeout        {@code wrapper.readiness.command.timeout}, at least 1 s
  * @param workingDir            the application's working directory, where the command runs
  * @param livenessTypes         {@code wrapper.liveness.type}; by default {@code agent} when the agent is
- *                              enabled and implemented, else none (D16; see {@link #agentInEffect})
- * @param livenessInterval      {@code wrapper.liveness.interval}, at least 1 s
- * @param livenessFailures      {@code wrapper.liveness.failures}, at least 1
+ *                              in effect, else none (D16; see {@link #agentInEffect()})
+ * @param livenessInterval      {@code wrapper.liveness.interval}, at least 1 s; when the file does not
+ *                              write it, {@code wrapper.ping.interval} if it does and is not 0 (D16)
+ * @param livenessFailures      {@code wrapper.liveness.failures}, at least 1; when the file does not
+ *                              write it and the agent is the only liveness probe, derived from
+ *                              {@code wrapper.ping.timeout} if that is written (D16)
  * @param livenessAction        {@code wrapper.liveness.action}
  * @param agentEnabled          {@code wrapper.agent.enabled} as configured
+ * @param agentTimeout          how long the {@code agent} probe waits for an answer: {@code
+ *                              wrapper.ping.timeout}, or the liveness interval when that is shorter
+ *                              and the timeout was written; empty when the timeout is 0 (Tanuki's
+ *                              "never time out"), so that only a lost session fails
+ * @param jvmApplication        whether the application is a JVM the agent can run in: no {@code
+ *                              wrapper.image}, which may start any executable
  */
 public record ProbeConfig(List<String> readinessTypes, Duration readinessInterval, String tcpHost,
         Optional<Integer> tcpPort, Optional<String> httpUrl, StatusRanges httpStatus, Duration httpTimeout,
         Optional<Pattern> logPattern, Optional<Path> logFile, Optional<Path> filePath, List<String> command,
         Duration commandTimeout, Path workingDir, List<String> livenessTypes, Duration livenessInterval,
-        int livenessFailures, FailureAction livenessAction, boolean agentEnabled) {
+        int livenessFailures, FailureAction livenessAction, boolean agentEnabled, Optional<Duration> agentTimeout,
+        boolean jvmApplication) {
 
     public ProbeConfig {
         readinessTypes = List.copyOf(readinessTypes);
@@ -83,6 +95,7 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
         livenessTypes = List.copyOf(livenessTypes);
         Objects.requireNonNull(livenessInterval, "livenessInterval");
         Objects.requireNonNull(livenessAction, "livenessAction");
+        Objects.requireNonNull(agentTimeout, "agentTimeout");
     }
 
     /**
@@ -94,12 +107,21 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
         return "ProbeConfig[values hidden; see ConfigDump]";
     }
 
-    /** @param workingDir the application's working directory, which relative probe paths start from */
-    static ProbeConfig from(ConfigValues values, Path workingDir) {
+    /** @param java the application: its working directory, which relative probe paths start from, and its image */
+    static ProbeConfig from(ConfigValues values, JavaConfig java) {
+        Path workingDir = java.workingDir();
+        // wrapper.image changes what is started only once it takes effect; until then it is a JVM.
+        boolean jvmApplication = java.image().isEmpty() || !ConfigKeys.IMAGE.status().takesEffect();
         boolean agentEnabled = values.required(values.bool(AGENT_ENABLED), AGENT_ENABLED);
         List<String> livenessTypes = values.names(LIVENESS_TYPE, "probe type");
         List<String> readinessTypes = values.names(READINESS_TYPE, "probe type");
-        boolean agentInEffect = agentInEffect(agentEnabled);
+        boolean agentInEffect = agentInEffect(agentEnabled, jvmApplication);
+        // 0 for either ping key is Tanuki's "no heartbeat": the agent is not checked by default then.
+        boolean pingOff = writtenZero(values, PING_TIMEOUT) || writtenZero(values, PING_INTERVAL);
+        List<String> liveness = livenessTypes.isEmpty() ? defaultLivenessTypes(agentInEffect && !pingOff)
+                : livenessTypes;
+        Duration interval = livenessInterval(values);
+        Ping ping = ping(values, liveness, interval);
         return new ProbeConfig(
                 readinessTypes.isEmpty() ? values.constantDefault(READINESS_TYPE, ValueParser::parseList)
                         : readinessTypes,
@@ -115,11 +137,63 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
                 command(values, workingDir),
                 positive(values, READINESS_COMMAND_TIMEOUT),
                 workingDir,
-                livenessTypes.isEmpty() ? defaultLivenessTypes(agentInEffect) : livenessTypes,
-                positive(values, LIVENESS_INTERVAL),
-                atLeastOne(values, LIVENESS_FAILURES),
+                liveness,
+                interval,
+                ping.failures(),
                 values.required(values.enumeration(LIVENESS_ACTION, FailureAction.class), LIVENESS_ACTION),
-                agentEnabled);
+                agentEnabled,
+                ping.timeout(),
+                jvmApplication);
+    }
+
+    /** What the agent probe works with: how long each ping may take, and the failures in a row that act. */
+    private record Ping(Optional<Duration> timeout, int failures) {
+    }
+
+    /**
+     * YAJSW's {@code wrapper.ping.timeout} is the silence after which the JVM counts as hung (D16).
+     * Written, and with the agent as the only liveness probe and {@code wrapper.liveness.failures}
+     * not written, it becomes pings that may each take up to one interval, as many failed in a row
+     * as fit into the timeout; so a hang is acted on after about the timeout, as before. Otherwise
+     * each ping may take the whole timeout, and {@code wrapper.liveness.failures} counts them.
+     */
+    private static Ping ping(ConfigValues values, List<String> liveness, Duration interval) {
+        Duration timeout = values.required(values.duration(PING_TIMEOUT), PING_TIMEOUT);
+        if (timeout.isZero()) {
+            return new Ping(Optional.empty(), atLeastOne(values, LIVENESS_FAILURES));
+        }
+        boolean agentOnly = liveness.size() == 1 && liveness.get(0).strip().equalsIgnoreCase("agent");
+        if (values.writtenAt(PING_TIMEOUT).isPresent() && values.writtenAt(LIVENESS_FAILURES).isEmpty() && agentOnly) {
+            Duration perPing = timeout.compareTo(interval) < 0 ? timeout : interval;
+            // A failing ping takes up to perPing, then the next waits an interval.
+            long cycle = perPing.plus(interval).toMillis();
+            int failures = (int) Math.max(1, Math.min(Integer.MAX_VALUE, (timeout.toMillis() + cycle - 1) / cycle));
+            return new Ping(Optional.of(perPing), failures);
+        }
+        return new Ping(Optional.of(timeout), atLeastOne(values, LIVENESS_FAILURES));
+    }
+
+    /** Whether the file writes {@code spec} as 0. */
+    private static boolean writtenZero(ConfigValues values, KeySpec spec) {
+        return values.writtenAt(spec).isPresent() && values.duration(spec).map(Duration::isZero).orElse(false);
+    }
+
+    /**
+     * {@code wrapper.liveness.interval}, or YAJSW's {@code wrapper.ping.interval} when the file
+     * writes only that, and not as 0 (D16): both have constant defaults, so what counts is which one
+     * is written.
+     */
+    private static Duration livenessInterval(ConfigValues values) {
+        Optional<ConfigLocation> liveness = values.writtenAt(LIVENESS_INTERVAL);
+        Optional<ConfigLocation> ping = values.writtenAt(PING_INTERVAL);
+        if (liveness.isEmpty() && ping.isPresent() && !writtenZero(values, PING_INTERVAL)) {
+            return positive(values, PING_INTERVAL);
+        }
+        if (liveness.isPresent() && ping.isPresent()) {
+            values.warn(ping.get(), PING_INTERVAL.name() + " is ignored: " + LIVENESS_INTERVAL.name()
+                    + " sets the liveness interval");
+        }
+        return positive(values, LIVENESS_INTERVAL);
     }
 
     /**
@@ -260,20 +334,20 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
     }
 
     /**
-     * Whether the agent is injected into the application: enabled and implemented ({@link
-     * #agentInEffect(boolean)}).
+     * Whether the agent is injected into the application and the derived defaults count on it
+     * ({@link #agentInEffect(boolean, boolean)}).
      */
     public boolean agentInEffect() {
-        return agentInEffect(agentEnabled);
+        return agentInEffect(agentEnabled, jvmApplication);
     }
 
     /**
-     * Whether derived defaults may count on the agent: it is enabled and implemented. While
-     * {@code wrapper.agent.enabled} is only planned it has no effect, like every planned key, so the
-     * defaults behave as without the agent until P7 makes it supported.
+     * Whether the agent is injected and the derived defaults count on it: it is enabled and
+     * implemented, and the application is a JVM. One predicate for both, so that no default asks
+     * for an agent that is never injected.
      */
-    static boolean agentInEffect(boolean agentEnabled) {
-        return agentEnabled && AGENT_ENABLED.status() == KeyStatus.SUPPORTED;
+    static boolean agentInEffect(boolean agentEnabled, boolean jvmApplication) {
+        return agentEnabled && jvmApplication && AGENT_ENABLED.status().takesEffect();
     }
 
     /** The derived default of {@code wrapper.liveness.type}, as its registry description states (D16). */

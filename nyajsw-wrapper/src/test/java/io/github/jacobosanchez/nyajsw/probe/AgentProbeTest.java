@@ -1,9 +1,11 @@
 package io.github.jacobosanchez.nyajsw.probe;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.agentlink.AgentListener;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 import io.github.jacobosanchez.nyajsw.agentlink.FakeAgent;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
@@ -13,15 +15,37 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.Optional;
 
 import org.testng.annotations.Test;
 
 public class AgentProbeTest {
 
     @Test
-    public void failsUntilTheAgentHasConnected() {
-        assertEquals(new AgentProbe(Duration.ofSeconds(1)).check(FakeRunningApplication.running()),
-                ProbeResult.fail("the agent of jvm 1 has not connected"));
+    public void anInvocationWithoutTheAgentHasNothingToCheck() {
+        assertEquals(new AgentProbe(Optional.of(Duration.ofSeconds(1))).check(FakeRunningApplication.running()),
+                ProbeResult.pass("jvm 1 runs without the agent; nothing to check"));
+    }
+
+    @Test
+    public void anAgentThatHasNotConnectedYetIsNotReadyButNotDeadEither() {
+        FakeRunningApplication application = new FakeRunningApplication(true);
+        application.agentState(AgentState.WAITING);
+        AgentProbe probe = new AgentProbe(Optional.of(Duration.ofSeconds(1)));
+
+        assertEquals(probe.check(new ProbeContext(application, ProbeContext.Purpose.READINESS)),
+                ProbeResult.fail("the agent of jvm 1 has not connected yet"));
+        assertEquals(probe.check(new ProbeContext(application, ProbeContext.Purpose.LIVENESS)),
+                ProbeResult.pass("the agent of jvm 1 has not connected yet"));
+    }
+
+    @Test
+    public void aSessionThatEndedFails() {
+        FakeRunningApplication application = new FakeRunningApplication(true);
+        application.agentState(AgentState.LOST);
+
+        assertEquals(new AgentProbe(Optional.of(Duration.ofSeconds(1))).check(new ProbeContext(application,
+                ProbeContext.Purpose.LIVENESS)), ProbeResult.fail("the session with the agent of jvm 1 has ended"));
     }
 
     @Test(timeOut = 60_000)
@@ -32,18 +56,34 @@ public class AgentProbeTest {
              FakeAgent agent = FakeAgent.introduce(listener)) {
             FakeRunningApplication application = new FakeRunningApplication(true);
             application.connectAgent(listener.channel().orElseThrow());
-            ProbeContext context = new ProbeContext(application);
+            ProbeContext context = new ProbeContext(application, ProbeContext.Purpose.READINESS);
 
-            assertEquals(new AgentProbe(Duration.ofSeconds(10)).check(context),
+            assertEquals(new AgentProbe(Optional.of(Duration.ofSeconds(10))).check(context),
                     ProbeResult.pass("the agent of jvm 1 answers"));
             agent.holdAnswers();
-            assertEquals(new AgentProbe(Duration.ofMillis(200)).check(context),
+            assertEquals(new AgentProbe(Optional.of(Duration.ofMillis(200))).check(context),
                     ProbeResult.fail("the agent of jvm 1 did not answer within 0.200 s"));
         }
     }
 
     @Test
     public void theTimeoutMustBePositive() {
-        expectThrows(IllegalArgumentException.class, () -> new AgentProbe(Duration.ZERO));
+        expectThrows(IllegalArgumentException.class, () -> new AgentProbe(Optional.of(Duration.ZERO)));
+    }
+
+    @Test(timeOut = 60_000)
+    public void withoutATimeoutAnOpenSessionIsEnough() throws Exception {
+        try (WrapperLog log = WrapperLog.console(new PrintStream(new ByteArrayOutputStream(), true,
+                StandardCharsets.UTF_8), LogLevel.INFO);
+             AgentListener listener = AgentListener.open("jvm 1", log, new SecureRandom());
+             FakeAgent agent = FakeAgent.introduce(listener)) {
+            FakeRunningApplication application = new FakeRunningApplication(true);
+            application.connectAgent(listener.channel().orElseThrow());
+            agent.holdAnswers(); // it would not answer a ping
+
+            assertEquals(new AgentProbe(Optional.empty()).check(new ProbeContext(application,
+                    ProbeContext.Purpose.LIVENESS)), ProbeResult.pass("the agent of jvm 1 is connected"));
+            assertTrue(agent.received().isEmpty(), "no ping sent");
+        }
     }
 }

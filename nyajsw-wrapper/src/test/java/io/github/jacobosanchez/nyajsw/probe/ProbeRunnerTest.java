@@ -34,8 +34,8 @@ public class ProbeRunnerTest {
     public void theProcessProbePassesWhileTheProcessRuns() {
         ProcessProbe probe = new ProcessProbe();
 
-        assertEquals(probe.check(new ProbeContext(application(true))), ProbeResult.pass("jvm 1 is running"));
-        assertEquals(probe.check(new ProbeContext(application(false))), ProbeResult.fail("jvm 1 is not running"));
+        assertEquals(probe.check(new ProbeContext(application(true), ProbeContext.Purpose.READINESS)), ProbeResult.pass("jvm 1 is running"));
+        assertEquals(probe.check(new ProbeContext(application(false), ProbeContext.Purpose.READINESS)), ProbeResult.fail("jvm 1 is not running"));
     }
 
     @Test
@@ -55,7 +55,7 @@ public class ProbeRunnerTest {
                     return ProbeResult.pass("fine");
                 })), SECOND);
 
-        assertEquals(runner.check(new ProbeContext(application(true))), ProbeResult.fail("b: port closed"));
+        assertEquals(runner.check(new ProbeContext(application(true), ProbeContext.Purpose.READINESS)), ProbeResult.fail("b: port closed"));
         assertEquals(checked, List.of("a", "b"), "checking stops at the first failure");
     }
 
@@ -64,7 +64,7 @@ public class ProbeRunnerTest {
         ProbeRunner runner = new ProbeRunner(List.of(probe("process", new ProcessProbe()),
                 probe("other", context -> ProbeResult.pass("fine"))), SECOND);
 
-        assertEquals(runner.check(new ProbeContext(application(true))), ProbeResult.pass("process,other"));
+        assertEquals(runner.check(new ProbeContext(application(true), ProbeContext.Purpose.READINESS)), ProbeResult.pass("process,other"));
         assertEquals(runner.types(), "process,other");
     }
 
@@ -72,7 +72,7 @@ public class ProbeRunnerTest {
     public void noProbesMeansReady() {
         ProbeRunner runner = new ProbeRunner(List.of(), SECOND);
 
-        assertEquals(runner.check(new ProbeContext(application(false))), ProbeResult.pass("no probes"));
+        assertEquals(runner.check(new ProbeContext(application(false), ProbeContext.Purpose.READINESS)), ProbeResult.pass("no probes"));
     }
 
     @Test
@@ -82,9 +82,9 @@ public class ProbeRunnerTest {
         })), SECOND);
         ProbeRunner silent = new ProbeRunner(List.of(probe("s", context -> null)), SECOND);
 
-        assertEquals(throwing.check(new ProbeContext(application(true))),
+        assertEquals(throwing.check(new ProbeContext(application(true), ProbeContext.Purpose.READINESS)),
                 ProbeResult.fail("t: the probe threw java.lang.IllegalArgumentException"));
-        assertEquals(silent.check(new ProbeContext(application(true))),
+        assertEquals(silent.check(new ProbeContext(application(true), ProbeContext.Purpose.READINESS)),
                 ProbeResult.fail("s: the probe returned no result"));
     }
 

@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
 import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
 import io.github.jacobosanchez.nyajsw.launch.OutputLines;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
@@ -24,6 +25,7 @@ final class FakeApplication implements RunningApplication {
     private volatile boolean failingOnExit;
     private final OutputLines output = new OutputLines();
     private volatile Optional<AgentChannel> agent = Optional.empty();
+    private volatile AgentState agentState = AgentState.NONE;
 
     FakeApplication(int invocation) {
         this.name = ApplicationLauncher.nameOf(invocation);
@@ -114,6 +116,18 @@ final class FakeApplication implements RunningApplication {
     /** Lets the application have {@code channel} as its agent's session. */
     void connectAgent(AgentChannel channel) {
         agent = Optional.of(channel);
+        agentState = AgentState.CONNECTED;
+    }
+
+    /** Lets the application be in {@code state} with its agent, without a session. */
+    void agentState(AgentState state) {
+        agent = Optional.empty();
+        agentState = state;
+    }
+
+    @Override
+    public AgentState agentState() {
+        return agent.isPresent() && !agent.get().isOpen() ? AgentState.LOST : agentState;
     }
 
     @Override

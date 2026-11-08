@@ -58,6 +58,7 @@ public class AgentListenerTest {
         assertEquals(listener.jvmOptions(Path.of("nyajsw-agent.jar")), List.of(
                 "-javaagent:" + Path.of("nyajsw-agent.jar"), "-Dnyajsw.agent.port=" + listener.port()));
         assertFalse(listener.channel().isPresent());
+        assertEquals(listener.state(), AgentState.WAITING);
     }
 
     @Test(timeOut = 60_000)
@@ -130,6 +131,7 @@ public class AgentListenerTest {
         try (AgentListener waiting = AgentListener.open("jvm 2", log, new SecureRandom(), Duration.ofMillis(500),
                 Duration.ofMillis(300))) {
             awaitLogged("the agent of jvm 2 did not connect within 0.300 s; the application runs without it");
+            assertEquals(waiting.state(), AgentState.NONE, "it runs without the agent now");
             expectThrows(IOException.class, () -> new Socket(AgentProtocol.loopback(), waiting.port()).close());
         }
     }
@@ -176,11 +178,13 @@ public class AgentListenerTest {
     public void aSessionTheAgentEndedIsGone() throws Exception {
         FakeAgent agent = FakeAgent.introduce(listener);
         AgentChannel channel = listener.channel().orElseThrow();
+        assertEquals(listener.state(), AgentState.CONNECTED);
 
         agent.close();
 
         assertFalse(channel.ping(Duration.ofSeconds(10)));
         assertFalse(channel.isOpen());
+        assertEquals(listener.state(), AgentState.LOST);
         assertFalse(listener.channel().isPresent());
         assertFalse(channel.stop(SECOND));
     }

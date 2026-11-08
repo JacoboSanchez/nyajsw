@@ -42,6 +42,6 @@ final class Lifecycles {
             Duration shutdownTimeout, Duration jvmExitTimeout, List<String> stopStrategies) {
         return new LifecycleConfig(control, actions, defaultAction, RESTART_DELAY, maxFailedInvocations,
                 SUCCESSFUL_TIME, startupDelay, startupTimeout, shutdownTimeout, jvmExitTimeout, Optional.empty(),
-                Optional.empty(), stopStrategies, Optional.empty(), Optional.empty(), Optional.empty());
+                Optional.empty(), stopStrategies, Optional.empty());
     }
 }
