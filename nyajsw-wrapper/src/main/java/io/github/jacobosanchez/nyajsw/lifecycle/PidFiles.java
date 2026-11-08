@@ -1,10 +1,13 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
+import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
+import io.github.jacobosanchez.nyajsw.launch.OutputLines;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import io.github.jacobosanchez.nyajsw.log.WriteAccess;
@@ -123,6 +126,21 @@ public final class PidFiles {
                 });
             }
             return exit.copy();
+        }
+
+        @Override
+        public OutputLines output() {
+            return application.output();
+        }
+
+        @Override
+        public Optional<AgentChannel> agent() {
+            return application.agent();
+        }
+
+        @Override
+        public AgentState agentState() {
+            return application.agentState();
         }
 
         @Override

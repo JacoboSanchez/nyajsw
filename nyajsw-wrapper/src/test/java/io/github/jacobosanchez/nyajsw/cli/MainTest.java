@@ -5,6 +5,7 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
+import io.github.jacobosanchez.nyajsw.agentlink.AgentJar;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
@@ -31,6 +32,7 @@ import java.util.OptionalInt;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import org.testng.SkipException;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -103,6 +105,18 @@ public class MainTest {
 
         assertEquals(code, ExitCode.CONFIGURATION_ERROR.code());
         assertTrue(output().contains("wrapper.java.maxmemory"), output());
+    }
+
+    @Test
+    public void anUnknownProbeTypeIsAConfigurationErrorBeforeAnythingStarts() throws Exception {
+        Path conf = conf("wrapper.liveness.type=process, telepathy");
+
+        int code = Main.run(new String[] {"-c", conf.toString()}, out);
+
+        assertEquals(code, ExitCode.CONFIGURATION_ERROR.code(), output());
+        assertTrue(output().contains("wrapper.liveness.type: unknown probe type telepathy;"
+                + " known: [process, tcp, http, file, command, log, agent]"), output());
+        assertFalse(output().contains("launching jvm 1"), output());
     }
 
     @Test
@@ -188,8 +202,37 @@ public class MainTest {
     }
 
     @Test(timeOut = 120_000)
+    public void stopAsksTheAgentSoTheApplicationEndsGracefullyWithZero() throws Exception {
+        WrapperConfig config = load(conf("wrapper.app.parameter.1=park", "wrapper.shutdown.timeout=30"));
+        if (AgentJar.locate().isEmpty()) {
+            throw new SkipException("the agent's jar is not built; run the whole build (mvn verify)");
+        }
+        try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
+            ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
+                    ClasspathExpander.forThisHost(), ProcessTools.NONE);
+            CompletableFuture<Integer> run = CompletableFuture.supplyAsync(mode::run);
+            try {
+                awaitOutput("the agent of jvm 1 has connected");
+                long start = System.nanoTime();
+
+                int code = mode.stop();
+
+                assertEquals(code, 0, output());
+                assertEquals(run.get(1, TimeUnit.MINUTES), 0);
+                assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(25), "well within the 30 s budget");
+            } finally {
+                mode.stop();
+            }
+        }
+        assertTrue(output().contains("stopping jvm 1: agent, waiting up to "), output());
+        assertTrue(output().contains("the agent of jvm 1 is ending the application"), output());
+        assertFalse(output().contains("terminating it"), output());
+    }
+
+    @Test(timeOut = 120_000)
     public void stopWaitsForTheShutdownTimeoutThenTerminatesTheApplication() throws Exception {
-        WrapperConfig config = load(conf("wrapper.app.parameter.1=park", "wrapper.shutdown.timeout=1"));
+        WrapperConfig config = load(conf("wrapper.app.parameter.1=park", "wrapper.shutdown.timeout=1",
+                "wrapper.agent.enabled=false")); // the terminate path
         ConsoleMode mode;
         CompletableFuture<Integer> run;
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
@@ -214,7 +257,8 @@ public class MainTest {
 
     @Test(timeOut = 120_000)
     public void stopLetsAnApplicationThatEndsByItselfReturnItsCode() throws Exception {
-        WrapperConfig config = load(conf("wrapper.app.parameter.1=linger", "wrapper.app.parameter.2=500",
+        WrapperConfig config = load(conf("wrapper.agent.enabled=false", "wrapper.app.parameter.1=linger",
+                "wrapper.app.parameter.2=500",
                 "wrapper.app.parameter.3=3", "wrapper.shutdown.timeout=30"));
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {
             ConsoleMode mode = new ConsoleMode(config, log, JavaCommandBuilder.forThisJvm(),
@@ -236,7 +280,8 @@ public class MainTest {
 
     @Test(timeOut = 120_000)
     public void theStopHookEndsTheJvmWithTheApplicationsExitCode() throws Exception {
-        WrapperConfig config = load(conf("wrapper.app.parameter.1=linger", "wrapper.app.parameter.2=500",
+        WrapperConfig config = load(conf("wrapper.agent.enabled=false", "wrapper.app.parameter.1=linger",
+                "wrapper.app.parameter.2=500",
                 "wrapper.app.parameter.3=3", "wrapper.shutdown.timeout=30"));
         List<Integer> halted = new ArrayList<>();
         try (WrapperLog log = WrapperLog.console(out, LogLevel.INFO)) {

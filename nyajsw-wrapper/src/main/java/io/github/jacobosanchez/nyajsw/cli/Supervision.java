@@ -1,14 +1,23 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
+import io.github.jacobosanchez.nyajsw.agentlink.AgentJar;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentListener;
+import io.github.jacobosanchez.nyajsw.agentlink.JavaRuntime;
+import io.github.jacobosanchez.nyajsw.config.ConfigException;
+import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigWarning;
+import io.github.jacobosanchez.nyajsw.config.KeySpec;
 import io.github.jacobosanchez.nyajsw.config.ProbeConfig;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
+import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationProcess;
 import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommand;
 import io.github.jacobosanchez.nyajsw.launch.JavaCommandBuilder;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
+import io.github.jacobosanchez.nyajsw.lifecycle.AgentStopStrategy;
 import io.github.jacobosanchez.nyajsw.lifecycle.ExecutorScheduler;
+import io.github.jacobosanchez.nyajsw.lifecycle.Liveness;
 import io.github.jacobosanchez.nyajsw.lifecycle.PidFiles;
 import io.github.jacobosanchez.nyajsw.lifecycle.State;
 import io.github.jacobosanchez.nyajsw.lifecycle.StopChain;
@@ -17,9 +26,14 @@ import io.github.jacobosanchez.nyajsw.lifecycle.Supervisor;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
 import io.github.jacobosanchez.nyajsw.platform.ProcessJob;
 import io.github.jacobosanchez.nyajsw.platform.ProcessTools;
+import io.github.jacobosanchez.nyajsw.probe.AgentProbe;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRegistry;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRunner;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,7 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The application under a {@link Supervisor}, as console mode and service mode both run it: its
- * restart policy, readiness probes, stop strategies and pid files, each invocation launched with a
+ * restart policy, readiness and liveness probes, stop strategies and pid files, each invocation launched with a
  * freshly expanded classpath. It runs once.
  *
  * <p>When {@code wrapper.control} ends the application with the wrapper ({@code TIGHT}, {@code
@@ -54,6 +68,11 @@ final class Supervision {
     private final ProcessTools processes;
     /** The job of this run, from {@link #run()} on; read by the launches, which run on the same thread. */
     private Optional<ProcessJob> job = Optional.empty();
+    /** The agent's jar when the agent is injected (plan P7.3); without one, none is. */
+    private final Optional<Path> agentJar;
+    private final SecureRandom random = new SecureRandom();
+    /** Set once the application's runtime turned out to lack {@code java.instrument}, which is warned about once. */
+    private boolean noInstrumentation;
     private final Supervisor supervisor;
     private final AtomicBoolean started = new AtomicBoolean();
 
@@ -62,7 +81,7 @@ final class Supervision {
      *                       service mode)
      * @param listener       told about every change of the supervisor's state
      * @param processes      the platform's help with processes ({@link ProcessTools#NONE} for none)
-     * @throws IllegalArgumentException when a readiness probe type is not known
+     * @throws ConfigException when a readiness or liveness probe type is not known or cannot be built
      */
     Supervision(WrapperConfig config, WrapperLog log, JavaCommandBuilder builder, ClasspathExpander expander,
             List<String> wrapperOptions, Supervisor.StateListener listener, ProcessTools processes) {
@@ -75,10 +94,56 @@ final class Supervision {
         this.pidFiles = new PidFiles(config.lifecycle(), config.secrets(), log);
         this.processes = Objects.requireNonNull(processes, "processes");
         ProbeConfig probes = config.probes();
-        ProbeRunner readiness = new ProbeRunner(ProbeRegistry.defaults().create(probes.readinessTypes(), probes),
-                probes.readinessInterval());
-        this.supervisor = new Supervisor(config.lifecycle(), pidFiles.tracking(this::launch), readiness,
+        ProbeRegistry registry = ProbeRegistry.defaults();
+        ProbeRunner readiness = new ProbeRunner(probes(registry, ConfigKeys.READINESS_TYPE, probes.readinessTypes()),
+                probes.readinessInterval(), config.secrets()::maskText);
+        ProbeRunner livenessProbes = new ProbeRunner(probes(registry, ConfigKeys.LIVENESS_TYPE, probes.livenessTypes()),
+                probes.livenessInterval(), config.secrets()::maskText);
+        Liveness liveness = new Liveness(livenessProbes, probes.livenessFailures(), probes.livenessAction());
+        this.supervisor = new Supervisor(config.lifecycle(), pidFiles.tracking(this::launch), readiness, liveness,
                 probeExecutor, stops, scheduler, log, listener);
+        this.agentJar = agentJar(config);
+    }
+
+    /**
+     * The agent's jar, when the agent is in effect and the application is a JVM: {@code
+     * wrapper.image} runs an executable that may be no JVM at all.
+     */
+    private static Optional<Path> agentJar(WrapperConfig config) {
+        return agentWanted(config) ? AgentJar.locate() : Optional.empty();
+    }
+
+    /** Whether the agent is to be injected: the predicate the derived defaults follow too. */
+    private static boolean agentWanted(WrapperConfig config) {
+        return config.probes().agentInEffect();
+    }
+
+    /** What is configured to use the agent: probe types and stop strategies named {@code agent}. */
+    private List<String> agentUsers() {
+        List<String> users = new ArrayList<>();
+        if (named(config.probes().readinessTypes(), AgentProbe.TYPE)) {
+            users.add(ConfigKeys.READINESS_TYPE.name());
+        }
+        if (named(config.probes().livenessTypes(), AgentProbe.TYPE)) {
+            users.add(ConfigKeys.LIVENESS_TYPE.name());
+        }
+        if (stops.graceful().stream().anyMatch(step -> step.name().equals(AgentStopStrategy.NAME))) {
+            users.add(ConfigKeys.STOP_STRATEGY.name());
+        }
+        return users;
+    }
+
+    private static boolean named(List<String> names, String name) {
+        return names.stream().anyMatch(listed -> listed.strip().equalsIgnoreCase(name));
+    }
+
+    /** The probes {@code key} lists; one the registry cannot build is a configuration error, shown masked. */
+    private List<ProbeRegistry.NamedProbe> probes(ProbeRegistry registry, KeySpec key, List<String> types) {
+        try {
+            return registry.create(types, config.probes());
+        } catch (IllegalArgumentException e) {
+            throw new ConfigException(config.secrets().maskText(key.name() + ": " + e.getMessage()));
+        }
     }
 
     /**
@@ -95,6 +160,18 @@ final class Supervision {
                 log.status("warning: " + warning);
             }
             warn(stops.warnings());
+            if (agentWanted(config) && agentJar.isEmpty()) {
+                log.status("warning: the agent's jar (" + AgentJar.FILE_NAME + ") is not found beside the wrapper"
+                        + " (or its path holds '='); the application runs without the agent");
+            }
+            List<String> users = agentUsers();
+            // Only where the agent is off do the lists name it because the file says so; the derived
+            // defaults name it only while it is in effect, and a missing jar is warned about above.
+            if (!agentWanted(config) && !users.isEmpty()) {
+                log.status("warning: " + String.join(", ", users) + " names the agent, but the application runs"
+                        + " without it (" + ConfigKeys.AGENT_ENABLED.name() + ", " + ConfigKeys.IMAGE.name()
+                        + "): agent probes pass without checking and the agent stop does not apply");
+            }
             if (config.lifecycle().control().applicationEndsWithWrapper()) {
                 job = createJob(processes, log);
             }
@@ -154,9 +231,44 @@ final class Supervision {
         ClasspathExpander.Expanded classpath = expander.expand(config.java().classpath(), config.java().workingDir(),
                 config.secrets());
         warn(classpath.warnings());
-        JavaCommand command = builder.build(config.java(), classpath.entries(), wrapperOptions, config.secrets());
-        warn(command.warnings());
-        return ApplicationProcess.start(command, config.java(), invocation, config.secrets(), log, job);
+        JavaCommand plain = builder.build(config.java(), classpath.entries(), wrapperOptions, config.secrets());
+        warn(plain.warnings());
+        Optional<AgentListener> agent = agentFor(plain, ApplicationLauncher.nameOf(invocation));
+        try {
+            JavaCommand command = plain;
+            if (agent.isPresent()) {
+                List<String> options = new ArrayList<>(wrapperOptions);
+                options.addAll(agent.get().jvmOptions(agentJar.orElseThrow()));
+                command = builder.build(config.java(), classpath.entries(), options, config.secrets());
+            }
+            return ApplicationProcess.start(command, config.java(), invocation, config.secrets(), log, job, agent);
+        } catch (RuntimeException e) {
+            agent.ifPresent(AgentListener::close);
+            throw e;
+        }
+    }
+
+    /**
+     * A listener for the invocation's agent, when there is an agent and the runtime of {@code
+     * command} can load it; one that cannot be opened is logged.
+     */
+    private Optional<AgentListener> agentFor(JavaCommand command, String name) {
+        if (agentJar.isEmpty() || noInstrumentation) {
+            return Optional.empty();
+        }
+        if (JavaRuntime.lacksInstrumentation(command.executable())) {
+            noInstrumentation = true;
+            log.status("warning: the application's Java runtime has no java.instrument module, which the agent"
+                    + " needs; the application runs without it (set " + ConfigKeys.AGENT_ENABLED.name()
+                    + "=false to say so)");
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(AgentListener.open(name, log, random));
+        } catch (IOException e) {
+            log.error("cannot listen for the agent of " + name + " (" + e.getMessage() + "); it runs without it");
+            return Optional.empty();
+        }
     }
 
     private void warn(List<String> warnings) {

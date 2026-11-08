@@ -55,14 +55,14 @@ public class StopStrategyRegistryTest {
     }
 
     @Test
-    public void theDefaultChainIsTerminateAlone() throws IOException {
+    public void theDefaultChainAsksTheAgentThenTerminates() throws IOException {
         StopChain chain = chainOf();
 
-        assertEquals(gracefulNames(chain), List.of());
+        assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME));
         assertEquals(chain.last().name(), TerminateStopStrategy.NAME);
         assertTrue(chain.last().strategy() instanceof TerminateStopStrategy);
         assertEquals(chain.warnings(), List.of());
-        assertEquals(StopStrategyRegistry.defaults().names(), Set.of("terminate"));
+        assertEquals(StopStrategyRegistry.defaults().names(), Set.of("agent", "terminate"));
     }
 
     @Test
@@ -72,11 +72,11 @@ public class StopStrategyRegistryTest {
 
     @Test
     public void anUnknownStrategyIsSkippedWithAWarning() throws IOException {
-        StopChain chain = chain("agent,terminate");
+        StopChain chain = chain("telepathy,terminate");
 
         assertEquals(gracefulNames(chain), List.of());
         assertEquals(chain.warnings(), List.of(
-                "wrapper.stop.strategy: unknown stop strategy agent, skipped; known: [terminate]"));
+                "wrapper.stop.strategy: unknown stop strategy telepathy, skipped; known: [agent, terminate]"));
     }
 
     @Test
@@ -88,7 +88,7 @@ public class StopStrategyRegistryTest {
 
             String warnings = String.join("\n", chain.warnings()) + "\n"
                     + config.warnings().stream().map(Object::toString).reduce("", (a, b) -> a + "\n" + b);
-            assertEquals(gracefulNames(chain), List.of(), password);
+            assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME), password);
             assertEquals(chain.warnings(), List.of(), "the default list applies: " + warnings);
             for (String piece : password.split(",")) {
                 assertFalse(warnings.toLowerCase().contains(piece.strip().toLowerCase()), password + ": " + warnings);
@@ -101,18 +101,18 @@ public class StopStrategyRegistryTest {
     @Test
     public void aConfiguredNameIsMaskedInTheWarningsAsWritten() throws IOException {
         // The list itself holds no secret here, but a name that equals one is still masked.
-        WrapperConfig config = TestConfigs.load(dir, "wrapper.ntservice.password=Agent");
+        WrapperConfig config = TestConfigs.load(dir, "wrapper.ntservice.password=Telepathy");
         StopChain chain = StopStrategyRegistry.defaults().chain(Lifecycles.lifecycle(ControlMode.TIGHT,
                 ExitAction.SHUTDOWN, Map.of(), Lifecycles.MAX_FAILED, Duration.ZERO, Lifecycles.STARTUP_TIMEOUT,
-                Duration.ZERO, List.of("Agent", "terminate")), config.secrets());
+                Duration.ZERO, List.of("Telepathy", "terminate")), config.secrets());
 
         assertEquals(chain.warnings(), List.of(
-                "wrapper.stop.strategy: unknown stop strategy ****, skipped; known: [terminate]"));
+                "wrapper.stop.strategy: unknown stop strategy ****, skipped; known: [agent, terminate]"));
     }
 
     @Test
     public void terminateIsAddedWhenMissing() throws IOException {
-        StopChain chain = chain("agent");
+        StopChain chain = chain("telepathy");
 
         assertEquals(chain.last().name(), TerminateStopStrategy.NAME);
         assertEquals(chain.warnings().get(1),
@@ -129,10 +129,19 @@ public class StopStrategyRegistryTest {
 
     @Test
     public void onlySkippedNamesAfterTerminateDoNotCountAsMovingIt() throws IOException {
-        StopChain chain = chain("terminate,agent,terminate");
+        StopChain chain = chain("terminate,telepathy,terminate");
 
         assertFalse(chain.warnings().stream().anyMatch(warning -> warning.contains("always the last step")),
                 chain.warnings().toString());
+    }
+
+    @Test
+    public void theAgentStrategyComesBeforeTerminate() throws IOException {
+        StopChain chain = chain("agent, terminate");
+
+        assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME));
+        assertTrue(chain.graceful().get(0).strategy() instanceof AgentStopStrategy);
+        assertEquals(chain.warnings(), List.of());
     }
 
     @Test

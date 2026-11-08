@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.config;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -174,6 +175,46 @@ public final class ValueParser {
         return text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")
                 ? text.substring(1, text.length() - 1)
                 : text;
+    }
+
+    /**
+     * Splits a command line into the program and its arguments, for running it without a shell
+     * (AGENTS.md §4.7): blanks separate the arguments, double quotes group blanks into one argument
+     * and are removed ({@code "C:/Program Files/x.exe" -v} is two arguments, {@code ""} an empty
+     * one). There is no escape character, so backslashes stay as they are and a double quote cannot
+     * be part of an argument.
+     *
+     * @return the arguments, empty for a blank value; unmodifiable
+     * @throws IllegalArgumentException when a double quote is not closed; the reason does not quote the value
+     */
+    public static List<String> parseCommand(String value) {
+        List<String> arguments = new ArrayList<>();
+        StringBuilder argument = new StringBuilder();
+        boolean inArgument = false;
+        boolean quoted = false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '"') {
+                quoted = !quoted;
+                inArgument = true;
+            } else if (!quoted && Character.isWhitespace(c)) {
+                if (inArgument) {
+                    arguments.add(argument.toString());
+                    argument.setLength(0);
+                    inArgument = false;
+                }
+            } else {
+                argument.append(c);
+                inArgument = true;
+            }
+        }
+        if (quoted) {
+            throw new IllegalArgumentException("a double quote is not closed");
+        }
+        if (inArgument) {
+            arguments.add(argument.toString());
+        }
+        return List.copyOf(arguments);
     }
 
     /** @return the items, trimmed, without empty ones; unmodifiable */

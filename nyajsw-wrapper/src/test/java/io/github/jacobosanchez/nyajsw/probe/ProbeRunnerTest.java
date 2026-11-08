@@ -1,10 +1,13 @@
 package io.github.jacobosanchez.nyajsw.probe;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.TestConfigs;
 import io.github.jacobosanchez.nyajsw.config.ProbeConfig;
+import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 
 import java.nio.file.Files;
@@ -12,8 +15,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 import org.testng.annotations.Test;
 
@@ -23,31 +24,12 @@ public class ProbeRunnerTest {
 
     /** An application that is alive as long as {@code alive} says. */
     private static RunningApplication application(boolean alive) {
-        return new RunningApplication() {
-            @Override
-            public String name() {
-                return "jvm 1";
-            }
+        return new FakeRunningApplication(alive);
+    }
 
-            @Override
-            public long pid() {
-                return 42;
-            }
-
-            @Override
-            public boolean isAlive() {
-                return alive;
-            }
-
-            @Override
-            public CompletableFuture<Integer> onExit() {
-                return new CompletableFuture<>();
-            }
-
-            @Override
-            public void terminateTree() {
-            }
-        };
+    /** A readiness check of an application that is alive as long as {@code alive} says. */
+    private static ProbeContext context(boolean alive) {
+        return new ProbeContext(application(alive), ProbeContext.Purpose.READINESS);
     }
 
     private static ProbeRegistry.NamedProbe probe(String type, Probe probe) {
@@ -58,8 +40,8 @@ public class ProbeRunnerTest {
     public void theProcessProbePassesWhileTheProcessRuns() {
         ProcessProbe probe = new ProcessProbe();
 
-        assertEquals(probe.check(new ProbeContext(application(true))), ProbeResult.pass("jvm 1 is running"));
-        assertEquals(probe.check(new ProbeContext(application(false))), ProbeResult.fail("jvm 1 is not running"));
+        assertEquals(probe.check(context(true)), ProbeResult.pass("jvm 1 is running"));
+        assertEquals(probe.check(context(false)), ProbeResult.fail("jvm 1 is not running"));
     }
 
     @Test
@@ -79,8 +61,61 @@ public class ProbeRunnerTest {
                     return ProbeResult.pass("fine");
                 })), SECOND);
 
-        assertEquals(runner.check(new ProbeContext(application(true))), ProbeResult.fail("b: port closed"));
+        assertEquals(runner.check(context(true)), ProbeResult.fail("b: port closed"));
         assertEquals(checked, List.of("a", "b"), "checking stops at the first failure");
+    }
+
+    @Test
+    public void aProbeThatReadsEveryCheckIsCheckedAfterAFailureToo() {
+        List<String> checked = new ArrayList<>();
+        Probe reader = new Probe() {
+            @Override
+            public ProbeResult check(ProbeContext context) {
+                checked.add("log");
+                return ProbeResult.fail("no new line");
+            }
+
+            @Override
+            public boolean readsEveryCheck() {
+                return true;
+            }
+        };
+        ProbeRunner runner = new ProbeRunner(List.of(
+                probe("http", context -> {
+                    checked.add("http");
+                    return ProbeResult.fail("refused");
+                }),
+                probe("command", context -> {
+                    checked.add("command");
+                    return ProbeResult.pass("fine");
+                }),
+                probe("log", reader)), SECOND);
+
+        assertEquals(runner.check(context(true)), ProbeResult.fail("http: refused; log: no new line"));
+        assertEquals(checked, List.of("http", "log"), "the command is still gated by the failure");
+
+    }
+
+    @Test
+    public void anInterruptEndsTheRound() {
+        // The wrapper closing interrupts a check in flight; nothing after it should start a process.
+        List<String> checked = new ArrayList<>();
+        ProbeRunner runner = new ProbeRunner(List.of(
+                probe("file", context -> {
+                    checked.add("file");
+                    Thread.currentThread().interrupt();
+                    return ProbeResult.pass("exists");
+                }),
+                probe("command", context -> {
+                    checked.add("command");
+                    return ProbeResult.pass("fine");
+                })), SECOND);
+        try {
+            assertEquals(runner.check(context(true)), ProbeResult.fail("the check was interrupted"));
+            assertEquals(checked, List.of("file"));
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     @Test
@@ -88,7 +123,7 @@ public class ProbeRunnerTest {
         ProbeRunner runner = new ProbeRunner(List.of(probe("process", new ProcessProbe()),
                 probe("other", context -> ProbeResult.pass("fine"))), SECOND);
 
-        assertEquals(runner.check(new ProbeContext(application(true))), ProbeResult.pass("process,other"));
+        assertEquals(runner.check(context(true)), ProbeResult.pass("process,other"));
         assertEquals(runner.types(), "process,other");
     }
 
@@ -96,7 +131,7 @@ public class ProbeRunnerTest {
     public void noProbesMeansReady() {
         ProbeRunner runner = new ProbeRunner(List.of(), SECOND);
 
-        assertEquals(runner.check(new ProbeContext(application(false))), ProbeResult.pass("no probes"));
+        assertEquals(runner.check(context(false)), ProbeResult.pass("no probes"));
     }
 
     @Test
@@ -106,9 +141,9 @@ public class ProbeRunnerTest {
         })), SECOND);
         ProbeRunner silent = new ProbeRunner(List.of(probe("s", context -> null)), SECOND);
 
-        assertEquals(throwing.check(new ProbeContext(application(true))),
+        assertEquals(throwing.check(context(true)),
                 ProbeResult.fail("t: the probe threw java.lang.IllegalArgumentException"));
-        assertEquals(silent.check(new ProbeContext(application(true))),
+        assertEquals(silent.check(context(true)),
                 ProbeResult.fail("s: the probe returned no result"));
     }
 
@@ -126,13 +161,77 @@ public class ProbeRunnerTest {
 
         List<ProbeRegistry.NamedProbe> probes = registry.create(config.readinessTypes(), config);
 
-        assertEquals(registry.types(), Set.of(ProcessProbe.TYPE));
+        assertEquals(List.copyOf(registry.types()), List.of(ProcessProbe.TYPE, TcpProbe.TYPE, HttpProbe.TYPE,
+                FileProbe.TYPE, CommandProbe.TYPE, LogPatternProbe.TYPE, AgentProbe.TYPE));
         assertEquals(probes.size(), 1);
         assertEquals(probes.get(0).type(), ProcessProbe.TYPE);
         assertEquals(probes.get(0).probe().getClass(), ProcessProbe.class);
         IllegalArgumentException unknown = expectThrows(IllegalArgumentException.class,
+                () -> registry.create(List.of("telepathy"), config));
+        assertEquals(unknown.getMessage(),
+                "unknown probe type telepathy; known: [process, tcp, http, file, command, log, agent]");
+        IllegalArgumentException incomplete = expectThrows(IllegalArgumentException.class,
                 () -> registry.create(List.of("tcp"), config));
-        assertEquals(unknown.getMessage(), "unknown probe type tcp; known: [process]");
+        assertEquals(incomplete.getMessage(), "the tcp probe needs wrapper.readiness.tcp.port");
+        List<ProbeRegistry.NamedProbe> spelled = registry.create(List.of(" Process "), config);
+        assertEquals(spelled.get(0).type(), ProcessProbe.TYPE, "case and blanks do not matter");
+    }
+
+    @Test
+    public void everyProbeHearsOfALaunchEvenAfterOneThatThrows() {
+        List<String> told = new ArrayList<>();
+        Probe throwing = new Probe() {
+            @Override
+            public ProbeResult check(ProbeContext context) {
+                return ProbeResult.pass("ok");
+            }
+
+            @Override
+            public void beforeLaunch() {
+                told.add("throwing");
+                throw new IllegalStateException("broken");
+            }
+        };
+        Probe listening = new Probe() {
+            @Override
+            public ProbeResult check(ProbeContext context) {
+                return ProbeResult.pass("ok");
+            }
+
+            @Override
+            public void beforeLaunch() {
+                told.add("listening");
+            }
+        };
+
+        new ProbeRunner(List.of(probe("a", throwing), probe("b", listening)), SECOND).beforeLaunch();
+
+        assertEquals(told, List.of("throwing", "listening"));
+    }
+
+    @Test
+    public void aRunnerWithoutProbesIsEmpty() {
+        assertTrue(new ProbeRunner(List.of(), SECOND).isEmpty());
+        assertFalse(new ProbeRunner(List.of(probe("process", new ProcessProbe())), SECOND).isEmpty());
+    }
+
+    @Test
+    public void aPasswordCopiedIntoAProbeSettingIsMaskedInTheFailure() throws Exception {
+        Path dir = Files.createTempDirectory("nyajsw-probe");
+        try {
+            WrapperConfig config = TestConfigs.load(dir, "wrapper.ntservice.password=s3cr3t-value",
+                    "wrapper.readiness.file.path=flags/${wrapper.ntservice.password}.ready");
+            ProbeRunner runner = new ProbeRunner(ProbeRegistry.defaults().create(List.of("file"), config.probes()),
+                    SECOND, config.secrets()::maskText);
+
+            ProbeResult result = runner.check(context(true));
+
+            assertFalse(result.passed());
+            assertFalse(result.detail().contains("s3cr3t-value"), result.detail());
+            assertTrue(result.detail().contains("****.ready"), result.detail());
+        } finally {
+            TestConfigs.delete(dir);
+        }
     }
 
     private static ProbeConfig defaultProbeConfig() throws Exception {
