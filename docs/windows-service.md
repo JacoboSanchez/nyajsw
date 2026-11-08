@@ -2,7 +2,9 @@
 
 nyajsw installs a Windows service that runs the application of a `wrapper.conf`, the same file that
 console mode (`-c`) runs. The service itself is the nyajsw wrapper on Java 21; the application may
-run on another JVM (`wrapper.java.command`, given with its directory, see *Application JVM*).
+run on another JVM (`wrapper.java.command`, given with its directory, see *Application JVM*). A
+service that YAJSW runs today is moved by a reinstall: see
+[migration-from-yajsw.md](migration-from-yajsw.md).
 
 Below, `nyajsw` stands for the wrapper's command line: `bin\nyajsw.bat` of the distribution, or
 `java -jar nyajsw.jar` run with Java 21 or later. `nyajsw.bat` runs the Java that `NYAJSW_JAVA`
