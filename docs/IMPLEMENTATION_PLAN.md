@@ -1527,7 +1527,9 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
       ping defaults of a file that does not write them are spelled out. `windows-service.md` links
       to the guide.
 Done when: each probe has unit tests; an end-to-end Windows test reaches `RUNNING` only after an
-HTTP probe passes and stops gracefully through the agent.
+HTTP probe passes and stops gracefully through the agent. The test is
+`WindowsServiceEndToEndTest.theServiceRunsOnlyOnceItsHttpProbePassesAndStopsGracefullyThroughTheAgent`
+(group `windows-integration`); it awaits an elevated run.
 
 ### P8 — Packaging, migration, release
 - [ ] P8.1 `nyajsw-dist`: shaded `nyajsw.jar` (no relocation of `com.sun.jna`, native resources
@@ -1573,6 +1575,10 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7 end-to-end test: `AgentStopStrategy` logs the agent's acknowledgement from its own thread, so in
+  theory a session closed by the exit just before it reads `STOPPING` leaves no line and fails the
+  test's assertion on it; the window is tiny. The test overrides `config()`'s
+  `wrapper.shutdown.timeout` by writing the key again (last value wins, with a warning).
 - P7.4: a service whose first start never succeeds stays *starting* and cannot be stopped through
   the SCM (1061) until `wrapper.max_failed_invocations` is used up, and never with
   `wrapper.startup.timeout=0`; the guide warns about it, but accepting a stop while starting may be
