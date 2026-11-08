@@ -1529,7 +1529,8 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
 Done when: each probe has unit tests; an end-to-end Windows test reaches `RUNNING` only after an
 HTTP probe passes and stops gracefully through the agent. The test is
 `WindowsServiceEndToEndTest.theServiceRunsOnlyOnceItsHttpProbePassesAndStopsGracefullyThroughTheAgent`
-(group `windows-integration`); it awaits an elevated run.
+(group `windows-integration`); it passed in an elevated run on 2026-11-08, with the rest of the
+group. Phase 7 is done.
 
 ### P8 — Packaging, migration, release
 - [ ] P8.1 `nyajsw-dist`: shaded `nyajsw.jar` (no relocation of `com.sun.jna`, native resources
