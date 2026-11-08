@@ -497,10 +497,10 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
 * **Pid files**: `wrapper.pidfile` (wrapper) and `wrapper.java.pidfile` (application), written on
   start, removed on stop, stale files overwritten.
 * **Console mode**: Ctrl+C reaches both the wrapper and the child because they share the console.
-  The wrapper's shutdown hook asks the supervisor to stop, which runs the stop chain: with the
-  default `terminate` alone it waits the stop budget for the child to finish its own shutdown,
-  then kills it; graceful strategies (P7) share that budget. The exit code returned is the
-  application's.
+  The wrapper's shutdown hook asks the supervisor to stop, which runs the stop chain: by default
+  the agent ends the child (P7.3); when no graceful step can ask (no agent connected) the stop
+  budget is still waited for the child to finish its own shutdown, then it is killed. The exit
+  code returned is the application's.
 
 ### 4.7 Readiness and liveness probes (alternative start validation)
 
@@ -945,8 +945,8 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       `LifecycleConfig.stopBudget()` = `wrapper.shutdown.timeout` + `wrapper.jvm_exit.timeout`
       (unset: 0, as YAJSW documents no default), counted to a deadline: each graceful step gets an
       equal share of the time left, so a step that does not apply (or throws, logged) hands its
-      share on and the application always has the whole budget. Without graceful steps the whole
-      budget is waited, which suits console mode, where the application gets the same Ctrl+C; with
+      share on and the application always has the whole budget. Without graceful steps, or when
+      none of them could ask (P7.3c), the whole budget is waited, which suits console mode, where the application gets the same Ctrl+C; with
       a budget of 0 the graceful steps are skipped, since asking and killing in the same instant
       would cut a shutdown short. At the deadline the last step (`terminate`,
       `RunningApplication.terminateTree()`) ends the application, and one still alive 10 s later
@@ -1482,8 +1482,35 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         strategy, the jar lookup, and both real ends: the packaged agent in a child JVM connects,
         answers and ends it with exit code 0 (skipped when the agent is not packaged, as in
         `-pl nyajsw-wrapper`).
-  - [ ] P7.3c the defaults (`agent,terminate`, liveness `agent`) and the `wrapper.ping.*` mapping.
-        Constraints from the P7.3b review: the derived defaults must follow the same predicate as
+  - [x] P7.3c the defaults (`agent,terminate`, liveness `agent`) and the `wrapper.ping.*` mapping.
+        **Done:** `wrapper.agent.enabled` (default `true`, D10), `wrapper.ping.interval` and
+        `wrapper.ping.timeout` are supported, so every JVM application gets the agent unless the
+        file turns it off. One predicate, `ProbeConfig.agentInEffect()` (enabled, implemented, and
+        the application a JVM: no `wrapper.image` once that key takes effect), decides the
+        injection and both derived defaults: `wrapper.stop.strategy` becomes `agent,terminate` and
+        `wrapper.liveness.type` becomes `agent`. The ping keys moved from `LifecycleConfig` to
+        `ProbeConfig` (P1.6b): `wrapper.ping.timeout` (30 s) is how long the `agent` probe waits for
+        each answer, and `wrapper.ping.interval` sets the liveness interval when the file writes it
+        and not `wrapper.liveness.interval` (both written: the nyajsw key wins, with a warning); an
+        interval or timeout of 0 is an error. Each invocation reports `agentlink.AgentState` (none,
+        waiting, connected, lost) and each check its purpose (`ProbeContext.Purpose`): the `agent`
+        probe passes without checking an invocation that runs without the agent (no jar, the
+        listener could not open, the agent never connected within the listener's minute) so a
+        healthy application is never restarted for it, fails readiness but passes liveness while
+        the agent has not connected yet, and fails a lost session or an unanswered ping. Tests: the
+        defaults, the mapping, the states, and a console stop that ends a real application with 0
+        through the agent, well within its budget; the tests of the terminate path turn the agent
+        off. After review: when no graceful step could ask (no agent connected), the stop budget is
+        still waited before `terminate`, so Ctrl+C in console mode still gives the application
+        its shutdown time; a runtime whose `release` file lists its modules without
+        `java.instrument` (a `jlink` image, which would not start with `-javaagent`) gets no agent,
+        with a warning naming `wrapper.agent.enabled=false`; a ping key of 0 is Tanuki's "no
+        heartbeat", not an error: the agent liveness default is off then, and an explicit `agent`
+        probe only fails on a lost session. A written `wrapper.ping.timeout` keeps YAJSW's
+        meaning, the silence that counts as a hang: with the agent as the only liveness probe and
+        `wrapper.liveness.failures` not written, pings of up to one interval each, as many failed
+        in a row as fit into the timeout. Warnings about lists that name the agent appear only
+        where the file named it. Constraints from the P7.3b review: the derived defaults must follow the same predicate as
         the injection (`Supervision.agentWanted`: in effect and no `wrapper.image`), and an
         invocation that runs without the agent (no jar found, the listener could not be opened)
         must not fail a default `agent` liveness probe; expose the per-invocation state (no agent,
@@ -1537,6 +1564,10 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- P7.3c: `Supervision.launch` closing the agent's listener when the build or the start of the
+  command fails is not tested (it needs a hook into the listener's life); the options and the
+  session are, through console and service mode. A `jlink` runtime is recognised only by its
+  `release` file; one started through a script (`wrapper.java.command`) is not looked into.
 - P7.3b: `AgentChannel` is a final class, so probe and strategy tests use real loopback sockets
   with `FakeAgent`; extract an interface if a test needs a pure fake. `AgentChannel.exchange`
   recomputes its read timeout per line, not per byte (only an authenticated agent that misbehaves
@@ -1598,10 +1629,9 @@ entry names the commit/plan item it came from; remove entries when addressed.
   (checked by `ValueParser`) when the consuming phases implement those keys. P7.1/P7.2a check the
   probe intervals and timeouts, `wrapper.liveness.failures` and `wrapper.readiness.tcp.port` where
   `ProbeConfig` reads them (`ConfigValues.problem`); move them to `KeySpec` with the others.
-- P1.6b: `ProbeConfig` is one flat record; P7 should split it into per-probe settings registered
-  with the probe types (AGENTS.md §4.4), and move `wrapper.ping.*` there from `LifecycleConfig`
-  (D16). P7 must also keep the agent's derived defaults off when `wrapper.image` runs a non-Java
-  executable.
+- P1.6b: `ProbeConfig` is one flat record; split it into per-probe settings registered with the
+  probe types (AGENTS.md §4.4). (`wrapper.ping.*` moved there and the agent's defaults follow
+  `wrapper.image` since P7.3c.)
 - P1.6a: `SecretMasker` hides secrets by matching their text, so a short or common secret also masks
   unrelated text and the mask's position can hint at it (password `Java` shows as `C:\****\bin`).
   Tracking during interpolation which values were built from secret keys (or from names a secret
@@ -1810,7 +1840,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D13 | The default working directory and relative wrapper-side paths (log file, pid files, temporary directory, probe files) resolve against the configuration file's directory; relative application-side paths (jar, library path, image, a Java command with a directory, classpath entries) resolve against the working directory, as the application sees them (P1.6b) | Services start in `System32`; configuration-relative is predictable for the wrapper, while the application's own paths must agree with what the child JVM resolves (usual YAJSW layout: `conf/wrapper.conf` with `wrapper.working.dir=..`) | Proposed (verify YAJSW, P1.9) |
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
 | D15 | Probe SPI, probe registry and stop-strategy registry are introduced in P3 with `process`/`terminate`; later probes and strategies are additions | Avoid rewriting the supervisor when P7 lands | Accepted |
-| D16 | Default liveness probe is `agent` when the agent is enabled (`wrapper.ping.*` semantics), none otherwise | YAJSW pings by default; keep behaviour parity without forcing the agent | Proposed |
+| D16 | Default liveness probe is `agent` when the agent is enabled (`wrapper.ping.*` semantics), none otherwise | YAJSW pings by default; keep behaviour parity without forcing the agent | Accepted (P7.3c): `wrapper.ping.interval` is the liveness interval when `wrapper.liveness.interval` is not written; a written `wrapper.ping.timeout` is the silence that counts as a hang (pings of up to one interval, as many failed in a row as fit, unless `wrapper.liveness.failures` is written; otherwise it is each ping's timeout); 0 for either is no heartbeat; a run without the agent passes the probe |
 | D17 | Migration path (design only; not pursued, §10 Q8 chose a reinstall): ship a thin alias class named like YAJSW's service booter (`org.rzo.yajsw.boot.WrapperServiceBooter`, a deliberate exception to D11 because existing service registrations store that name) that detects service mode when `--service` is absent and delegates to the normal entry point; a migration command rewrites an existing service's binary path to a Java 21 `javaw.exe` and our classpath (D12), since a bare jar swap cannot work when the old registration names an older JVM; `-D` options on the wrapper command line (e.g. `-Dwrapper.tmp.path`, a `jna_tmpdir` property, `-Dpath`) feed the system-property layer of §4.5; we also set the real `jna.tmpdir` from `wrapper.tmp.path` (R3). Short CLI options already exist in §3 | Observed in Denodo Platform's public KB (not tested by us): its services are registered as `java.exe … WrapperServiceBooter <conf>`, installed with `-i <conf>`, and re-pointed with `sc config` plus `-D` flags for non-admin accounts. Whether the underscore-spelled `jna_tmpdir` is read by YAJSW or JNA is unknown | Deferred (§10 Q8, 2026-11-07; P5.4a dropped). Already in place: `-D` options before the main class feed the system-property layer (§4.5) and `jna.tmpdir` follows `wrapper.tmp.path` (P5.4); the underscore-spelled `jna_tmpdir` is not mapped to `jna.tmpdir` |
 | D18 | The registry declares the YAJSW keys its public reference documents as supported by YAJSW, each with a nyajsw status; Tanuki keys that the reference lists as not (yet) supported by YAJSW (e.g. `wrapper.disable_restarts`, `wrapper.jvm.port`, `wrapper.ntservice.pausable`) stay undeclared and get the generic unknown-key warning (keys seeded earlier, such as `wrapper.syslog.*`, keep their entries). Defaults follow the reference where it states one (§3.3), including `wrapper.on_exit.default=SHUTDOWN` | A YAJSW file can only rely on keys YAJSW honours; declaring Tanuki-only keys would suggest a compatibility YAJSW never had. Following YAJSW's defaults keeps migrated services behaving as before | Accepted (P1.10) |
 | D19 | Arguments of the application are passed as an array. One pair of double quotes around a whole argument, or around everything after its first `=` (`-Dx="a b"`, `-XX:OnError="cmd /c x"`), is removed, as a shell would; any other double quote is a launch error naming the key family, with the argument masked | On POSIX every argument reaches the application unchanged, quotes included; on Windows `ProcessBuilder` wraps an argument with blanks in quotes, so `-Dx="a b"` would become `"-Dx="a b""` and break the command line, and an embedded quote is passed on unescaped (`jdk.lang.Process.allowAmbiguousCommands` defaults to true on JDK 21), which breaks it as well; checked by running `java.exe` through `ProcessBuilder` on JDK 21.0.13, which also handles trailing backslashes and empty arguments itself. Dropping a stray quote would change the value | Accepted (P2.2) |

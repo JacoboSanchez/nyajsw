@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalInt;
@@ -212,6 +213,8 @@ public final class Supervisor {
     /** When the current stop began and when its budget runs out, on the scheduler's clock. */
     private Duration stopStartedAt;
     private Duration stopDeadline;
+    /** Whether a graceful step of the current stop asked the application to end. */
+    private boolean gracefullyAsked;
     /** The timers of the current state, by id; a fired id that is missing is ignored. */
     private final Map<Long, PendingTimer> timers = new HashMap<>();
     private long timersStarted;
@@ -403,17 +406,19 @@ public final class Supervisor {
     }
 
     private void checkReadiness() {
-        check(readiness, "readiness", ReadinessChecked::new);
+        check(readiness, ProbeContext.Purpose.READINESS, ReadinessChecked::new);
     }
 
     private void checkLiveness() {
-        check(liveness.probes(), "liveness", LivenessChecked::new);
+        check(liveness.probes(), ProbeContext.Purpose.LIVENESS, LivenessChecked::new);
     }
 
     /** Checks {@code probes} on the probe executor; the result comes back as an event, whatever happens. */
-    private void check(ProbeRunner probes, String kind, BiFunction<Integer, ProbeResult, Event> resultEvent) {
+    private void check(ProbeRunner probes, ProbeContext.Purpose purpose,
+            BiFunction<Integer, ProbeResult, Event> resultEvent) {
         int current = invocation;
-        ProbeContext context = new ProbeContext(application);
+        String kind = purpose.name().toLowerCase(Locale.ROOT);
+        ProbeContext context = new ProbeContext(application, purpose);
         probeExecutor.execute(() -> {
             // ProbeRunner already turns a probe's exception into a failure; this is the backstop for
             // anything else (an Error included), so that the supervisor always hears back.
@@ -652,8 +657,9 @@ public final class Supervisor {
      * Runs the stop chain within the stop budget ({@code wrapper.shutdown.timeout} plus {@code
      * wrapper.jvm_exit.timeout}): each graceful strategy asks the application to end and gets an
      * equal share of the time left until the deadline, so a step that does not apply hands its
-     * share on. Without graceful strategies the whole budget is waited, which in console mode is the
-     * time the application has after the Ctrl+C it receives too. At the deadline the last step ends
+     * share on. Without graceful strategies, or when none of them could ask (no agent connected), the
+     * whole budget, or what is left of it, is waited, which in console mode is the time the
+     * application has after the Ctrl+C it receives too. At the deadline the last step ends
      * it by force; with a budget of zero at once, without the graceful steps, since asking and
      * killing in the same instant would cut its shutdown short.
      */
@@ -668,6 +674,7 @@ public final class Supervisor {
             log.status("stopping: waiting up to " + seconds(budget) + " for " + application.name() + " to end");
             startTimer(budget, this::forceStop);
         } else {
+            gracefullyAsked = false;
             graceful(0);
         }
     }
@@ -675,6 +682,14 @@ public final class Supervisor {
     private void graceful(int index) {
         List<StopChain.Step> steps = stops.graceful();
         Duration left = stopDeadline.minus(scheduler.now());
+        if (index == steps.size() && !gracefullyAsked && left.isPositive()) {
+            // No step could ask (no agent connected, say): the application still has the rest of the
+            // budget, as without graceful steps, for a shutdown of its own (Ctrl+C in console mode).
+            log.status("stopping: no graceful step applied; waiting up to " + seconds(left) + " for "
+                    + application.name() + " to end");
+            startTimer(left, this::forceStop);
+            return;
+        }
         if (index == steps.size() || !left.isPositive()) {
             forceStop();
             return;
@@ -693,6 +708,7 @@ public final class Supervisor {
             log.debug(DebugDetail.SUPERVISION, () -> step.name() + " did not apply; going on with the next step");
             graceful(index + 1);
         } else {
+            gracefullyAsked = true;
             startTimer(share, () -> graceful(index + 1));
         }
     }

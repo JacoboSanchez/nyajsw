@@ -2,6 +2,7 @@ package io.github.jacobosanchez.nyajsw.cli;
 
 import io.github.jacobosanchez.nyajsw.agentlink.AgentJar;
 import io.github.jacobosanchez.nyajsw.agentlink.AgentListener;
+import io.github.jacobosanchez.nyajsw.agentlink.JavaRuntime;
 import io.github.jacobosanchez.nyajsw.config.ConfigException;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigWarning;
@@ -70,6 +71,8 @@ final class Supervision {
     /** The agent's jar when the agent is injected (plan P7.3); without one, none is. */
     private final Optional<Path> agentJar;
     private final SecureRandom random = new SecureRandom();
+    /** Set once the application's runtime turned out to lack {@code java.instrument}, which is warned about once. */
+    private boolean noInstrumentation;
     private final Supervisor supervisor;
     private final AtomicBoolean started = new AtomicBoolean();
 
@@ -110,9 +113,9 @@ final class Supervision {
         return agentWanted(config) ? AgentJar.locate() : Optional.empty();
     }
 
-    /** Whether the agent is to be injected: it is in effect and the application is a JVM. */
+    /** Whether the agent is to be injected: the predicate the derived defaults follow too. */
     private static boolean agentWanted(WrapperConfig config) {
-        return config.probes().agentInEffect() && config.java().image().isEmpty();
+        return config.probes().agentInEffect();
     }
 
     /** What is configured to use the agent: probe types and stop strategies named {@code agent}. */
@@ -162,10 +165,12 @@ final class Supervision {
                         + " (or its path holds '='); the application runs without the agent");
             }
             List<String> users = agentUsers();
-            if (agentJar.isEmpty() && !users.isEmpty()) {
+            // Only where the agent is off do the lists name it because the file says so; the derived
+            // defaults name it only while it is in effect, and a missing jar is warned about above.
+            if (!agentWanted(config) && !users.isEmpty()) {
                 log.status("warning: " + String.join(", ", users) + " names the agent, but the application runs"
                         + " without it (" + ConfigKeys.AGENT_ENABLED.name() + ", " + ConfigKeys.IMAGE.name()
-                        + "): agent probes fail and the agent stop does not apply");
+                        + "): agent probes pass without checking and the agent stop does not apply");
             }
             if (config.lifecycle().control().applicationEndsWithWrapper()) {
                 job = createJob(processes, log);
@@ -226,12 +231,16 @@ final class Supervision {
         ClasspathExpander.Expanded classpath = expander.expand(config.java().classpath(), config.java().workingDir(),
                 config.secrets());
         warn(classpath.warnings());
-        Optional<AgentListener> agent = agentListener(ApplicationLauncher.nameOf(invocation));
+        JavaCommand plain = builder.build(config.java(), classpath.entries(), wrapperOptions, config.secrets());
+        warn(plain.warnings());
+        Optional<AgentListener> agent = agentFor(plain, ApplicationLauncher.nameOf(invocation));
         try {
-            List<String> options = new ArrayList<>(wrapperOptions);
-            agent.ifPresent(listener -> options.addAll(listener.jvmOptions(agentJar.orElseThrow())));
-            JavaCommand command = builder.build(config.java(), classpath.entries(), options, config.secrets());
-            warn(command.warnings());
+            JavaCommand command = plain;
+            if (agent.isPresent()) {
+                List<String> options = new ArrayList<>(wrapperOptions);
+                options.addAll(agent.get().jvmOptions(agentJar.orElseThrow()));
+                command = builder.build(config.java(), classpath.entries(), options, config.secrets());
+            }
             return ApplicationProcess.start(command, config.java(), invocation, config.secrets(), log, job, agent);
         } catch (RuntimeException e) {
             agent.ifPresent(AgentListener::close);
@@ -239,9 +248,19 @@ final class Supervision {
         }
     }
 
-    /** A listener for the invocation's agent, when there is an agent; one that cannot be opened is logged. */
-    private Optional<AgentListener> agentListener(String name) {
-        if (agentJar.isEmpty()) {
+    /**
+     * A listener for the invocation's agent, when there is an agent and the runtime of {@code
+     * command} can load it; one that cannot be opened is logged.
+     */
+    private Optional<AgentListener> agentFor(JavaCommand command, String name) {
+        if (agentJar.isEmpty() || noInstrumentation) {
+            return Optional.empty();
+        }
+        if (JavaRuntime.lacksInstrumentation(command.executable())) {
+            noInstrumentation = true;
+            log.status("warning: the application's Java runtime has no java.instrument module, which the agent"
+                    + " needs; the application runs without it (set " + ConfigKeys.AGENT_ENABLED.name()
+                    + "=false to say so)");
             return Optional.empty();
         }
         try {

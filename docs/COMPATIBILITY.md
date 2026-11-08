@@ -19,8 +19,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 
 | Status | Keys |
 |---|---|
-| supported | 66 |
-| planned | 6 |
+| supported | 69 |
+| planned | 3 |
 | ignored | 9 |
 | unsupported | 92 |
 | unsupported, fatal when present | 5 |
@@ -107,8 +107,8 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.pidfile` | File the wrapper writes its process id to | path | — | **supported** |  |
 | `wrapper.lockfile` | File locked while the application runs, so that a second instance does not start | path | — | **unsupported** (P9) |  |
 | `wrapper.java.pidfile` | File the wrapper writes the application's process id to | path | — | **supported** |  |
-| `wrapper.ping.interval` | Heartbeat interval, mapped onto the agent liveness probe (D16) | seconds | `5` | **planned** (P7) |  |
-| `wrapper.ping.timeout` | Heartbeat timeout, mapped onto the agent liveness probe (D16) | seconds | `30` | **planned** (P7) |  |
+| `wrapper.ping.interval` | Heartbeat interval: the liveness interval when wrapper.liveness.interval is not written (D16) | seconds | `5` | **supported** | 0 turns the default agent heartbeat off |
+| `wrapper.ping.timeout` | Heartbeat timeout: the silence after which the application counts as hung (D16) | seconds | `30` | **supported** | With the agent as the only liveness probe and wrapper.liveness.failures not written, pings of up to one interval each, as many failed in a row as fit into it; otherwise how long each ping may take. 0 turns the default agent heartbeat off |
 | `wrapper.restart.reload_configuration` | Reload the configuration file before each restart | boolean | — | **unsupported** (P9) | YAJSW default: false |
 | `wrapper.restart.reload_cache` | Network launching: refresh the cached files when the configuration is reloaded | boolean | — | **unsupported** |  |
 | `wrapper.restart.delay.script` | Groovy script that computes the restart delay | text | — | **unsupported** |  |
@@ -137,7 +137,7 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.filter.action.<n>` | Action when wrapper.filter.trigger.&lt;n&gt; matches | one of `RESTART`, `SHUTDOWN`, `NONE` | `RESTART` | **planned** (P9) |  |
 | `wrapper.filter.missing.<setting>` | Filters that act when expected output stops appearing | text | — | **unsupported** (P9) |  |
 | `wrapper.filter.debug.default` | Log the matching of output filters | boolean | — | **unsupported** | *Verify:* meaning |
-| `wrapper.stop.strategy` | Ordered stop strategies tried before the application is terminated | list | agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate | **supported**<br>nyajsw extension | Names ignore case; unknown ones are skipped with a warning and terminate is always the last step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout; when both are 0 they are skipped. Strategies: implementation plan, section 4.6 |
+| `wrapper.stop.strategy` | Ordered stop strategies tried before the application is terminated | list | agent,terminate when the agent is in effect (wrapper.agent.enabled and no wrapper.image), otherwise terminate | **supported**<br>nyajsw extension | Names ignore case; unknown ones are skipped with a warning and terminate is always the last step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout; when both are 0 they are skipped. Strategies: implementation plan, section 4.6 |
 | `wrapper.stop.command` | Command run by the command stop strategy | text | — | **planned** (P7)<br>nyajsw extension |  |
 
 ## Logging
@@ -208,11 +208,11 @@ a YAJSW declaration still to be confirmed against YAJSW itself.
 | `wrapper.readiness.jmx.url` | JMX service URL the jmx readiness probe connects to | text | — | **unsupported** (P9)<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.attribute` | MBean attribute the jmx readiness probe reads | text | — | **unsupported** (P9)<br>nyajsw extension |  |
 | `wrapper.readiness.jmx.value` | Attribute value the jmx readiness probe waits for | text | — | **unsupported** (P9)<br>nyajsw extension |  |
-| `wrapper.liveness.type` | Liveness probes checked while the application runs | list | agent when wrapper.agent.enabled is true (from P7), otherwise none (D16) | **supported**<br>nyajsw extension | An unknown type is an error when the wrapper starts the application |
+| `wrapper.liveness.type` | Liveness probes checked while the application runs | list | agent when the agent is in effect (wrapper.agent.enabled and no wrapper.image), otherwise none (D16) | **supported**<br>nyajsw extension | An unknown type is an error when the wrapper starts the application |
 | `wrapper.liveness.interval` | Pause between liveness checks | seconds | `10` | **supported**<br>nyajsw extension |  |
 | `wrapper.liveness.failures` | Consecutive liveness failures before wrapper.liveness.action is taken | integer | `3` | **supported**<br>nyajsw extension |  |
 | `wrapper.liveness.action` | Action when the liveness probes keep failing | one of `RESTART`, `SHUTDOWN` | `RESTART` | **supported**<br>nyajsw extension |  |
-| `wrapper.agent.enabled` | Load the nyajsw agent into the application JVM | boolean | `true` | **planned** (P7)<br>nyajsw extension |  |
+| `wrapper.agent.enabled` | Load the nyajsw agent into the application JVM | boolean | `true` | **supported**<br>nyajsw extension | It answers the wrapper's pings and ends the JVM with System.exit(0) on a stop, so shutdown hooks run; never with wrapper.image, which may start any executable, nor for a runtime without the java.instrument module (a jlink image), which is warned about |
 | `wrapper.port` | Port of the channel between the wrapper and the application | integer | — | **ignored** | The wrapper listens for the nyajsw agent on a loopback port chosen at each launch |
 | `wrapper.port.min` | Lowest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The wrapper listens for the nyajsw agent on a loopback port chosen at each launch |
 | `wrapper.port.max` | Highest port tried for the channel between the wrapper and the application | integer | — | **ignored** | The wrapper listens for the nyajsw agent on a loopback port chosen at each launch |

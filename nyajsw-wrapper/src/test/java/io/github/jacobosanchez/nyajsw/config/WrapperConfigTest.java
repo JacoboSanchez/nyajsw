@@ -140,8 +140,8 @@ public class WrapperConfigTest {
         assertEquals(lifecycle.jvmExitTimeout(), Duration.ZERO);
         assertEquals(lifecycle.stopBudget(), Duration.ofSeconds(30));
         assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
-        // The agent is enabled by default but not implemented yet (P7), so the defaults do without it.
-        assertEquals(lifecycle.stopStrategies(), List.of("terminate"));
+        // The agent is enabled by default (D10), so the defaults use it.
+        assertEquals(lifecycle.stopStrategies(), List.of("agent", "terminate"));
         ProbeConfig probes = config.probes();
         assertTrue(probes.agentEnabled());
         assertEquals(probes.readinessTypes(), List.of("process"));
@@ -149,7 +149,7 @@ public class WrapperConfigTest {
         assertEquals(probes.tcpHost(), "127.0.0.1");
         assertEquals(probes.httpStatus(), StatusRanges.parse("200-399"));
         assertEquals(probes.httpTimeout(), Duration.ofSeconds(5));
-        assertEquals(probes.livenessTypes(), List.of());
+        assertEquals(probes.livenessTypes(), List.of("agent"));
         assertEquals(probes.livenessInterval(), Duration.ofSeconds(10));
         assertEquals(probes.livenessFailures(), 3);
         assertEquals(probes.livenessAction(), FailureAction.RESTART);
@@ -187,17 +187,67 @@ public class WrapperConfigTest {
     }
 
     @Test
-    public void derivedDefaultsFollowTheAgentOnceItIsInEffect() throws IOException {
+    public void byDefaultTheAgentIsInEffectAndTheDefaultsUseIt() throws IOException {
+        WrapperConfig config = load("wrapper.java.app.mainclass=Main");
+
+        assertTrue(config.probes().agentInEffect());
+        assertEquals(config.lifecycle().stopStrategies(), List.of("agent", "terminate"));
+        assertEquals(config.probes().livenessTypes(), List.of("agent"));
+        assertEquals(config.probes().agentTimeout(), Optional.of(Duration.ofSeconds(30)), "wrapper.ping.timeout");
+        assertEquals(config.probes().livenessFailures(), 3);
+    }
+
+    @Test
+    public void withoutTheAgentTheDefaultsDoWithoutIt() throws IOException {
         WrapperConfig config = load("wrapper.agent.enabled=false");
 
+        assertFalse(config.probes().agentInEffect());
         assertFalse(config.probes().agentEnabled());
         assertEquals(config.lifecycle().stopStrategies(), List.of("terminate"));
         assertEquals(config.probes().livenessTypes(), List.of());
-        assertEquals(config.service().name(), Optional.empty());
-        assertFalse(ProbeConfig.agentInEffect(false));
-        assertEquals(ProbeConfig.agentInEffect(true), ConfigKeys.AGENT_ENABLED.status() == KeyStatus.SUPPORTED);
-        assertEquals(LifecycleConfig.defaultStopStrategies(true), List.of("agent", "terminate"));
-        assertEquals(ProbeConfig.defaultLivenessTypes(true), List.of("agent"));
+        // wrapper.image, an executable that may be no JVM, turns the agent off once it takes effect.
+        assertEquals(load("wrapper.image=bin/server.exe").probes().agentInEffect(),
+                !ConfigKeys.IMAGE.status().takesEffect());
+        assertTrue(ProbeConfig.agentInEffect(true, true));
+        assertFalse(ProbeConfig.agentInEffect(true, false));
+        assertFalse(ProbeConfig.agentInEffect(false, true));
+    }
+
+    @Test
+    public void yajswPingSettingsMapOntoTheAgentLivenessProbe() throws IOException {
+        // A written timeout is the silence that counts as a hang: pings of up to one interval, as many
+        // failed in a row as fit (7 s + 7 s per failed check, so 1 for 12 s; 3 for 40 s).
+        ProbeConfig ping = load("wrapper.ping.interval=7", "wrapper.ping.timeout=12").probes();
+        assertEquals(ping.livenessInterval(), Duration.ofSeconds(7));
+        assertEquals(ping.agentTimeout(), Optional.of(Duration.ofSeconds(7)));
+        assertEquals(ping.livenessFailures(), 1);
+        ProbeConfig longer = load("wrapper.ping.interval=7", "wrapper.ping.timeout=40").probes();
+        assertEquals(longer.livenessFailures(), 3);
+        ProbeConfig shortTimeout = load("wrapper.ping.interval=30", "wrapper.ping.timeout=5").probes();
+        assertEquals(shortTimeout.agentTimeout(), Optional.of(Duration.ofSeconds(5)), "never longer than written");
+        ProbeConfig counted = load("wrapper.ping.timeout=12", "wrapper.liveness.failures=5").probes();
+        assertEquals(counted.agentTimeout(), Optional.of(Duration.ofSeconds(12)), "the failures are counted");
+        assertEquals(counted.livenessFailures(), 5);
+
+        WrapperConfig both = load("wrapper.ping.interval=7", "wrapper.liveness.interval=20");
+        assertEquals(both.probes().livenessInterval(), Duration.ofSeconds(20), "the nyajsw key wins");
+        assertTrue(messages(both).contains("wrapper.ping.interval is ignored: wrapper.liveness.interval sets the"
+                + " liveness interval"), messages(both).toString());
+        assertEquals(load().probes().livenessInterval(), Duration.ofSeconds(10), "neither: the liveness default");
+    }
+
+    @Test
+    public void aPingKeyOfZeroTurnsTheDefaultHeartbeatOff() throws IOException {
+        // Tanuki's "never time out", which YAJSW files inherit: no error, and no agent liveness by default.
+        for (String zero : List.of("wrapper.ping.timeout=0", "wrapper.ping.interval=0")) {
+            ProbeConfig probes = load(zero).probes();
+            assertEquals(probes.livenessTypes(), List.of(), zero);
+            assertEquals(probes.livenessInterval(), Duration.ofSeconds(10), zero);
+        }
+        assertEquals(load("wrapper.ping.timeout=0").probes().agentTimeout(), Optional.empty(), "no pings");
+        assertEquals(load("wrapper.ping.timeout=0", "wrapper.liveness.type=agent").probes().livenessTypes(),
+                List.of("agent"), "an explicit agent probe then only fails on a lost session");
+        assertEquals(load("wrapper.agent.enabled=false", "wrapper.ping.timeout=0").probes().livenessTypes(), List.of());
     }
 
     @Test
@@ -280,13 +330,9 @@ public class WrapperConfigTest {
 
     @Test
     public void invalidValueOfAPlannedKeyFallsBackToTheDefaultWithWarning() throws IOException {
-        WrapperConfig config = load("wrapper.ping.interval=soon", "wrapper.ping.timeout=later");
+        WrapperConfig config = load("wrapper.filter.action.1=SOMETIMES");
 
-        assertEquals(config.lifecycle().pingInterval(), Optional.of(Duration.ofSeconds(5)));
-        assertEquals(config.lifecycle().pingTimeout(), Optional.of(Duration.ofSeconds(30)));
-        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'soon'")),
-                messages(config).toString());
-        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'later'")),
+        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'SOMETIMES'")),
                 messages(config).toString());
     }
 
@@ -311,7 +357,7 @@ public class WrapperConfigTest {
                 "wrapper.liveness.type=process,x${wrapper.ntservice.password}");
 
         assertEquals(config.probes().readinessTypes(), List.of("process"));
-        assertEquals(config.probes().livenessTypes(), List.of());
+        assertEquals(config.probes().livenessTypes(), List.of("agent"), "the default applies");
         assertTrue(messages(config).contains("wrapper.readiness.type contains a secret, which cannot name a probe type;"
                 + " ignored, the default applies"), messages(config).toString());
         assertTrue(messages(config).contains("wrapper.liveness.type contains a secret, which cannot name a probe type;"

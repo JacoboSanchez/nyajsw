@@ -8,8 +8,6 @@ import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT_0;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.ON_EXIT_DEFAULT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PIDFILE;
-import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_INTERVAL;
-import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.PING_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.RESTART_DELAY;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.SHUTDOWN_TIMEOUT;
 import static io.github.jacobosanchez.nyajsw.config.ConfigKeys.STARTUP_DELAY;
@@ -50,14 +48,11 @@ import java.util.TreeMap;
  *                                 the agent is in effect ({@link ProbeConfig#agentInEffect}), else
  *                                 {@code terminate}
  * @param stopCommand              {@code wrapper.stop.command}, if set
- * @param pingInterval             {@code wrapper.ping.interval}, if set
- * @param pingTimeout              {@code wrapper.ping.timeout}, if set
  */
 public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exitActions, ExitAction defaultExitAction,
         Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime, Duration startupDelay,
         Duration startupTimeout, Duration shutdownTimeout, Duration jvmExitTimeout, Optional<Path> pidFile,
-        Optional<Path> javaPidFile, List<String> stopStrategies, Optional<String> stopCommand, Optional<Duration> pingInterval,
-        Optional<Duration> pingTimeout) {
+        Optional<Path> javaPidFile, List<String> stopStrategies, Optional<String> stopCommand) {
 
     public LifecycleConfig {
         Objects.requireNonNull(control, "control");
@@ -73,8 +68,6 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
         Objects.requireNonNull(javaPidFile, "javaPidFile");
         stopStrategies = List.copyOf(stopStrategies);
         Objects.requireNonNull(stopCommand, "stopCommand");
-        Objects.requireNonNull(pingInterval, "pingInterval");
-        Objects.requireNonNull(pingTimeout, "pingTimeout");
     }
 
     /**
@@ -115,9 +108,7 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 values.path(PIDFILE),
                 values.path(JAVA_PIDFILE),
                 stopStrategies.isEmpty() ? defaultStopStrategies(agentInEffect) : stopStrategies,
-                values.text(STOP_COMMAND),
-                values.duration(PING_INTERVAL),
-                values.duration(PING_TIMEOUT));
+                values.text(STOP_COMMAND));
     }
 
     /** The derived default of {@code wrapper.stop.strategy}, as its registry description states. */

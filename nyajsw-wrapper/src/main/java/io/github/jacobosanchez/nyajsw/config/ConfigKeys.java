@@ -460,14 +460,18 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec PING_INTERVAL = yajsw("wrapper.ping.interval", DURATION, LIFECYCLE)
-            .status(PLANNED, "P7")
-            .description("Heartbeat interval, mapped onto the agent liveness probe (D16)")
+            .status(SUPPORTED)
+            .description("Heartbeat interval: the liveness interval when wrapper.liveness.interval is not written (D16)")
+            .notes("0 turns the default agent heartbeat off")
             .defaultValue("5")
             .build();
 
     public static final KeySpec PING_TIMEOUT = yajsw("wrapper.ping.timeout", DURATION, LIFECYCLE)
-            .status(PLANNED, "P7")
-            .description("Heartbeat timeout, mapped onto the agent liveness probe (D16)")
+            .status(SUPPORTED)
+            .description("Heartbeat timeout: the silence after which the application counts as hung (D16)")
+            .notes("With the agent as the only liveness probe and wrapper.liveness.failures not written, pings of up"
+                    + " to one interval each, as many failed in a row as fit into it; otherwise how long each ping"
+                    + " may take. 0 turns the default agent heartbeat off")
             .defaultValue("30")
             .build();
 
@@ -627,7 +631,8 @@ public final class ConfigKeys {
     public static final KeySpec STOP_STRATEGY = nyajsw("wrapper.stop.strategy", LIST, LIFECYCLE)
             .status(SUPPORTED)
             .description("Ordered stop strategies tried before the application is terminated")
-            .derivedDefault("agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate")
+            .derivedDefault("agent,terminate when the agent is in effect (wrapper.agent.enabled and no wrapper.image),"
+                    + " otherwise terminate")
             .notes("Names ignore case; unknown ones are skipped with a warning and terminate is always the last"
                     + " step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout;"
                     + " when both are 0 they are skipped. Strategies: implementation plan, section 4.6")
@@ -1011,7 +1016,8 @@ public final class ConfigKeys {
             .status(SUPPORTED)
             .description("Liveness probes checked while the application runs")
             .notes("An unknown type is an error when the wrapper starts the application")
-            .derivedDefault("agent when wrapper.agent.enabled is true (from P7), otherwise none (D16)")
+            .derivedDefault("agent when the agent is in effect (wrapper.agent.enabled and no wrapper.image), otherwise"
+                    + " none (D16)")
             .build();
 
     public static final KeySpec LIVENESS_INTERVAL = nyajsw("wrapper.liveness.interval", DURATION, PROBES)
@@ -1034,8 +1040,11 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec AGENT_ENABLED = nyajsw("wrapper.agent.enabled", BOOLEAN, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Load the nyajsw agent into the application JVM")
+            .notes("It answers the wrapper's pings and ends the JVM with System.exit(0) on a stop, so shutdown"
+                    + " hooks run; never with wrapper.image, which may start any executable, nor for a runtime"
+                    + " without the java.instrument module (a jlink image), which is warned about")
             .defaultValue("true")
             .build();
 

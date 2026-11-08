@@ -21,9 +21,10 @@ import java.util.concurrent.TimeoutException;
  * Supervisor} ({@link Supervision}), and the wrapper returns the application's exit code.
  *
  * <p>{@link #stop()} is what Ctrl+C triggers, through the shutdown hook the entry point registers.
- * The application shares the console and receives the same Ctrl+C, so the default stop chain
- * ({@code terminate} alone) gives it the stop budget to finish its own shutdown before its process
- * tree is terminated.
+ * The application shares the console and receives the same Ctrl+C. The default stop chain
+ * ({@code agent,terminate}) asks the agent to end it as well; when no graceful step can ask (no agent
+ * connected), the application still has the stop budget to finish its own shutdown before its
+ * process tree is terminated.
  */
 public final class ConsoleMode {
 

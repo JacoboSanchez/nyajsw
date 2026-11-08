@@ -3,6 +3,7 @@ package io.github.jacobosanchez.nyajsw.launch;
 import io.github.jacobosanchez.nyajsw.agent.AgentProtocol;
 import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
 import io.github.jacobosanchez.nyajsw.agentlink.AgentListener;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 import io.github.jacobosanchez.nyajsw.config.JavaConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
@@ -274,6 +275,11 @@ public final class ApplicationProcess implements RunningApplication {
     @Override
     public Optional<AgentChannel> agent() {
         return agent.flatMap(AgentListener::channel);
+    }
+
+    @Override
+    public AgentState agentState() {
+        return agent.map(AgentListener::state).orElse(AgentState.NONE);
     }
 
     /**

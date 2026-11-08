@@ -33,7 +33,7 @@ public final class ProbeRegistry {
         factories.put(FileProbe.TYPE, FileProbe::from);
         factories.put(CommandProbe.TYPE, CommandProbe::from);
         factories.put(LogPatternProbe.TYPE, LogPatternProbe::from);
-        factories.put(AgentProbe.TYPE, config -> new AgentProbe(AgentProbe.DEFAULT_TIMEOUT));
+        factories.put(AgentProbe.TYPE, config -> new AgentProbe(config.agentTimeout()));
         return new ProbeRegistry(factories);
     }
 

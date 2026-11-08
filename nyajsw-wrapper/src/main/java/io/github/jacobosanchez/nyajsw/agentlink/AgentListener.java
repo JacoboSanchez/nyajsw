@@ -63,6 +63,8 @@ public final class AgentListener implements AutoCloseable {
     private final Set<Socket> pending = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean refusedOnce = new AtomicBoolean();
     private volatile boolean closed;
+    /** Set when the window ran out without an agent. */
+    private volatile boolean gaveUp;
 
     private AgentListener(ServerSocket server, String token, String name, WrapperLog log, Duration helloTimeout) {
         this.server = server;
@@ -123,6 +125,15 @@ public final class AgentListener implements AutoCloseable {
     /** The agent's session, once it has introduced itself and while it is open. */
     public Optional<AgentChannel> channel() {
         return Optional.ofNullable(channel.get()).filter(AgentChannel::isOpen);
+    }
+
+    /** Where the invocation stands with its agent. */
+    public AgentState state() {
+        AgentChannel session = channel.get();
+        if (session != null) {
+            return session.isOpen() ? AgentState.CONNECTED : AgentState.LOST;
+        }
+        return closed || gaveUp ? AgentState.NONE : AgentState.WAITING;
     }
 
     /** Stops listening and ends the session, if any. */
@@ -232,9 +243,12 @@ public final class AgentListener implements AutoCloseable {
             return;
         }
         if (!closed && channel.get() == null) {
-            log.status("warning: the agent of " + name + " did not connect within " + Durations.seconds(window)
-                    + "; the application runs without it");
+            gaveUp = true;
             stopListening();
+            if (channel.get() == null) { // an introduction that was under way may have won meanwhile
+                log.status("warning: the agent of " + name + " did not connect within " + Durations.seconds(window)
+                        + "; the application runs without it");
+            }
         }
     }
 

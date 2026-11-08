@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
 import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
@@ -135,6 +136,11 @@ public final class PidFiles {
         @Override
         public Optional<AgentChannel> agent() {
             return application.agent();
+        }
+
+        @Override
+        public AgentState agentState() {
+            return application.agentState();
         }
 
         @Override

@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.probe;
 
 import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 import io.github.jacobosanchez.nyajsw.launch.OutputLines;
 import io.github.jacobosanchez.nyajsw.launch.RunningApplication;
 
@@ -13,6 +14,7 @@ final class FakeRunningApplication implements RunningApplication {
     private final boolean alive;
     private final OutputLines output = new OutputLines();
     private volatile Optional<AgentChannel> agent = Optional.empty();
+    private volatile AgentState agentState = AgentState.NONE;
 
     FakeRunningApplication(boolean alive) {
         this.alive = alive;
@@ -20,7 +22,7 @@ final class FakeRunningApplication implements RunningApplication {
 
     /** A context for a running {@code jvm 1}. */
     static ProbeContext running() {
-        return new ProbeContext(new FakeRunningApplication(true));
+        return new ProbeContext(new FakeRunningApplication(true), ProbeContext.Purpose.READINESS);
     }
 
     @Override
@@ -55,6 +57,18 @@ final class FakeRunningApplication implements RunningApplication {
     /** Lets the application have {@code channel} as its agent's session. */
     void connectAgent(AgentChannel channel) {
         agent = Optional.of(channel);
+        agentState = AgentState.CONNECTED;
+    }
+
+    /** Lets the application be in {@code state} with its agent, without a session. */
+    void agentState(AgentState state) {
+        agent = Optional.empty();
+        agentState = state;
+    }
+
+    @Override
+    public AgentState agentState() {
+        return agent.isPresent() && !agent.get().isOpen() ? AgentState.LOST : agentState;
     }
 
     @Override
