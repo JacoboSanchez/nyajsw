@@ -461,7 +461,8 @@ public final class ConfigKeys {
 
     public static final KeySpec PING_INTERVAL = yajsw("wrapper.ping.interval", DURATION, LIFECYCLE)
             .status(SUPPORTED)
-            .description("Heartbeat interval: the liveness interval when wrapper.liveness.interval is not written (D16)")
+            .description("Heartbeat interval: the liveness interval when wrapper.liveness.interval is not written"
+                    + " (D16)")
             .notes("0 turns the default agent heartbeat off")
             .defaultValue("5")
             .build();
