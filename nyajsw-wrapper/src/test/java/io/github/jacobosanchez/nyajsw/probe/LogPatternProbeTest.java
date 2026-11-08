@@ -17,6 +17,8 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
@@ -134,6 +136,44 @@ public class LogPatternProbeTest {
         probe.beforeLaunch();
         FakeRunningApplication second = new FakeRunningApplication(true);
         assertFalse(probe.check(readiness(second)).passed(), "a new invocation needs its own line");
+    }
+
+    @Test(timeOut = 30_000)
+    public void aFileWhoseSizeDoesNotAnswerHoldsTheLaunchUpOnlyBriefly() throws Exception {
+        // beforeLaunch runs on the supervisor's thread: a hung share must not stall supervision.
+        Path file = dir.resolve("app.log");
+        append(file, "Started App in 1 seconds (an earlier run)\n");
+        long before = Files.size(file);
+        CountDownLatch answer = new CountDownLatch(1);
+        LogPatternProbe probe = new LogPatternProbe(STARTED, Optional.of(file), path -> {
+            try {
+                answer.await(); // a share that does not answer
+            } catch (InterruptedException e) {
+                throw new IOException(e);
+            }
+            return before;
+        }, Duration.ofMillis(50));
+
+        ProbeResult notKnown = ProbeResult.fail("the size of " + file + " before the launch is not known yet");
+        FakeRunningApplication application = new FakeRunningApplication(true);
+        try {
+            long start = System.nanoTime();
+            probe.beforeLaunch();
+            assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(10), "the launch goes ahead");
+            assertEquals(probe.check(liveness(application)), notKnown);
+        } finally {
+            answer.countDown();
+        }
+
+        ProbeResult result = probe.check(liveness(application));
+        for (long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                result.equals(notKnown) && System.nanoTime() < deadline; result = probe.check(liveness(application))) {
+            Thread.sleep(10); // the lookup's thread completes the size just after it answers
+        }
+        assertEquals(result, ProbeResult.fail("none of the 0 new lines of " + file + " matches the pattern"),
+                "read from the size before the launch, so the earlier run's line does not count");
+        append(file, "Started App in 4 seconds\n");
+        assertEquals(probe.check(liveness(application)), ProbeResult.pass(file + " has a new line matching the pattern"));
     }
 
     @Test
