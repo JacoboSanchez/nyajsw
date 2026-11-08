@@ -71,6 +71,7 @@ public class PackagedDistributionTest {
     public void theZipHoldsTheJarsScriptsTemplateAndDocuments() {
         for (String file : List.of("nyajsw.jar", "nyajsw-agent.jar", "LICENSE", "README.md", "THIRD-PARTY.txt",
                 "conf/wrapper.conf", "docs/COMPATIBILITY.md", "docs/probes.md", "docs/windows-service.md",
+                "docs/migration-from-yajsw.md",
                 "bin/nyajsw.bat", "bin/runConsole.bat", "bin/installService.bat", "bin/uninstallService.bat",
                 "bin/startService.bat", "bin/stopService.bat", "bin/queryService.bat")) {
             assertTrue(Files.isRegularFile(home.resolve(file)), file);
