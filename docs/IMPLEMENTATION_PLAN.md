@@ -1603,7 +1603,11 @@ group. Phase 7 is done.
 - [ ] P8.3 Run the owner's real configuration(s) end to end on Windows; close gaps; matrix updated.
 - [ ] P8.4 *(recommended)* Release process: version tag, CI builds and attaches the zip to a GitHub
       release.
-- [ ] P8.5 Complete `README.md`.
+- [x] P8.5 Complete `README.md`.
+      *Done:* status (not released; P8.3 and P8.4 open), what nyajsw does, a quick start from the
+      zip (layout, the scripts with their default configuration, console run, install and start,
+      the Java the scripts choose), the guides, building (where the zip lands, which tests need
+      elevation), modules, contributing and licence (JNA bundled under Apache-2.0).
 Done when: a YAJSW deployment is switched to nyajsw with no configuration edits (warnings only).
 
 ### P9 — Backlog (not scheduled; pick up only when asked)
@@ -1629,8 +1633,7 @@ Minor findings from pre-commit reviews that were consciously not fixed in the re
 entry names the commit/plan item it came from; remove entries when addressed.
 - P8.1 (review): the named scripts pass their arguments on through `call`, which doubles carets, so
   a configuration path with `^` in it reaches the wrapper changed (a cmd.exe limitation; such
-  paths are rare). The zip ships the root `README.md`, which still describes an early state
-  (P8.5). The installed `nyajsw-dist` POM still declares the wrapper and the agent, which its
+  paths are rare). The installed `nyajsw-dist` POM still declares the wrapper and the agent, which its
   shaded jar already holds; harmless while nothing depends on that artifact.
 - PR review of Phase 7 (masking): `SecretMasker` knows a secret as written, unquoted, with doubled
   backslashes undone and with `\` for `/`, but not as Windows' `Path` otherwise rewrites it
@@ -1648,7 +1651,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P7.4: a service whose first start never succeeds stays *starting* and cannot be stopped through
   the SCM (1061) until `wrapper.max_failed_invocations` is used up, and never with
   `wrapper.startup.timeout=0`; the guide warns about it, but accepting a stop while starting may be
-  better. README.md does not list the guides yet (P8.5).
+  better.
 - P7.3c: `Supervision.launch` closing the agent's listener when the build or the start of the
   command fails is not tested (it needs a hook into the listener's life); the options and the
   session are, through console and service mode. A `jlink` runtime is recognised only by its
