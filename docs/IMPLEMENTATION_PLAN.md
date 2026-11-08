@@ -1606,6 +1606,13 @@ group. Phase 7 is done.
       zip (layout, the scripts with their default configuration, console run, install and start,
       the Java the scripts choose), the guides, building (where the zip lands, which tests need
       elevation), modules, contributing and licence (JNA bundled under Apache-2.0).
+      Expanded afterwards into a detailed overview: a table of contents, how it works (the two
+      JVMs, the agent), requirements, a first configuration, the command line with its environment
+      variables and exit codes, the configuration file (format, variables, includes, precedence,
+      paths, warning statuses), the application keys, restarts and `wrapper.control`, stopping,
+      probes, logging, the service, security, troubleshooting by Windows error, the main
+      differences from YAJSW, and regenerating `COMPATIBILITY.md`. The guides stay the reference;
+      the README links to them for detail.
 Done when: a YAJSW deployment is switched to nyajsw with no configuration edits (warnings only).
 
 ### P9 — Backlog (not scheduled; pick up only when asked)
