@@ -910,7 +910,9 @@ Goal: restart policy, timeouts and stop sequence, fully unit-tested with fake cl
       `ProcessProbe`; `wrapper.startup.timeout` bounds readiness.
       **Done:** `ProbeRegistry.defaults()` maps type names to factories over `ProbeConfig` (only
       `process` so far; P7 adds entries) and refuses unknown types; `ProbeRunner` holds the probes
-      that must all pass and the interval, checks them in order up to the first failure, and turns
+      that must all pass and the interval, checks them in order up to the first failure (since the
+      Phase 7 PR review, probes that `readsEveryCheck`, that is `log`, are still checked after it,
+      and the failures are joined), and turns
       an exception (or no result) into a failure named by exception class only, since a message may
       quote a configured value. `ProbeContext` carries the invocation; probes get their settings
       when created, and one instance serves every invocation (per-invocation state is keyed on the
@@ -1407,7 +1409,9 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         launch) contains a match of `wrapper.readiness.log.pattern` (compiled in `ProbeConfig`; an
         invalid one is a configuration error giving the reason, not the whole pattern). As liveness
         that is a heartbeat message, which must come once per interval; readiness and liveness share
-        the pattern (D25), so both need an alternation such as `Started|alive`.
+        the pattern (D25), so both need an alternation such as `Started|alive`. As readiness, a
+        match keeps passing for the rest of the invocation's start (PR review): with `log,http` the
+        start-up line often comes while the port still refuses, and the whole check fails then.
         The captured output reaches it through `RunningApplication.output()`: the output pumps
         also hand every line, as logged (masked, long ones in pieces), to the invocation's
         `launch.OutputLines`, which keeps the latest 10,000 lines and 2 million characters and
@@ -1578,6 +1582,9 @@ Done when: a YAJSW deployment is switched to nyajsw with no configuration edits 
 ### Deferred review findings
 Minor findings from pre-commit reviews that were consciously not fixed in the reviewed commit. Each
 entry names the commit/plan item it came from; remove entries when addressed.
+- PR review of Phase 7: a readiness check still running when the startup timeout ends its
+  invocation may still reach a `log` probe listed after a failing one and reset its state; the new
+  invocation's next check reads again from its launch, so nothing is lost, only work repeated.
 - P7 end-to-end test: `AgentStopStrategy` logs the agent's acknowledgement from its own thread, so in
   theory a session closed by the exit just before it reads `STOPPING` leaves no line and fails the
   test's assertion on it; the window is tiny. The test overrides `config()`'s

@@ -965,7 +965,8 @@ public final class ConfigKeys {
             .status(SUPPORTED)
             .description("Regular expression the log probe looks for in new lines, for readiness and liveness alike")
             .notes("Passes when a line that came since the previous check contains a match (Java regular"
-                    + " expression syntax); lines are matched as logged, secrets masked")
+                    + " expression syntax); as readiness, a match keeps passing for the rest of that"
+                    + " invocation's start; lines are matched as logged, secrets masked")
             .build();
 
     public static final KeySpec READINESS_LOG_FILE = nyajsw("wrapper.readiness.log.file", PATH, PROBES)

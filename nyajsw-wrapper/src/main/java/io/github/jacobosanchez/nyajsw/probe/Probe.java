@@ -26,4 +26,14 @@ public interface Probe {
      */
     default void beforeLaunch() {
     }
+
+    /**
+     * Whether the probe must be checked even when a probe before it in the list has failed: one that
+     * reads what came since its previous check (the {@code log} probe) would otherwise fall behind,
+     * and what it waits for could be pushed out of its buffer before it is read. Others are not, so
+     * that a failing probe keeps a round short and gates the ones after it. False by default.
+     */
+    default boolean readsEveryCheck() {
+        return false;
+    }
 }

@@ -1,6 +1,7 @@
 package io.github.jacobosanchez.nyajsw.probe;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -58,14 +59,28 @@ public final class ProbeRunner {
     }
 
     /**
-     * Checks the probes in order and stops at the first that does not pass. A probe that throws, or
+     * Checks the probes in order. After the first that does not pass, only those that {@linkplain
+     * Probe#readsEveryCheck read on every check} are checked still (the {@code log} probe, which would
+     * otherwise fall behind); the others are not, so a failing probe keeps the round short and gates
+     * the ones after it. An interrupt (the wrapper closing) ends the round. A probe that throws, or
      * returns nothing, fails; its exception is named by class only, since its message may quote a
      * configured value.
      *
-     * @return a pass when every probe passed, else the first failure, its detail prefixed with the type
+     * @return a pass when every probe passed, else the failures of the probes checked, each detail
+     *         prefixed with its type, joined with {@code "; "}
      */
     public ProbeResult check(ProbeContext context) {
+        List<String> failures = new ArrayList<>();
         for (ProbeRegistry.NamedProbe named : probes) {
+            if (Thread.currentThread().isInterrupted()) {
+                if (failures.isEmpty()) {
+                    failures.add("the check was interrupted");
+                }
+                break;
+            }
+            if (!failures.isEmpty() && !named.probe().readsEveryCheck()) {
+                continue;
+            }
             ProbeResult result;
             try {
                 result = named.probe().check(context);
@@ -76,9 +91,10 @@ public final class ProbeRunner {
                 result = ProbeResult.fail("the probe threw " + e.getClass().getName());
             }
             if (!result.passed()) {
-                return ProbeResult.fail(named.type() + ": " + result.detail());
+                failures.add(named.type() + ": " + result.detail());
             }
         }
-        return ProbeResult.pass(probes.isEmpty() ? "no probes" : types());
+        return failures.isEmpty() ? ProbeResult.pass(probes.isEmpty() ? "no probes" : types())
+                : ProbeResult.fail(String.join("; ", failures));
     }
 }

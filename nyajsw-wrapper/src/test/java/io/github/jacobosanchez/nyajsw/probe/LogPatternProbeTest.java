@@ -14,8 +14,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import org.testng.annotations.AfterMethod;
@@ -38,7 +40,12 @@ public class LogPatternProbeTest {
         TestConfigs.delete(dir);
     }
 
-    private static ProbeContext context(FakeRunningApplication application) {
+    /** A liveness check: each one needs a new match. */
+    private static ProbeContext liveness(FakeRunningApplication application) {
+        return new ProbeContext(application, ProbeContext.Purpose.LIVENESS);
+    }
+
+    private static ProbeContext readiness(FakeRunningApplication application) {
         return new ProbeContext(application, ProbeContext.Purpose.READINESS);
     }
 
@@ -52,10 +59,10 @@ public class LogPatternProbeTest {
         LogPatternProbe probe = new LogPatternProbe(STARTED, Optional.empty());
         application.output().add("Starting app");
 
-        assertEquals(probe.check(context(application)),
+        assertEquals(probe.check(liveness(application)),
                 ProbeResult.fail("none of the 1 new lines of jvm 1 matches the pattern"));
         application.output().add("Started App in 4 seconds");
-        assertEquals(probe.check(context(application)),
+        assertEquals(probe.check(liveness(application)),
                 ProbeResult.pass("jvm 1 logged a line matching the pattern"));
     }
 
@@ -65,11 +72,68 @@ public class LogPatternProbeTest {
         LogPatternProbe probe = new LogPatternProbe(Pattern.compile("heartbeat"), Optional.empty());
 
         application.output().add("heartbeat 1");
-        assertTrue(probe.check(context(application)).passed());
-        assertFalse(probe.check(context(application)).passed(), "no new heartbeat");
+        assertTrue(probe.check(liveness(application)).passed());
+        assertFalse(probe.check(liveness(application)).passed(), "no new heartbeat");
         application.output().add("other");
         application.output().add("heartbeat 2");
-        assertTrue(probe.check(context(application)).passed());
+        assertTrue(probe.check(liveness(application)).passed());
+    }
+
+    @Test
+    public void asReadinessAMatchKeepsPassingWhileAnotherProbeOfTheListFails() {
+        // wrapper.readiness.type=log,http: the start-up line comes once, often before the HTTP port answers.
+        FakeRunningApplication application = new FakeRunningApplication(true);
+        LogPatternProbe log = new LogPatternProbe(STARTED, Optional.empty());
+        AtomicBoolean httpUp = new AtomicBoolean();
+        ProbeRunner readinessProbes = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("log", log),
+                new ProbeRegistry.NamedProbe("http", context -> httpUp.get() ? ProbeResult.pass("up")
+                        : ProbeResult.fail("refused"))), Duration.ofSeconds(1));
+        application.output().add("Started App in 4 seconds");
+
+        assertFalse(readinessProbes.check(readiness(application)).passed(), "http is not up yet");
+        application.output().add("other");
+        httpUp.set(true);
+        assertTrue(readinessProbes.check(readiness(application)).passed(), "the start-up line still counts");
+    }
+
+    @Test
+    public void listedAfterAFailingProbeItReadsOnSoItsLineIsNotPushedOut() {
+        // wrapper.readiness.type=http,log with a chatty application: more lines follow the start-up line
+        // than the output keeps before the port answers.
+        FakeRunningApplication application = new FakeRunningApplication(true);
+        AtomicBoolean httpUp = new AtomicBoolean();
+        ProbeRunner readinessProbes = new ProbeRunner(List.of(
+                new ProbeRegistry.NamedProbe("http", context -> httpUp.get() ? ProbeResult.pass("up")
+                        : ProbeResult.fail("refused")),
+                new ProbeRegistry.NamedProbe("log", new LogPatternProbe(STARTED, Optional.empty()))),
+                Duration.ofSeconds(1));
+
+        application.output().add("Started App in 4 seconds");
+        assertEquals(readinessProbes.check(readiness(application)).detail(), "http: refused");
+        for (int i = 0; i < OutputLines.MAX_LINES + 1; i++) {
+            application.output().add("line " + i);
+        }
+        httpUp.set(true);
+
+        assertTrue(readinessProbes.check(readiness(application)).passed());
+    }
+
+    @Test
+    public void asReadinessAFileMatchKeepsPassingForItsInvocationOnly() throws IOException {
+        Path file = dir.resolve("app.log");
+        append(file, "");
+        LogPatternProbe probe = new LogPatternProbe(STARTED, Optional.of(file));
+        probe.beforeLaunch();
+        FakeRunningApplication first = new FakeRunningApplication(true);
+        append(file, "Started App in 4 seconds\n");
+
+        assertTrue(probe.check(readiness(first)).passed());
+        assertEquals(probe.check(readiness(first)), ProbeResult.pass(file + " has a new line matching the pattern"));
+        assertFalse(probe.check(liveness(first)).passed(), "liveness still needs a new line");
+
+        probe.beforeLaunch();
+        FakeRunningApplication second = new FakeRunningApplication(true);
+        assertFalse(probe.check(readiness(second)).passed(), "a new invocation needs its own line");
     }
 
     @Test
@@ -77,11 +141,11 @@ public class LogPatternProbeTest {
         LogPatternProbe probe = new LogPatternProbe(STARTED, Optional.empty());
         FakeRunningApplication first = new FakeRunningApplication(true);
         first.output().add("Started App in 4 seconds");
-        assertTrue(probe.check(context(first)).passed());
+        assertTrue(probe.check(liveness(first)).passed());
 
         FakeRunningApplication second = new FakeRunningApplication(true);
         second.output().add("Started App in 5 seconds");
-        assertTrue(probe.check(context(second)).passed(), "its first line counts, whatever was read of the first");
+        assertTrue(probe.check(liveness(second)).passed(), "its first line counts, whatever was read of the first");
     }
 
     @Test
@@ -92,15 +156,15 @@ public class LogPatternProbeTest {
         LogPatternProbe probe = new LogPatternProbe(STARTED, Optional.of(file));
         probe.beforeLaunch();
 
-        assertEquals(probe.check(context(application)),
+        assertEquals(probe.check(liveness(application)),
                 ProbeResult.fail("none of the 0 new lines of " + file + " matches the pattern"));
         append(file, "Starting\r\n");
-        assertEquals(probe.check(context(application)),
+        assertEquals(probe.check(liveness(application)),
                 ProbeResult.fail("none of the 1 new lines of " + file + " matches the pattern"));
         append(file, "Started App in 4 seconds\r\n");
-        assertEquals(probe.check(context(application)),
+        assertEquals(probe.check(liveness(application)),
                 ProbeResult.pass(file + " has a new line matching the pattern"));
-        assertFalse(probe.check(context(application)).passed(), "nothing new");
+        assertFalse(probe.check(liveness(application)).passed(), "nothing new");
     }
 
     @Test
@@ -112,7 +176,7 @@ public class LogPatternProbeTest {
         probe.beforeLaunch();
         append(file, "Started App in 4 seconds\n");
 
-        assertTrue(probe.check(context(new FakeRunningApplication(true))).passed());
+        assertTrue(probe.check(liveness(new FakeRunningApplication(true))).passed());
     }
 
     @Test
@@ -124,11 +188,11 @@ public class LogPatternProbeTest {
         probe.beforeLaunch();
 
         append(file, "Started App");
-        assertFalse(probe.check(context(application)).passed());
+        assertFalse(probe.check(liveness(application)).passed());
         append(file, " in 4 seconds");
-        assertTrue(probe.check(context(application)).passed(), "the two halves are one line");
+        assertTrue(probe.check(liveness(application)).passed(), "the two halves are one line");
         append(file, " (done)\n");
-        assertFalse(probe.check(context(application)).passed(), "its end makes it no new match");
+        assertFalse(probe.check(liveness(application)).passed(), "its end makes it no new match");
     }
 
     @Test
@@ -138,7 +202,7 @@ public class LogPatternProbeTest {
         probe.beforeLaunch();
 
         append(file, "x".repeat(LogPatternProbe.MAX_LINE) + " Started App in 4 seconds\n");
-        assertFalse(probe.check(context(new FakeRunningApplication(true))).passed());
+        assertFalse(probe.check(liveness(new FakeRunningApplication(true))).passed());
     }
 
     @Test
@@ -153,7 +217,7 @@ public class LogPatternProbeTest {
         }
         append(file, text.toString());
 
-        ProbeResult result = probe.check(context(new FakeRunningApplication(true)));
+        ProbeResult result = probe.check(liveness(new FakeRunningApplication(true)));
 
         assertFalse(result.passed(), "the start is skipped: " + result.detail());
     }
@@ -166,7 +230,7 @@ public class LogPatternProbeTest {
             application.output().add("line " + i);
         }
 
-        assertEquals(probe.check(context(application)), ProbeResult.fail("none of the " + OutputLines.MAX_LINES
+        assertEquals(probe.check(liveness(application)), ProbeResult.fail("none of the " + OutputLines.MAX_LINES
                 + " new lines of jvm 1 matches the pattern (2 earlier lines were no longer kept)"));
     }
 
@@ -177,10 +241,10 @@ public class LogPatternProbeTest {
         FakeRunningApplication application = new FakeRunningApplication(true);
         LogPatternProbe probe = new LogPatternProbe(STARTED, Optional.of(file));
         probe.beforeLaunch();
-        probe.check(context(application));
+        probe.check(liveness(application));
 
         Files.writeString(file, "Started App in 4 seconds\n", StandardCharsets.UTF_8); // rotated
-        assertTrue(probe.check(context(application)).passed());
+        assertTrue(probe.check(liveness(application)).passed());
     }
 
     @Test
@@ -190,10 +254,10 @@ public class LogPatternProbeTest {
         LogPatternProbe probe = new LogPatternProbe(STARTED, Optional.of(file));
         probe.beforeLaunch();
 
-        assertEquals(probe.check(context(application)), ProbeResult.fail(file + " does not exist"));
+        assertEquals(probe.check(liveness(application)), ProbeResult.fail(file + " does not exist"));
         Files.createDirectories(file.getParent());
         append(file, "Started App in 4 seconds\n");
-        assertTrue(probe.check(context(application)).passed());
+        assertTrue(probe.check(liveness(application)).passed());
     }
 
     @Test
@@ -204,7 +268,7 @@ public class LogPatternProbeTest {
 
         Probe probe = ProbeRegistry.defaults().create(List.of("log"), config).get(0).probe();
 
-        assertTrue(probe.check(context(application)).passed());
+        assertTrue(probe.check(liveness(application)).passed());
         assertEquals(expectThrows(IllegalArgumentException.class,
                 () -> LogPatternProbe.from(TestConfigs.load(dir).probes())).getMessage(),
                 "the log probe needs wrapper.readiness.log.pattern");
