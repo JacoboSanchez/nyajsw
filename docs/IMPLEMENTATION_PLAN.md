@@ -1413,6 +1413,8 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
         the pattern (D25), so both need an alternation such as `Started|alive`. As readiness, a
         match keeps passing for the rest of the invocation's start (PR review): with `log,http` the
         start-up line often comes while the port still refuses, and the whole check fails then.
+        `beforeLaunch` looks up the file's size on a virtual thread and waits for it at most 1 s,
+        since it runs on the supervisor's thread; checks fail until a late answer comes (PR review).
         `ProbeRunner` masks secrets in failure details with the configuration's `SecretMasker`, since
         a probe setting may hold a password copied in with `${...}`; the http probe shows its URL
         masked before it is cut at a `?` or `#`, and `SecretMasker` also knows a secret's form with

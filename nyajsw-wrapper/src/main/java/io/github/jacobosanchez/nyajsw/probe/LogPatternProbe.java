@@ -14,8 +14,13 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
@@ -42,7 +47,12 @@ import java.util.regex.Pattern;
  *
  * <p>Its state belongs to the invocation it last checked; a new invocation starts afresh. A check
  * that finds the previous one still running (a file share that hangs) fails at once rather than
- * waiting for it.
+ * waiting for it. For the same reason {@link #beforeLaunch} looks up the file's size on a thread of
+ * its own and waits for it at most {@link #SIZE_WAIT}: it runs on the supervisor's thread, which a
+ * hung share must not hold up (readiness and liveness each have their own probe, so a launch waits
+ * at most twice that). A lookup that has not answered by then is still used once it does, and
+ * checks fail until then; as the application has started meanwhile, its first lines may then not
+ * count. A share that never answers leaves one blocked virtual thread per launch behind.
  */
 public final class LogPatternProbe implements Probe {
 
@@ -55,10 +65,21 @@ public final class LogPatternProbe implements Probe {
     /** The longest line of a file kept while its end has not come yet; the rest of it is not matched. */
     static final int MAX_LINE = 64 * 1024;
 
+    /** How long {@link #beforeLaunch} waits for the file's size before the launch goes ahead. */
+    static final Duration SIZE_WAIT = Duration.ofSeconds(1);
+
+    /** Looks up the size of a file; replaceable in tests by one that hangs. */
+    @FunctionalInterface
+    interface FileSize {
+        long of(Path file) throws IOException;
+    }
+
     private final Pattern pattern;
     private final Optional<Path> file;
-    /** The size of the file just before the latest launch; set on the supervisor's thread. */
-    private volatile long sizeAtLaunch;
+    private final FileSize fileSize;
+    private final Duration sizeWait;
+    /** The size of the file just before the latest launch, once looked up; set on the supervisor's thread. */
+    private volatile CompletableFuture<Long> sizeAtLaunch = CompletableFuture.completedFuture(0L);
     private final ReentrantLock checking = new ReentrantLock();
     // Guarded by checking: the invocation last checked and how far it has been read.
     private RunningApplication checked;
@@ -70,8 +91,14 @@ public final class LogPatternProbe implements Probe {
     private ProbeResult ready;
 
     LogPatternProbe(Pattern pattern, Optional<Path> file) {
+        this(pattern, file, Files::size, SIZE_WAIT);
+    }
+
+    LogPatternProbe(Pattern pattern, Optional<Path> file, FileSize fileSize, Duration sizeWait) {
         this.pattern = Objects.requireNonNull(pattern, "pattern");
         this.file = Objects.requireNonNull(file, "file");
+        this.fileSize = Objects.requireNonNull(fileSize, "fileSize");
+        this.sizeWait = Objects.requireNonNull(sizeWait, "sizeWait");
     }
 
     /**
@@ -85,17 +112,34 @@ public final class LogPatternProbe implements Probe {
         return new LogPatternProbe(pattern, config.logFile());
     }
 
-    /** Notes the size of the file, so that what the new invocation appends is what counts. */
+    /**
+     * Notes the size of the file, so that what the new invocation appends is what counts; waits for it
+     * at most {@link #SIZE_WAIT}.
+     */
     @Override
     public void beforeLaunch() {
-        if (file.isPresent()) {
-            long size;
+        if (file.isEmpty()) {
+            return;
+        }
+        Path path = file.get();
+        CompletableFuture<Long> size = new CompletableFuture<>();
+        Thread.ofVirtual().name("nyajsw-log-probe-size").start(() -> {
+            long found = 0; // a file that cannot be read: when it appears, all of it is new
             try {
-                size = Files.size(file.get());
-            } catch (IOException e) {
-                size = 0; // when it appears, all of it is new
+                found = fileSize.of(path);
+            } catch (IOException | RuntimeException e) {
+                // as above
+            } finally {
+                size.complete(found); // even after an Error, so that the checks are not held up for good
             }
-            sizeAtLaunch = size;
+        });
+        sizeAtLaunch = size;
+        try {
+            size.get(sizeWait.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException | ExecutionException e) {
+            // not known yet: checks fail until it is (it never completes exceptionally)
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -112,8 +156,12 @@ public final class LogPatternProbe implements Probe {
         }
         try {
             if (checked != context.application()) {
+                CompletableFuture<Long> size = sizeAtLaunch;
+                if (file.isPresent() && !size.isDone()) {
+                    return ProbeResult.fail("the size of " + file.get() + " before the launch is not known yet");
+                }
                 checked = context.application();
-                position = file.isPresent() ? sizeAtLaunch : 0;
+                position = file.isPresent() ? size.join() : 0;
                 partial.reset();
                 partialMatched = false;
                 ready = null;

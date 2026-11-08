@@ -223,6 +223,9 @@ What it reads:
   - A file that becomes shorter than what was read, after a log rotation, is read again from its
     start.
   - A file that does not exist yet is read in full once it appears.
+  - If its size cannot be read within 1 s before the launch, as on a share that does not answer,
+    the launch goes ahead and the checks fail until the size is known. Lines the application
+    wrote before that late answer may then not count.
   - At most 16 MiB are read per check; of more, the older part is skipped.
   - Lines are matched up to 64 KiB.
 
