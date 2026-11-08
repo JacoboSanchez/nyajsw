@@ -14,11 +14,14 @@ import static org.testng.Assert.expectThrows;
 
 import io.github.jacobosanchez.nyajsw.config.ControlMode;
 import io.github.jacobosanchez.nyajsw.config.ExitAction;
+import io.github.jacobosanchez.nyajsw.config.FailureAction;
 import io.github.jacobosanchez.nyajsw.config.LifecycleConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.launch.ApplicationLauncher;
 import io.github.jacobosanchez.nyajsw.launch.LaunchException;
 import io.github.jacobosanchez.nyajsw.log.WrapperLog;
+import io.github.jacobosanchez.nyajsw.probe.Probe;
+import io.github.jacobosanchez.nyajsw.probe.ProbeContext;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRegistry;
 import io.github.jacobosanchez.nyajsw.probe.ProbeResult;
 import io.github.jacobosanchez.nyajsw.probe.ProbeRunner;
@@ -117,7 +120,7 @@ public class SupervisorTest {
     }
 
     private Supervisor supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher) {
-        return new Supervisor(lifecycle, launcher, readiness, Runnable::run, stops, scheduler, log,
+        return new Supervisor(lifecycle, launcher, readiness, Liveness.NONE, Runnable::run, stops, scheduler, log,
                 (from, to) -> transitions.add(from + "->" + to));
     }
 
@@ -768,7 +771,7 @@ public class SupervisorTest {
     @Test
     public void aFailingListenerIsLoggedAndSupervisionGoesOn() {
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, stops, scheduler, log, (from, to) -> {
+                Liveness.NONE, Runnable::run, stops, scheduler, log, (from, to) -> {
             throw new IllegalStateException("listener broke");
         });
 
@@ -876,7 +879,7 @@ public class SupervisorTest {
         AtomicBoolean ready = new AtomicBoolean();
         readinessWhen(ready);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.RESTART, Map.of()), this::launch, readiness,
-                checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+                Liveness.NONE, checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
         supervisor.start();
         supervisor.runPending();
         Runnable firstCheck = checks.get(0); // jvm 1's check, still pending
@@ -910,7 +913,7 @@ public class SupervisorTest {
         readinessWhen(new AtomicBoolean());
         AtomicBoolean shutDown = new AtomicBoolean();
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                task -> {
+                Liveness.NONE, task -> {
                     if (shutDown.get()) {
                         throw new RejectedExecutionException("shut down");
                     }
@@ -1013,7 +1016,7 @@ public class SupervisorTest {
     public void aReadinessResultThatArrivesAfterTheStateChangedIsIgnored() {
         List<Runnable> checks = new ArrayList<>();
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
+                Liveness.NONE, checks::add, stops, scheduler, log, (from, to) -> transitions.add(from + "->" + to));
         supervisor.start();
         supervisor.runPending();
         assertEquals(checks.size(), 1, "the first check is queued at once");
@@ -1045,7 +1048,7 @@ public class SupervisorTest {
     @Test
     public void aProbeExecutorThatRejectsTheCheckFailsSupervision() {
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                task -> {
+                Liveness.NONE, task -> {
                     throw new RejectedExecutionException("shut down");
                 }, stops, scheduler, log, (from, to) -> { });
         supervisor.start();
@@ -1157,17 +1160,44 @@ public class SupervisorTest {
     }
 
     @Test
-    public void whenTheLastGracefulStepFailsTheApplicationIsTerminatedAtOnce() {
+    public void whenNoGracefulStepCouldAskTheApplicationStillHasTheBudget() {
+        // The default agent,terminate with no agent connected: the application gets the Ctrl+C in
+        // console mode and must have the time to finish its own shutdown.
         List<String> asked = new ArrayList<>();
-        chainOf(recording("broken", asked, Behaviour.THROWS));
+        chainOf(recording("broken", asked, Behaviour.THROWS), recording("absent", asked, Behaviour.NOT_APPLICABLE));
         Supervisor supervisor = running(lifecycle(ExitAction.SHUTDOWN, Map.of()));
 
         supervisor.requestStop();
         supervisor.runPending();
+        assertEquals(launched.get(0).terminations(), 0, "not at once");
+        assertTrue(logged().contains("stopping: no graceful step applied; waiting up to 30 s for jvm 1 to end"),
+                logged());
 
+        advance(supervisor, SHUTDOWN_TIMEOUT.minusMillis(1));
+        assertEquals(launched.get(0).terminations(), 0);
+        advance(supervisor, Duration.ofMillis(1));
         assertEquals(launched.get(0).terminations(), 1);
         assertEquals(supervisor.state(), STOPPED);
-        assertTrue(logged().contains("jvm 1 did not end within 0 s; terminating it (terminate)"), logged());
+    }
+
+    @Test
+    public void readinessAndLivenessChecksSayWhatTheyAreFor() {
+        List<ProbeContext.Purpose> purposes = new CopyOnWriteArrayList<>();
+        Probe recording = context -> {
+            purposes.add(context.purpose());
+            return ProbeResult.pass("ok");
+        };
+        readiness = new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("r", recording)), READINESS_INTERVAL);
+        Liveness liveness = new Liveness(new ProbeRunner(List.of(new ProbeRegistry.NamedProbe("l", recording)),
+                Duration.ofSeconds(10)), 3, FailureAction.RESTART);
+        Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
+                liveness, Runnable::run, stops, scheduler, log, (from, to) -> { });
+        supervisor.start();
+        supervisor.runPending();
+
+        advance(supervisor, Duration.ofSeconds(10));
+
+        assertEquals(purposes, List.of(ProbeContext.Purpose.READINESS, ProbeContext.Purpose.LIVENESS));
     }
 
     @Test
@@ -1250,7 +1280,7 @@ public class SupervisorTest {
         CountDownLatch supervisorRunning = new CountDownLatch(1);
         CountDownLatch stopping = new CountDownLatch(1);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, stops, scheduler, log, (from, to) -> {
+                Liveness.NONE, Runnable::run, stops, scheduler, log, (from, to) -> {
             if (to == RUNNING) {
                 supervisorRunning.countDown();
             }
@@ -1292,7 +1322,7 @@ public class SupervisorTest {
         CountDownLatch supervisorRunning = new CountDownLatch(1);
         CountDownLatch stopping = new CountDownLatch(1);
         Supervisor supervisor = new Supervisor(lifecycle(ExitAction.SHUTDOWN, Map.of()), this::launch, readiness,
-                Runnable::run, stops, scheduler, log, (from, to) -> {
+                Liveness.NONE, Runnable::run, stops, scheduler, log, (from, to) -> {
             if (to == RUNNING) {
                 supervisorRunning.countDown();
             }

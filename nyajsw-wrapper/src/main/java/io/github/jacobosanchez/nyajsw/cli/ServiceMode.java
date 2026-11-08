@@ -1,5 +1,6 @@
 package io.github.jacobosanchez.nyajsw.cli;
 
+import io.github.jacobosanchez.nyajsw.config.ConfigException;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
 import io.github.jacobosanchez.nyajsw.launch.ClasspathExpander;
@@ -135,6 +136,8 @@ final class ServiceMode implements ServiceBody {
             configured.status("supervision ended " + outcome.state() + (result.failed()
                     ? "; the service reports the error code " + result.code() : "; the service has stopped"));
             return result;
+        } catch (ConfigException e) {
+            return new ServiceExit(Main.configurationError(e, config, configured));
         } catch (RuntimeException e) {
             Main.unexpected(e, config, configured);
             return ServiceExit.UNEXPECTED_ERROR;

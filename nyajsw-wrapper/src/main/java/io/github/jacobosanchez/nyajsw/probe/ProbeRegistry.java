@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -27,6 +28,12 @@ public final class ProbeRegistry {
     public static ProbeRegistry defaults() {
         Map<String, Function<ProbeConfig, Probe>> factories = new LinkedHashMap<>();
         factories.put(ProcessProbe.TYPE, config -> new ProcessProbe());
+        factories.put(TcpProbe.TYPE, TcpProbe::from);
+        factories.put(HttpProbe.TYPE, HttpProbe::from);
+        factories.put(FileProbe.TYPE, FileProbe::from);
+        factories.put(CommandProbe.TYPE, CommandProbe::from);
+        factories.put(LogPatternProbe.TYPE, LogPatternProbe::from);
+        factories.put(AgentProbe.TYPE, config -> new AgentProbe(config.agentTimeout()));
         return new ProbeRegistry(factories);
     }
 
@@ -36,17 +43,18 @@ public final class ProbeRegistry {
     }
 
     /**
-     * Builds the probes named by {@code types}, in that order.
+     * Builds the probes named by {@code types}, in that order, ignoring case and surrounding blanks.
      *
-     * @throws IllegalArgumentException for a type that is not registered
+     * @throws IllegalArgumentException for a type that is not registered; the message quotes it
      */
     public List<NamedProbe> create(List<String> types, ProbeConfig config) {
         Objects.requireNonNull(config, "config");
         List<NamedProbe> probes = new ArrayList<>();
-        for (String type : types) {
+        for (String listed : types) {
+            String type = listed.strip().toLowerCase(Locale.ROOT);
             Function<ProbeConfig, Probe> factory = factories.get(type);
             if (factory == null) {
-                throw new IllegalArgumentException("unknown probe type " + type + "; known: " + types());
+                throw new IllegalArgumentException("unknown probe type " + listed.strip() + "; known: " + types());
             }
             probes.add(new NamedProbe(type, factory.apply(config)));
         }

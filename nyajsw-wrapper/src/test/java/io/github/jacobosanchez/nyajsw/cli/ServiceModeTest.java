@@ -4,6 +4,7 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
+import io.github.jacobosanchez.nyajsw.agentlink.AgentJar;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
@@ -105,6 +106,9 @@ public class ServiceModeTest {
 
     @Test(timeOut = 120_000)
     public void theServiceRunsUntilTheServiceManagerStopsIt() throws Exception {
+        if (AgentJar.locate().isEmpty()) {
+            throw new SkipException("the agent's jar is not built; run the whole build (mvn verify)");
+        }
         FakeServiceHost host = new FakeServiceHost("svc");
         ServiceMode mode = mode(conf("wrapper.app.parameter.1=options"));
         CompletableFuture<Void> service = serve(host, mode);
@@ -112,6 +116,7 @@ public class ServiceModeTest {
             assertTrue(host.awaitRunning(WAIT));
             assertTrue(host.states().contains(ServiceState.RUNNING), "it ended without running: " + host.states() + log());
             awaitLog("options=");
+            awaitLog("the agent of jvm 1 has connected"); // it connects on a thread of its own
 
             assertTrue(host.stop(ServiceControl.STOP));
         } finally {
@@ -131,8 +136,10 @@ public class ServiceModeTest {
         assertTrue(log.contains("the Service Control Manager asks the service to stop (STOP)"), log);
         assertTrue(log.lines().anyMatch(line -> line.contains("options=[") && line.contains("-Xrs")), log);
         assertTrue(log.contains("supervision ended STOPPED; the service has stopped"), log);
-        assertTrue(log.contains("warning: no graceful stop strategy (wrapper.stop.strategy): a stop of the service"
-                + " waits 1 s"), log);
+        // The agent is in by default (awaited before the stop): it ends the application with 0.
+        assertTrue(log.contains("the agent of jvm 1 has connected (protocol 1)"), log);
+        assertTrue(log.contains("the agent of jvm 1 is ending the application"), log);
+        assertFalse(log.contains("warning: no graceful stop strategy"), log);
         Path bootstrap = dir.resolve("bootstrap-svc.log");
         assertTrue(!Files.exists(bootstrap) || Files.readString(bootstrap, StandardCharsets.UTF_8).isBlank(),
                 "nothing went wrong");
@@ -175,6 +182,16 @@ public class ServiceModeTest {
         assertTrue(bootstrap.contains("wrapper.java.maxmemory"), bootstrap);
         assertTrue(bootstrap.contains("the service 'svc' cannot start: its configuration"), bootstrap);
         assertEquals(mode.exitCode(), ExitCode.CONFIGURATION_ERROR.code());
+    }
+
+    @Test(timeOut = 120_000)
+    public void anUnknownProbeTypeFailsTheServiceWithTheConfigurationErrorCode() throws Exception {
+        FakeServiceHost host = new FakeServiceHost("svc");
+
+        host.run(mode(conf("wrapper.readiness.type=telepathy")));
+
+        assertEquals(host.exit(), Optional.of(new ServiceExit(ExitCode.CONFIGURATION_ERROR.code())), log());
+        assertTrue(log().contains("wrapper.readiness.type: unknown probe type telepathy"), log());
     }
 
     @Test(timeOut = 120_000)

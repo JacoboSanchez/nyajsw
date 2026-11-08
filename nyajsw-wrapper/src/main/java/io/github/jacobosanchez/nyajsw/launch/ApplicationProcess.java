@@ -1,5 +1,9 @@
 package io.github.jacobosanchez.nyajsw.launch;
 
+import io.github.jacobosanchez.nyajsw.agent.AgentProtocol;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentChannel;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentListener;
+import io.github.jacobosanchez.nyajsw.agentlink.AgentState;
 import io.github.jacobosanchez.nyajsw.config.JavaConfig;
 import io.github.jacobosanchez.nyajsw.config.LogLevel;
 import io.github.jacobosanchez.nyajsw.config.SecretMasker;
@@ -12,14 +16,10 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -58,14 +58,19 @@ public final class ApplicationProcess implements RunningApplication {
     private final Optional<ProcessJob> job;
     /** Completes once, with the exit code, after the output is drained and the exit logged. */
     private final CompletableFuture<Integer> exit;
+    private final OutputLines output;
+    /** The listener of its agent, if it has one; closed when the process has ended. */
+    private final Optional<AgentListener> agent;
 
     private ApplicationProcess(Process process, String name, List<Thread> pumps, WrapperLog log,
-            Optional<ProcessJob> job) {
+            Optional<ProcessJob> job, OutputLines output, Optional<AgentListener> agent) {
         this.process = process;
         this.name = name;
         this.pumps = pumps;
         this.log = log;
         this.job = job;
+        this.output = output;
+        this.agent = agent;
         // Draining may block for DRAIN, so it runs on its own thread, not on the JDK's process reaper.
         this.exit = process.onExit().thenApplyAsync(this::ended,
                 task -> Thread.ofPlatform().daemon().name("nyajsw-" + name.replace(' ', '-') + "-exit").start(task));
@@ -94,7 +99,21 @@ public final class ApplicationProcess implements RunningApplication {
      */
     public static ApplicationProcess start(JavaCommand command, JavaConfig java, int invocation,
             SecretMasker secrets, WrapperLog log, Optional<ProcessJob> job) {
+        return start(command, java, invocation, secrets, log, job, Optional.empty());
+    }
+
+    /**
+     * As {@link #start(JavaCommand, JavaConfig, int, SecretMasker, WrapperLog, Optional)}, with the
+     * listener of the invocation's agent when it has one: its token goes into the environment as
+     * {@code NYAJSW_AGENT_TOKEN} (the command line carries the agent's options), and the process
+     * closes it once it has ended. Without one the variable is removed, so that the application
+     * never sees a token of somebody else's. When the start fails ({@link LaunchException}) the
+     * listener stays the caller's to close.
+     */
+    public static ApplicationProcess start(JavaCommand command, JavaConfig java, int invocation,
+            SecretMasker secrets, WrapperLog log, Optional<ProcessJob> job, Optional<AgentListener> agent) {
         Objects.requireNonNull(job, "job");
+        Objects.requireNonNull(agent, "agent");
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(java, "java");
         Objects.requireNonNull(secrets, "secrets");
@@ -114,6 +133,8 @@ public final class ApplicationProcess implements RunningApplication {
         try {
             ProcessBuilder builder = new ProcessBuilder(command.arguments()).directory(java.workingDir().toFile());
             applyEnvironment(builder.environment(), java.environment(), windows);
+            applyEnvironment(builder.environment(), Map.of(AgentProtocol.TOKEN_VARIABLE,
+                    agent.map(AgentListener::token).orElse("")), windows);
             process = builder.start();
         } catch (IOException | IllegalArgumentException e) {
             // An IllegalArgumentException names a value the JDK rejected (a NUL in it), which may be a secret.
@@ -126,13 +147,14 @@ public final class ApplicationProcess implements RunningApplication {
             log.debug(() -> "cannot close the standard input of " + name + ": " + e.getMessage());
         }
         WrapperLog output = log.forSource(name);
+        OutputLines lines = new OutputLines();
         List<Thread> pumps = List.of(
                 pump(new OutputPump(process.getInputStream(), command.stdoutCharset(), output, LogLevel.INFO,
-                        secrets), name, "stdout"),
+                        secrets, lines::add), name, "stdout"),
                 pump(new OutputPump(process.getErrorStream(), command.stderrCharset(), output, LogLevel.INFO,
-                        secrets), name, "stderr"));
+                        secrets, lines::add), name, "stderr"));
         log.status(name + " started, pid " + process.pid());
-        return new ApplicationProcess(process, name, pumps, log, joined);
+        return new ApplicationProcess(process, name, pumps, log, joined, lines, agent);
     }
 
     /** Puts {@code process} in {@code job}; whether it is in it. */
@@ -245,40 +267,40 @@ public final class ApplicationProcess implements RunningApplication {
         return process.onExit().handle((ended, error) -> null);
     }
 
+    @Override
+    public OutputLines output() {
+        return output;
+    }
+
+    @Override
+    public Optional<AgentChannel> agent() {
+        return agent.flatMap(AgentListener::channel);
+    }
+
+    @Override
+    public AgentState agentState() {
+        return agent.map(AgentListener::state).orElse(AgentState.NONE);
+    }
+
     /**
      * Kills the process and everything it started, at once. On Windows {@code Process.destroy()} is
      * already a hard kill and leaves grandchildren, such as a JVM started by a batch file, running;
-     * this kills the process first, so it cannot start more, then its descendants, looking again
-     * below each one until nothing new turns up. A process started in the moment between finding and
-     * killing its parent can still escape; the job object of P6.4 closes that gap on Windows.
-     * Graceful stops are the stop strategies' job (P3.4, P7).
+     * this kills the process first, so it cannot start more, then its descendants ({@link
+     * ProcessTrees}). The job object of P6.4 catches what escapes the walk on Windows. Graceful
+     * stops are the stop strategies' job (P3.4, P7).
      */
     @Override
     public void terminateTree() {
         // The tree is read before the job ends it, so that it names processes that are still alive.
-        Deque<ProcessHandle> pending = new ArrayDeque<>(process.toHandle().descendants().toList());
+        List<ProcessHandle> descendants = process.toHandle().descendants().toList();
         job.ifPresent(this::terminateJob);
         process.destroyForcibly();
-        Set<Long> seen = new HashSet<>();
-        int descendants = 0;
-        int failed = 0;
-        while (!pending.isEmpty()) {
-            ProcessHandle next = pending.poll();
-            if (!seen.add(next.pid())) {
-                continue;
-            }
-            List<ProcessHandle> below = next.descendants().toList();
-            descendants++;
-            if (next.isAlive() && !next.destroyForcibly()) {
-                failed++;
-            }
-            pending.addAll(below);
-        }
-        if (failed > 0) {
-            log.error(name + " terminated, but " + failed + " of its " + descendants
+        ProcessTrees.Killed killed = ProcessTrees.killDescendants(descendants);
+        if (killed.failed() > 0) {
+            log.error(name + " terminated, but " + killed.failed() + " of its " + killed.descendants()
                     + " descendant process(es) could not be killed");
         } else {
-            log.status(name + " terminated with " + descendants + " descendant process(es)");
+            log.status(name + " terminated with " + killed.descendants() + " descendant process(es)");
         }
     }
 
@@ -293,6 +315,7 @@ public final class ApplicationProcess implements RunningApplication {
 
     private int ended(Process ended) {
         int code = ended.exitValue();
+        agent.ifPresent(AgentListener::close);
         try {
             drain();
         } catch (InterruptedException e) {

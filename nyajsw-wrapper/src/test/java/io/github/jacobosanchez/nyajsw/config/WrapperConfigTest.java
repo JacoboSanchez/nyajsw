@@ -113,9 +113,7 @@ public class WrapperConfigTest {
         assertEquals(log.maxSizeBytes(), Optional.of(10L * 1024 * 1024));
         assertEquals(log.logfileLevel(), Optional.of(LogLevel.INFO));
 
-        // Planned until P7: what applies is the default, whatever the file says.
-        assertEquals(config.probes().readinessTypes(),
-                ConfigKeys.READINESS_TYPE.status().takesEffect() ? List.of("tcp", "http") : List.of("process"));
+        assertEquals(config.probes().readinessTypes(), List.of("tcp", "http"));
         assertEquals(config.probes().tcpPort(), Optional.of(8080));
         assertEquals(config.file(), dir.resolve("wrapper.conf"));
     }
@@ -142,15 +140,16 @@ public class WrapperConfigTest {
         assertEquals(lifecycle.jvmExitTimeout(), Duration.ZERO);
         assertEquals(lifecycle.stopBudget(), Duration.ofSeconds(30));
         assertEquals(lifecycle.restartDelay(), Duration.ofSeconds(5));
-        // The agent is enabled by default but not implemented yet (P7), so the defaults do without it.
-        assertEquals(lifecycle.stopStrategies(), List.of("terminate"));
+        // The agent is enabled by default (D10), so the defaults use it.
+        assertEquals(lifecycle.stopStrategies(), List.of("agent", "terminate"));
         ProbeConfig probes = config.probes();
         assertTrue(probes.agentEnabled());
         assertEquals(probes.readinessTypes(), List.of("process"));
         assertEquals(probes.readinessInterval(), Duration.ofSeconds(1));
         assertEquals(probes.tcpHost(), "127.0.0.1");
-        assertEquals(probes.httpStatus(), "200-399");
-        assertEquals(probes.livenessTypes(), List.of());
+        assertEquals(probes.httpStatus(), StatusRanges.parse("200-399"));
+        assertEquals(probes.httpTimeout(), Duration.ofSeconds(5));
+        assertEquals(probes.livenessTypes(), List.of("agent"));
         assertEquals(probes.livenessInterval(), Duration.ofSeconds(10));
         assertEquals(probes.livenessFailures(), 3);
         assertEquals(probes.livenessAction(), FailureAction.RESTART);
@@ -188,17 +187,67 @@ public class WrapperConfigTest {
     }
 
     @Test
-    public void derivedDefaultsFollowTheAgentOnceItIsInEffect() throws IOException {
+    public void byDefaultTheAgentIsInEffectAndTheDefaultsUseIt() throws IOException {
+        WrapperConfig config = load("wrapper.java.app.mainclass=Main");
+
+        assertTrue(config.probes().agentInEffect());
+        assertEquals(config.lifecycle().stopStrategies(), List.of("agent", "terminate"));
+        assertEquals(config.probes().livenessTypes(), List.of("agent"));
+        assertEquals(config.probes().agentTimeout(), Optional.of(Duration.ofSeconds(30)), "wrapper.ping.timeout");
+        assertEquals(config.probes().livenessFailures(), 3);
+    }
+
+    @Test
+    public void withoutTheAgentTheDefaultsDoWithoutIt() throws IOException {
         WrapperConfig config = load("wrapper.agent.enabled=false");
 
+        assertFalse(config.probes().agentInEffect());
         assertFalse(config.probes().agentEnabled());
         assertEquals(config.lifecycle().stopStrategies(), List.of("terminate"));
         assertEquals(config.probes().livenessTypes(), List.of());
-        assertEquals(config.service().name(), Optional.empty());
-        assertFalse(ProbeConfig.agentInEffect(false));
-        assertEquals(ProbeConfig.agentInEffect(true), ConfigKeys.AGENT_ENABLED.status() == KeyStatus.SUPPORTED);
-        assertEquals(LifecycleConfig.defaultStopStrategies(true), List.of("agent", "terminate"));
-        assertEquals(ProbeConfig.defaultLivenessTypes(true), List.of("agent"));
+        // wrapper.image, an executable that may be no JVM, turns the agent off once it takes effect.
+        assertEquals(load("wrapper.image=bin/server.exe").probes().agentInEffect(),
+                !ConfigKeys.IMAGE.status().takesEffect());
+        assertTrue(ProbeConfig.agentInEffect(true, true));
+        assertFalse(ProbeConfig.agentInEffect(true, false));
+        assertFalse(ProbeConfig.agentInEffect(false, true));
+    }
+
+    @Test
+    public void yajswPingSettingsMapOntoTheAgentLivenessProbe() throws IOException {
+        // A written timeout is the silence that counts as a hang: pings of up to one interval, as many
+        // failed in a row as fit (7 s + 7 s per failed check, so 1 for 12 s; 3 for 40 s).
+        ProbeConfig ping = load("wrapper.ping.interval=7", "wrapper.ping.timeout=12").probes();
+        assertEquals(ping.livenessInterval(), Duration.ofSeconds(7));
+        assertEquals(ping.agentTimeout(), Optional.of(Duration.ofSeconds(7)));
+        assertEquals(ping.livenessFailures(), 1);
+        ProbeConfig longer = load("wrapper.ping.interval=7", "wrapper.ping.timeout=40").probes();
+        assertEquals(longer.livenessFailures(), 3);
+        ProbeConfig shortTimeout = load("wrapper.ping.interval=30", "wrapper.ping.timeout=5").probes();
+        assertEquals(shortTimeout.agentTimeout(), Optional.of(Duration.ofSeconds(5)), "never longer than written");
+        ProbeConfig counted = load("wrapper.ping.timeout=12", "wrapper.liveness.failures=5").probes();
+        assertEquals(counted.agentTimeout(), Optional.of(Duration.ofSeconds(12)), "the failures are counted");
+        assertEquals(counted.livenessFailures(), 5);
+
+        WrapperConfig both = load("wrapper.ping.interval=7", "wrapper.liveness.interval=20");
+        assertEquals(both.probes().livenessInterval(), Duration.ofSeconds(20), "the nyajsw key wins");
+        assertTrue(messages(both).contains("wrapper.ping.interval is ignored: wrapper.liveness.interval sets the"
+                + " liveness interval"), messages(both).toString());
+        assertEquals(load().probes().livenessInterval(), Duration.ofSeconds(10), "neither: the liveness default");
+    }
+
+    @Test
+    public void aPingKeyOfZeroTurnsTheDefaultHeartbeatOff() throws IOException {
+        // Tanuki's "never time out", which YAJSW files inherit: no error, and no agent liveness by default.
+        for (String zero : List.of("wrapper.ping.timeout=0", "wrapper.ping.interval=0")) {
+            ProbeConfig probes = load(zero).probes();
+            assertEquals(probes.livenessTypes(), List.of(), zero);
+            assertEquals(probes.livenessInterval(), Duration.ofSeconds(10), zero);
+        }
+        assertEquals(load("wrapper.ping.timeout=0").probes().agentTimeout(), Optional.empty(), "no pings");
+        assertEquals(load("wrapper.ping.timeout=0", "wrapper.liveness.type=agent").probes().livenessTypes(),
+                List.of("agent"), "an explicit agent probe then only fails on a lost session");
+        assertEquals(load("wrapper.agent.enabled=false", "wrapper.ping.timeout=0").probes().livenessTypes(), List.of());
     }
 
     @Test
@@ -281,12 +330,153 @@ public class WrapperConfigTest {
 
     @Test
     public void invalidValueOfAPlannedKeyFallsBackToTheDefaultWithWarning() throws IOException {
-        WrapperConfig config = load("wrapper.readiness.interval=soon", "wrapper.liveness.action=SOMETIMES");
+        WrapperConfig config = load("wrapper.filter.action.1=SOMETIMES");
 
-        assertEquals(config.probes().readinessInterval(), Duration.ofSeconds(1));
-        assertEquals(config.probes().livenessAction(), FailureAction.RESTART);
-        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'soon'")),
+        assertTrue(messages(config).stream().anyMatch(m -> m.startsWith("invalid value 'SOMETIMES'")),
                 messages(config).toString());
+    }
+
+    @Test
+    public void readinessAndLivenessSettingsTakeEffect() throws IOException {
+        ProbeConfig probes = load("wrapper.readiness.type=process", "wrapper.readiness.interval=2",
+                "wrapper.liveness.type=process", "wrapper.liveness.interval=7", "wrapper.liveness.failures=1",
+                "wrapper.liveness.action=shutdown").probes();
+
+        assertEquals(probes.readinessTypes(), List.of("process"));
+        assertEquals(probes.readinessInterval(), Duration.ofSeconds(2));
+        assertEquals(probes.livenessTypes(), List.of("process"));
+        assertEquals(probes.livenessInterval(), Duration.ofSeconds(7));
+        assertEquals(probes.livenessFailures(), 1);
+        assertEquals(probes.livenessAction(), FailureAction.SHUTDOWN);
+    }
+
+    @Test
+    public void probeTypesHoldingASecretAreIgnoredWholeWithAWarning() throws IOException {
+        WrapperConfig config = load("wrapper.ntservice.password=Pa5,5w0rd",
+                "wrapper.readiness.type=x${wrapper.ntservice.password}",
+                "wrapper.liveness.type=process,x${wrapper.ntservice.password}");
+
+        assertEquals(config.probes().readinessTypes(), List.of("process"));
+        assertEquals(config.probes().livenessTypes(), List.of("agent"), "the default applies");
+        assertTrue(messages(config).contains("wrapper.readiness.type contains a secret, which cannot name a probe type;"
+                + " ignored, the default applies"), messages(config).toString());
+        assertTrue(messages(config).contains("wrapper.liveness.type contains a secret, which cannot name a probe type;"
+                + " ignored, the default applies"), messages(config).toString());
+        assertTrue(messages(config).stream().noneMatch(m -> m.contains("5w0rd")), messages(config).toString());
+    }
+
+    @Test
+    public void theTcpHttpAndFileSettingsAreRead() throws IOException {
+        ProbeConfig probes = load("wrapper.working.dir=work", "wrapper.readiness.tcp.host=localhost",
+                "wrapper.readiness.tcp.port=8443", "wrapper.readiness.http.url=https://localhost:8443/health",
+                "wrapper.readiness.http.status=200, 204", "wrapper.readiness.http.timeout=2",
+                "wrapper.readiness.file.path=run/ready").probes();
+
+        assertEquals(probes.tcpHost(), "localhost");
+        assertEquals(probes.tcpPort(), Optional.of(8443));
+        assertEquals(probes.httpUrl(), Optional.of("https://localhost:8443/health"));
+        assertEquals(probes.httpStatus().toString(), "200,204");
+        assertEquals(probes.httpTimeout(), Duration.ofSeconds(2));
+        assertEquals(probes.filePath(), Optional.of(dir.resolve("work/run/ready")), "the application's working dir");
+    }
+
+    @Test
+    public void tcpHttpSettingsThatCannotWorkAreErrorsThatDoNotQuoteTheUrl() {
+        ConfigException error = expectThrows(ConfigException.class, () -> load("wrapper.readiness.tcp.port=70000",
+                "wrapper.readiness.http.url=ftp://user:pw@host/x", "wrapper.readiness.http.status=200-",
+                "wrapper.readiness.http.timeout=0"));
+
+        List<String> problems = error.problems().stream().map(ConfigException::getMessage).toList();
+        assertEquals(problems.size(), 4, problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.tcp.port must be between 1 and"
+                + " 65535")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.http.url must start with http://"
+                + " or https://")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("invalid value '200-' for"
+                + " wrapper.readiness.http.status")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.http.timeout must be at least 1 s")),
+                problems.toString());
+        assertTrue(problems.stream().noneMatch(m -> m.contains("pw@")), problems.toString());
+        assertTrue(expectThrows(ConfigException.class, () -> load("wrapper.readiness.http.url=http:///path"))
+                .getMessage().contains("wrapper.readiness.http.url has no host (a host name may not contain '_')"));
+        assertTrue(expectThrows(ConfigException.class, () -> load("wrapper.readiness.http.url=http://a b/"))
+                .getMessage().contains("wrapper.readiness.http.url is not a valid URL"));
+        expectThrows(ConfigException.class, () -> load("wrapper.readiness.tcp.port=0"));
+    }
+
+    @Test
+    public void theProbeCommandIsSplitIntoArgumentsAndRunsInTheWorkingDirectory() throws IOException {
+        ProbeConfig probes = load("wrapper.working.dir=work",
+                "wrapper.readiness.command=\"C:/Program Files/check.exe\" --port 8080 \"\"").probes();
+
+        assertEquals(probes.command(), List.of(Path.of("C:/Program Files/check.exe").isAbsolute()
+                ? Path.of("C:/Program Files/check.exe").toString()
+                : dir.resolve("work/C:/Program Files/check.exe").normalize().toString(), "--port", "8080", ""));
+        assertEquals(probes.commandTimeout(), Duration.ofSeconds(10));
+        assertEquals(probes.workingDir(), dir.resolve("work"));
+        assertEquals(load().probes().command(), List.of());
+        assertEquals(load("wrapper.working.dir=work", "wrapper.readiness.command=bin/check -v").probes().command(),
+                List.of(dir.resolve("work/bin/check").toString(), "-v"), "relative to the working directory");
+        assertEquals(load("wrapper.readiness.command=curl -f").probes().command(), List.of("curl", "-f"),
+                "a bare name is looked up on PATH");
+    }
+
+    @Test
+    public void aProbeCommandWithAnOpenQuoteOrNoTimeIsAnErrorThatDoesNotQuoteIt() {
+        ConfigException error = expectThrows(ConfigException.class, () -> load(
+                "wrapper.readiness.command=check --token \"s3cr3t", "wrapper.readiness.command.timeout=0"));
+
+        List<String> problems = error.problems().stream().map(ConfigException::getMessage).toList();
+        assertEquals(problems.size(), 2, problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.command: a double quote is not"
+                + " closed")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.command.timeout must be at least"
+                + " 1 s")), problems.toString());
+        assertTrue(problems.stream().noneMatch(m -> m.contains("s3cr3t")), problems.toString());
+        assertTrue(expectThrows(ConfigException.class, () -> load("wrapper.readiness.command=\"\" --x"))
+                .getMessage().contains("wrapper.readiness.command: names no program"));
+    }
+
+    @Test
+    public void theLogProbeSettingsAreReadAndABadPatternIsAnErrorThatDoesNotQuoteIt() throws IOException {
+        ProbeConfig probes = load("wrapper.working.dir=work", "wrapper.readiness.log.pattern=Started .* in \\d+",
+                "wrapper.readiness.log.file=logs/app.log").probes();
+
+        assertEquals(probes.logPattern().orElseThrow().pattern(), "Started .* in \\d+");
+        assertEquals(probes.logFile(), Optional.of(dir.resolve("work/logs/app.log")), "the application's working dir");
+        ConfigException error = expectThrows(ConfigException.class,
+                () -> load("wrapper.readiness.log.pattern=(s3cr3t"));
+        assertTrue(error.getMessage().contains("wrapper.readiness.log.pattern is not a valid regular expression:"),
+                error.getMessage());
+        assertFalse(error.getMessage().contains("s3cr3t"), error.getMessage());
+    }
+
+    @Test
+    public void userInformationInTheHttpUrlIsWarnedAboutWithoutQuotingIt() throws IOException {
+        WrapperConfig config = load("wrapper.readiness.http.url=http://admin:s3cr3t@localhost:8080/health");
+
+        assertEquals(config.probes().httpUrl(), Optional.of("http://admin:s3cr3t@localhost:8080/health"));
+        assertTrue(messages(config).contains("wrapper.readiness.http.url has user information, which the http probe"
+                + " does not send"), messages(config).toString());
+        assertTrue(messages(config).stream().noneMatch(m -> m.contains("s3cr3t")), messages(config).toString());
+    }
+
+    @Test
+    public void probeIntervalsOfZeroAndFailureCountsBelowOneAreErrors() {
+        ConfigException error = expectThrows(ConfigException.class, () -> load("wrapper.readiness.interval=0",
+                "wrapper.liveness.interval=0", "wrapper.liveness.failures=0", "wrapper.liveness.action=SOMETIMES"));
+
+        List<String> problems = error.problems().stream().map(ConfigException::getMessage).toList();
+        assertEquals(problems.size(), 4, problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.readiness.interval must be at least 1 s")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.liveness.interval must be at least 1 s")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("wrapper.liveness.failures must be at least 1")),
+                problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("invalid value 'SOMETIMES' for wrapper.liveness.action")),
+                problems.toString());
+        expectThrows(ConfigException.class, () -> load("wrapper.liveness.failures=-2"));
     }
 
     @Test

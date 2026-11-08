@@ -1,5 +1,7 @@
 package io.github.jacobosanchez.nyajsw.lifecycle;
 
+import static io.github.jacobosanchez.nyajsw.log.Durations.seconds;
+
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.DebugDetail;
 import io.github.jacobosanchez.nyajsw.config.ExitAction;
@@ -31,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>Everything happens on the thread that calls {@link #run()}, one event at a time: the start, an
  * exit of the application, a stop request from any thread ({@link #requestStop()}), the result of a
- * readiness check and the timers of the {@link Scheduler}. No decision depends on how threads
+ * readiness or liveness check and the timers of the {@link Scheduler}. No decision depends on how threads
  * interleave, and tests replace the process, the probes and the clock with fakes.
  *
  * <p>Timers belong to the state they were started in: every change of state cancels them, and one
@@ -50,6 +52,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * That happens in {@link State#RESTART_WAIT RESTART_WAIT}, never {@code STOPPING}, so a listener
  * reporting to the SCM never takes a restart for a stop.
  *
+ * <p><b>Liveness.</b> While the application is {@code RUNNING}, the {@link Liveness} probes are
+ * checked every interval, the first time one interval after it became ready; the next check waits
+ * for the result of the one before, so a check that blocks delays the next instead of piling up.
+ * After {@code wrapper.liveness.failures} failed checks in a row the application is terminated at
+ * once, as YAJSW does when its ping times out, since an application that fails its checks may not
+ * answer a graceful stop either; then {@code wrapper.liveness.action} decides: {@code RESTART}
+ * starts it again like an invocation that ended by itself, its run time counted up to when the last
+ * check that passed began, readiness or liveness, since the application was not seen healthy after
+ * that (towards {@code wrapper.successful_invocation_time}); {@code SHUTDOWN}
+ * waits in {@code STOPPING} for it to end and then ends supervision {@link State#FAILED FAILED}, so
+ * that the wrapper does not report the end of an unhealthy application as success. A check that
+ * passes resets the count. Once the process has ended, checks no longer count: its exit is on the
+ * way (after its output has drained), and the exit action decides, not a probe that saw it gone.
+ *
  * <p><b>Exits.</b> What an exit means is decided only while the application runs as it should
  * ({@code STARTING} or {@code RUNNING}): once the supervisor is {@link State#STOPPING STOPPING}, the
  * application ends because the wrapper asked, so {@code wrapper.on_exit.*} does not apply. Otherwise
@@ -65,7 +81,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * supervision ends and the application keeps running, as YAJSW documents. The safety nets do not
  * follow that rule: after an unexpected error, or when the exit of the application can no longer be
  * observed, a live application is terminated whatever {@code wrapper.control} says, since nothing
- * would watch it. A stop request while a terminated, unready invocation is ending cancels its
+ * would watch it. A stop request while a terminated invocation (not ready, or not alive) is ending cancels its
  * restart.
  *
  * <p>A stop runs the {@link StopChain}: the graceful strategies of {@code wrapper.stop.strategy}
@@ -137,7 +153,8 @@ public final class Supervisor {
         void changed(State from, State to);
     }
 
-    private sealed interface Event permits Start, ProcessEnded, Exited, StopRequested, ReadinessChecked, TimerFired {
+    private sealed interface Event
+            permits Start, ProcessEnded, Exited, StopRequested, ReadinessChecked, LivenessChecked, TimerFired {
     }
 
     /** The process of invocation {@code invocation} ended at {@code at}, on the scheduler's clock; its exit follows. */
@@ -154,7 +171,18 @@ public final class Supervisor {
     private record StopRequested() implements Event {
     }
 
-    private record ReadinessChecked(int invocation, ProbeResult result) implements Event {
+    /** {@code startedAt} is when the check was handed to the probe executor, on the scheduler's clock. */
+    private record ReadinessChecked(int invocation, Duration startedAt, ProbeResult result) implements Event {
+    }
+
+    /** {@code startedAt} is when the check was handed to the probe executor, on the scheduler's clock. */
+    private record LivenessChecked(int invocation, Duration startedAt, ProbeResult result) implements Event {
+    }
+
+    /** Makes the event that brings a check's result back to the supervisor's thread. */
+    @FunctionalInterface
+    private interface CheckedEvent {
+        Event of(int invocation, Duration startedAt, ProbeResult result);
     }
 
     private record TimerFired(long id) implements Event {
@@ -165,6 +193,7 @@ public final class Supervisor {
     private final RestartPolicy restarts;
     private final ApplicationLauncher launcher;
     private final ProbeRunner readiness;
+    private final Liveness liveness;
     private final Executor probeExecutor;
     private final StopChain stops;
     private final Scheduler scheduler;
@@ -184,9 +213,17 @@ public final class Supervisor {
     private Integer lastExitCode;
     /** What the last readiness check of the current invocation found. */
     private String lastReadiness;
+    /** Failed liveness checks in a row of the current invocation. */
+    private int livenessFailures;
+    /** When the last check that passed began, readiness or liveness: the last time it was seen healthy. */
+    private Duration lastHealthyAt;
+    /** Whether the current stop ends supervision {@code FAILED}: a liveness {@code SHUTDOWN}. */
+    private boolean failWhenStopped;
     /** When the current stop began and when its budget runs out, on the scheduler's clock. */
     private Duration stopStartedAt;
     private Duration stopDeadline;
+    /** Whether a graceful step of the current stop asked the application to end. */
+    private boolean gracefullyAsked;
     /** The timers of the current state, by id; a fired id that is missing is ignored. */
     private final Map<Long, PendingTimer> timers = new HashMap<>();
     private long timersStarted;
@@ -198,22 +235,24 @@ public final class Supervisor {
      * @param lifecycle     the supervision settings
      * @param launcher      starts each invocation
      * @param readiness     the readiness probes and how often to check them
-     * @param probeExecutor runs the readiness checks, which may block, off the supervisor's thread;
-     *                      one check runs at a time per invocation, but a check that hangs must not
-     *                      hold up the next invocation's, so give each check its own thread (virtual
-     *                      threads suit) rather than a single shared one
+     * @param liveness      the liveness probes, how often to check them and what their failure means
+     * @param probeExecutor runs the readiness and liveness checks, which may block, off the
+     *                      supervisor's thread; one check runs at a time per invocation, but a check
+     *                      that hangs must not hold up the next invocation's, so give each check its
+     *                      own thread (virtual threads suit) rather than a single shared one
      * @param stops         the steps of a stop, from {@code wrapper.stop.strategy}
      * @param scheduler     runs the timers and tells the time
      * @param log           the wrapper log
      * @param listener      told about every change of state
      */
-    public Supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher, ProbeRunner readiness,
+    public Supervisor(LifecycleConfig lifecycle, ApplicationLauncher launcher, ProbeRunner readiness, Liveness liveness,
             Executor probeExecutor, StopChain stops, Scheduler scheduler, WrapperLog log, StateListener listener) {
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
         this.exits = new ExitActionResolver(lifecycle);
         this.restarts = new RestartPolicy(lifecycle.maxFailedInvocations(), lifecycle.successfulInvocationTime());
         this.launcher = Objects.requireNonNull(launcher, "launcher");
         this.readiness = Objects.requireNonNull(readiness, "readiness");
+        this.liveness = Objects.requireNonNull(liveness, "liveness");
         this.probeExecutor = Objects.requireNonNull(probeExecutor, "probeExecutor");
         this.stops = Objects.requireNonNull(stops, "stops");
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
@@ -323,6 +362,7 @@ public final class Supervisor {
             case Exited exited -> exited(exited);
             case StopRequested request -> stopRequested();
             case ReadinessChecked checked -> readinessChecked(checked);
+            case LivenessChecked checked -> livenessChecked(checked);
             case TimerFired fired -> {
                 PendingTimer timer = timers.remove(fired.id());
                 if (timer != null) {
@@ -347,6 +387,8 @@ public final class Supervisor {
         lastExitCode = null; // the outcome reports this invocation's exit, not an earlier one's
         lastReadiness = "not checked yet";
         moveTo(State.STARTING);
+        readiness.beforeLaunch();
+        liveness.probes().beforeLaunch();
         RunningApplication launched;
         try {
             launched = launcher.launch(invocation);
@@ -372,20 +414,31 @@ public final class Supervisor {
         checkReadiness();
     }
 
-    /** Checks the probes on the probe executor; the result comes back as an event, whatever happens. */
     private void checkReadiness() {
+        check(readiness, ProbeContext.Purpose.READINESS, ReadinessChecked::new);
+    }
+
+    private void checkLiveness() {
+        check(liveness.probes(), ProbeContext.Purpose.LIVENESS, LivenessChecked::new);
+    }
+
+    /** Checks {@code probes} on the probe executor; the result comes back as an event, whatever happens. */
+    private void check(ProbeRunner probes, ProbeContext.Purpose purpose, CheckedEvent resultEvent) {
         int current = invocation;
-        ProbeContext context = new ProbeContext(application);
+        // Taken here, before the probes run: a slow check's own time must not count as healthy run time.
+        Duration startedAt = scheduler.now();
+        String kind = purpose.name().toLowerCase(Locale.ROOT);
+        ProbeContext context = new ProbeContext(application, purpose);
         probeExecutor.execute(() -> {
             // ProbeRunner already turns a probe's exception into a failure; this is the backstop for
             // anything else (an Error included), so that the supervisor always hears back.
-            ProbeResult result = ProbeResult.fail("the readiness check did not complete");
+            ProbeResult result = ProbeResult.fail("the " + kind + " check did not complete");
             try {
-                result = readiness.check(context);
+                result = probes.check(context);
             } catch (RuntimeException e) {
-                result = ProbeResult.fail("the readiness check threw " + e.getClass().getName());
+                result = ProbeResult.fail("the " + kind + " check threw " + e.getClass().getName());
             } finally {
-                events.add(new ReadinessChecked(current, result));
+                events.add(resultEvent.of(current, startedAt, result));
             }
         });
     }
@@ -398,6 +451,11 @@ public final class Supervisor {
         if (result.passed()) {
             log.status(application.name() + " is ready (" + result.detail() + ")");
             moveTo(State.RUNNING);
+            livenessFailures = 0;
+            lastHealthyAt = checked.startedAt();
+            if (liveness.isEnabled()) {
+                startTimer(liveness.probes().interval(), this::checkLiveness);
+            }
             return;
         }
         lastReadiness = result.detail();
@@ -416,7 +474,73 @@ public final class Supervisor {
         log.error(name + " did not become ready within " + lifecycle.startupTimeout().toSeconds() + " s ("
                 + ConfigKeys.STARTUP_TIMEOUT.name() + "); last check: " + lastReadiness + "; terminating it");
         restarts.failed();
+        terminateNow();
+        restartOnceEnded(name);
+    }
+
+    private void livenessChecked(LivenessChecked checked) {
+        if (state != State.RUNNING || checked.invocation() != invocation) {
+            return; // a check that finished after the application stopped running
+        }
+        if (processEndedAt != null) {
+            return; // the process has ended: its exit follows and the exit action decides
+        }
+        ProbeResult result = checked.result();
+        String name = application.name();
+        if (result.passed()) {
+            if (livenessFailures > 0) {
+                log.status(name + " passes its liveness check again (" + result.detail() + ")");
+            }
+            livenessFailures = 0;
+            lastHealthyAt = checked.startedAt();
+            log.debug(DebugDetail.SUPERVISION, () -> name + " is alive: " + result.detail());
+        } else {
+            livenessFailures++;
+            log.status(name + " failed its liveness check (" + livenessFailures + " of " + liveness.failures()
+                    + " in a row): " + result.detail());
+            if (livenessFailures >= liveness.failures()) {
+                notAlive(name);
+                return;
+            }
+        }
+        startTimer(liveness.probes().interval(), this::checkLiveness);
+    }
+
+    /**
+     * The running invocation failed its liveness checks too often: it is terminated at once, like
+     * one that did not become ready, and {@code wrapper.liveness.action} decides what follows.
+     */
+    private void notAlive(String name) {
+        log.error(name + " failed " + livenessFailures + " liveness checks in a row ("
+                + ConfigKeys.LIVENESS_FAILURES.name() + "); terminating it; " + ConfigKeys.LIVENESS_ACTION.name()
+                + "=" + liveness.action());
+        terminateNow();
+        switch (liveness.action()) {
+            case RESTART -> {
+                // Run time up to when it was last seen healthy: an application that turns unhealthy
+                // at once must count as a failed invocation, however long the checks took to give up.
+                restarts.ended(lastHealthyAt.minus(launchedAt));
+                restartOnceEnded(name);
+            }
+            case SHUTDOWN -> {
+                failWhenStopped = true;
+                moveTo(State.STOPPING);
+                startTimer(AFTER_TERMINATION, this::abandon);
+            }
+            default -> throw new IllegalStateException("no handling for " + liveness.action());
+        }
+    }
+
+    /** Ends the current invocation by force with the last step of the stop chain, without waiting. */
+    private void terminateNow() {
         stops.last().strategy().requestStop(new StopStrategy.Context(application, log, Duration.ZERO));
+    }
+
+    /**
+     * After a terminated invocation: restarts {@code wrapper.restart.delay} after it has ended, from
+     * {@code RESTART_WAIT}, or gives up when the restart policy allows no more.
+     */
+    private void restartOnceEnded(String name) {
         if (!restarts.mayRestart()) {
             giveUp(name);
             return;
@@ -425,11 +549,11 @@ public final class Supervisor {
         log.status("restarting " + lifecycle.restartDelay().toSeconds() + " s after " + name + " has ended"
                 + " (failed invocations in a row: " + restarts.failures() + " of " + restarts.maxFailedInvocations()
                 + ")");
-        startTimer(AFTER_TERMINATION, this::abandonUnready);
+        startTimer(AFTER_TERMINATION, this::abandonTerminated);
     }
 
-    /** A terminated invocation that was not ready is still running: restarting beside it would run the application twice. */
-    private void abandonUnready() {
+    /** A terminated invocation is still running: restarting beside it would run the application twice. */
+    private void abandonTerminated() {
         log.error(application.name() + " is still running " + AFTER_TERMINATION.toSeconds()
                 + " s after it was terminated; giving up on it instead of starting the application again");
         application = null;
@@ -448,7 +572,7 @@ public final class Supervisor {
             if (ended.isAlive()) {
                 ended.terminateTree(); // unwatched, it must not keep running
             }
-            moveTo(state == State.STOPPING ? State.STOPPED : State.FAILED);
+            moveTo(state == State.STOPPING && !failWhenStopped ? State.STOPPED : State.FAILED);
             return;
         }
         int code = exited.code();
@@ -456,10 +580,10 @@ public final class Supervisor {
         switch (state) {
             case STOPPING -> {
                 log.debug(DebugDetail.APPLICATION, () -> name + " ended while stopping; no exit action applies");
-                moveTo(State.STOPPED);
+                moveTo(failWhenStopped ? State.FAILED : State.STOPPED);
             }
             case STARTING, RUNNING -> applyExitAction(name, code);
-            case RESTART_WAIT -> { // the terminated invocation that was not ready has ended
+            case RESTART_WAIT -> { // a terminated invocation (not ready, or not alive) has ended
                 cancelTimers();
                 startTimer(lifecycle.restartDelay(), this::launch);
             }
@@ -542,8 +666,9 @@ public final class Supervisor {
      * Runs the stop chain within the stop budget ({@code wrapper.shutdown.timeout} plus {@code
      * wrapper.jvm_exit.timeout}): each graceful strategy asks the application to end and gets an
      * equal share of the time left until the deadline, so a step that does not apply hands its
-     * share on. Without graceful strategies the whole budget is waited, which in console mode is the
-     * time the application has after the Ctrl+C it receives too. At the deadline the last step ends
+     * share on. Without graceful strategies, or when none of them could ask (no agent connected), the
+     * whole budget, or what is left of it, is waited, which in console mode is the time the
+     * application has after the Ctrl+C it receives too. At the deadline the last step ends
      * it by force; with a budget of zero at once, without the graceful steps, since asking and
      * killing in the same instant would cut its shutdown short.
      */
@@ -558,6 +683,7 @@ public final class Supervisor {
             log.status("stopping: waiting up to " + seconds(budget) + " for " + application.name() + " to end");
             startTimer(budget, this::forceStop);
         } else {
+            gracefullyAsked = false;
             graceful(0);
         }
     }
@@ -565,6 +691,14 @@ public final class Supervisor {
     private void graceful(int index) {
         List<StopChain.Step> steps = stops.graceful();
         Duration left = stopDeadline.minus(scheduler.now());
+        if (index == steps.size() && !gracefullyAsked && left.isPositive()) {
+            // No step could ask (no agent connected, say): the application still has the rest of the
+            // budget, as without graceful steps, for a shutdown of its own (Ctrl+C in console mode).
+            log.status("stopping: no graceful step applied; waiting up to " + seconds(left) + " for "
+                    + application.name() + " to end");
+            startTimer(left, this::forceStop);
+            return;
+        }
         if (index == steps.size() || !left.isPositive()) {
             forceStop();
             return;
@@ -583,6 +717,7 @@ public final class Supervisor {
             log.debug(DebugDetail.SUPERVISION, () -> step.name() + " did not apply; going on with the next step");
             graceful(index + 1);
         } else {
+            gracefullyAsked = true;
             startTimer(share, () -> graceful(index + 1));
         }
     }
@@ -593,14 +728,8 @@ public final class Supervisor {
         Duration budget = lifecycle.stopBudget();
         log.status(application.name() + " did not end within " + seconds(spent.compareTo(budget) >= 0 ? budget : spent)
                 + "; terminating it (" + stops.last().name() + ")");
-        stops.last().strategy().requestStop(new StopStrategy.Context(application, log, Duration.ZERO));
+        terminateNow();
         startTimer(AFTER_TERMINATION, this::abandon);
-    }
-
-    /** {@code 30 s}, or with milliseconds when the duration has them ({@code 7.500 s}). */
-    private static String seconds(Duration duration) {
-        long millis = duration.toMillis();
-        return millis % 1000 == 0 ? millis / 1000 + " s" : String.format(Locale.ROOT, "%.3f s", millis / 1000.0);
     }
 
     /** Supervision gave up: the application could not be stopped, which a caller must not take for success. */

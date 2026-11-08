@@ -14,6 +14,19 @@ import org.testng.annotations.Test;
 public class ValueParserTest {
 
     @Test
+    public void aCommandIsSplitAtBlanksOutsideDoubleQuotes() {
+        assertEquals(ValueParser.parseCommand("  check  --port 8080 "), List.of("check", "--port", "8080"));
+        assertEquals(ValueParser.parseCommand("\"C:\\Program Files\\x.exe\" -v"),
+                List.of("C:\\Program Files\\x.exe", "-v"));
+        assertEquals(ValueParser.parseCommand("a\"b c\"d \"\" e"), List.of("ab cd", "", "e"));
+        assertEquals(ValueParser.parseCommand("tab\tand\nnewline"), List.of("tab", "and", "newline"));
+        assertEquals(ValueParser.parseCommand("   "), List.of());
+        IllegalArgumentException open = expectThrows(IllegalArgumentException.class,
+                () -> ValueParser.parseCommand("check \"s3cr3t"));
+        assertEquals(open.getMessage(), "a double quote is not closed");
+    }
+
+    @Test
     public void integers() {
         assertEquals(ValueParser.parseInteger("42"), 42);
         assertEquals(ValueParser.parseInteger("-7"), -7);

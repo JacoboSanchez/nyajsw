@@ -5,6 +5,7 @@ import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
+import io.github.jacobosanchez.nyajsw.agentlink.AgentJar;
 import io.github.jacobosanchez.nyajsw.config.ConfigKeys;
 import io.github.jacobosanchez.nyajsw.config.ConfigLoader;
 import io.github.jacobosanchez.nyajsw.config.WrapperConfig;
@@ -15,6 +16,8 @@ import io.github.jacobosanchez.nyajsw.platform.ServiceState;
 import io.github.jacobosanchez.nyajsw.platform.ServiceStatus;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,8 +37,8 @@ import org.testng.annotations.Test;
  * The wrapper run as a real service by the Service Control Manager (plan P6.5): install a throwaway
  * service whose binary path runs {@code --service} on this build's classes, start it until it is
  * {@code RUNNING} with {@link TestApplication} as the application, stop it until it is {@code
- * STOPPED}, and remove it. Excluded by default; run with {@code mvn -q verify -Pwindows-integration}
- * in an elevated shell.
+ * STOPPED}, and remove it; with an HTTP readiness probe and a stop through the agent too (plan P7).
+ * Excluded by default; run with {@code mvn -q verify -Pwindows-integration} in an elevated shell.
  *
  * <p>Each test gets a {@link ThrowawayService}, removed after it also when it fails; a failed test
  * prints the wrapper log and the bootstrap logs into the test report.
@@ -155,6 +158,51 @@ public class WindowsServiceEndToEndTest {
             wrapper.get().onExit().get(1, TimeUnit.MINUTES); // the process ends once STOPPED is reported
         }
         assertFalse(alive(wrapperPid), "the wrapper's process ended");
+    }
+
+    @Test(timeOut = 300_000)
+    public void theServiceRunsOnlyOnceItsHttpProbePassesAndStopsGracefullyThroughTheAgent() throws Exception {
+        // Phase 7's end-to-end check: readiness by an HTTP answer, and a stop through the agent.
+        // It is the proof of that phase, so a missing agent jar fails it rather than skipping it.
+        assertTrue(AgentJar.locate().isPresent(), "the agent's jar is not built; run the whole build (mvn verify)");
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        int port;
+        try (ServerSocket free = new ServerSocket(0, 1, loopback)) {
+            port = free.getLocalPort();
+        }
+        long serveAfter = 4_000;
+        controller.install(config("wrapper.app.parameter.1=serve", "wrapper.app.parameter.2=" + port,
+                "wrapper.app.parameter.3=" + serveAfter, "wrapper.readiness.type=http",
+                "wrapper.readiness.http.url=http://127.0.0.1:" + port + "/health", "wrapper.startup.timeout=120",
+                // Later than config()'s 2 s, so it wins; under WAIT, so a stop that times out shows why.
+                "wrapper.shutdown.timeout=20"));
+
+        long start = System.nanoTime();
+        controller.start(name, WAIT);
+        long startedInMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        assertEquals(controller.status(name).map(ServiceStatus::state), Optional.of(ServiceState.RUNNING), log());
+        assertTrue(log().contains("jvm 1 is ready (http)"), log());
+        // The application answers 503 for its first 4 s: the service was starting until then. The order of
+        // "serving" and "ready" in the log is not asserted: the application's output reaches the log on a
+        // thread of its own, so a check may pass before the line is written.
+        assertTrue(startedInMs >= serveAfter, "the service was starting until then: " + startedInMs + " ms");
+        assertTrue(waitForLog("the agent of jvm 1 has connected"), log());
+
+        long stop = System.nanoTime();
+        controller.stop(name, WAIT);
+        long stoppedInMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - stop);
+
+        ScmStatus stopped = scmStatus();
+        assertEquals(stopped.currentState(), ScmApi.SERVICE_STOPPED, log());
+        assertEquals(stopped.win32ExitCode(), 0, log());
+        String log = log();
+        assertTrue(stoppedInMs < 20_000, "within the 20 s stop budget: " + stoppedInMs + " ms; " + log);
+        assertTrue(log.contains("stopping jvm 1: agent, waiting up to "), log);
+        assertTrue(log.contains("the agent of jvm 1 is ending the application"), log);
+        assertTrue(log.contains("| shutdown hook ran"), "the application's shutdown hooks ran: " + log);
+        assertTrue(log.contains("jvm 1 exited with code 0"), "System.exit(0) through the agent: " + log);
+        assertFalse(log.contains("terminating it"), log);
     }
 
     @Test(timeOut = 300_000)

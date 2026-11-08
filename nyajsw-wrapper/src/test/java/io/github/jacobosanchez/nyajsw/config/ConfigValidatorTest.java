@@ -23,7 +23,7 @@ public class ConfigValidatorTest {
     @Test
     public void plannedIgnoredAndUnsupportedKeysWarnOncePerDeclaration() {
         ConfigValidator.Result result = validator.validate(config(
-                "wrapper.ping.interval", "5", ConfigLayer.FILE,
+                "wrapper.image", "bin/server.exe", ConfigLayer.FILE,
                 "wrapper.java.mainclass", "org.rzo.yajsw.app.WrapperJVMMain", ConfigLayer.FILE,
                 "wrapper.java.monitor.deadlock", "true", ConfigLayer.FILE,
                 "wrapper.java.monitor.heap", "true", ConfigLayer.FILE));
@@ -31,7 +31,8 @@ public class ConfigValidatorTest {
         assertTrue(result.errors().isEmpty(), result.errors().toString());
         List<String> messages = result.warnings().stream().map(ConfigWarning::message).toList();
         assertEquals(messages, List.of(
-                "wrapper.ping.interval is not implemented yet in this version of nyajsw; it has no effect",
+                "wrapper.image is not implemented yet in this version of nyajsw; it has no effect. "
+                        + ConfigKeys.IMAGE.notes(),
                 "wrapper.java.mainclass is ignored by nyajsw. " + ConfigKeys.JAVA_MAINCLASS.notes(),
                 "wrapper.java.monitor.<setting> (2 keys) is not supported by nyajsw; it has no effect"));
         assertEquals(result.warnings().get(2).location(), new ConfigLocation("wrapper.conf", 3));
@@ -93,11 +94,11 @@ public class ConfigValidatorTest {
     @Test
     public void plannedKeyWithAnInvalidValueOnlyWarns() {
         ConfigValidator.Result result = validator.validate(
-                config("wrapper.ping.interval", "SOMETIMES", ConfigLayer.FILE));
+                config("wrapper.filter.action.1", "SOMETIMES", ConfigLayer.FILE));
 
         assertTrue(result.errors().isEmpty(), result.errors().toString());
         assertTrue(result.warnings().stream().anyMatch(w -> w.message().startsWith("invalid value 'SOMETIMES' for"
-                + " wrapper.ping.interval: ")), result.warnings().toString());
+                + " wrapper.filter.action.1: ")), result.warnings().toString());
     }
 
     @Test

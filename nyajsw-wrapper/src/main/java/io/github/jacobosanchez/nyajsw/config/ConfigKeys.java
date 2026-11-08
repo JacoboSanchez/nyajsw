@@ -460,14 +460,19 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec PING_INTERVAL = yajsw("wrapper.ping.interval", DURATION, LIFECYCLE)
-            .status(PLANNED, "P7")
-            .description("Heartbeat interval, mapped onto the agent liveness probe (D16)")
+            .status(SUPPORTED)
+            .description("Heartbeat interval: the liveness interval when wrapper.liveness.interval is not written"
+                    + " (D16)")
+            .notes("0 turns the default agent heartbeat off")
             .defaultValue("5")
             .build();
 
     public static final KeySpec PING_TIMEOUT = yajsw("wrapper.ping.timeout", DURATION, LIFECYCLE)
-            .status(PLANNED, "P7")
-            .description("Heartbeat timeout, mapped onto the agent liveness probe (D16)")
+            .status(SUPPORTED)
+            .description("Heartbeat timeout: the silence after which the application counts as hung (D16)")
+            .notes("With the agent as the only liveness probe and wrapper.liveness.failures not written, pings of up"
+                    + " to one interval each, as many failed in a row as fit into it; otherwise how long each ping"
+                    + " may take. 0 turns the default agent heartbeat off")
             .defaultValue("30")
             .build();
 
@@ -627,7 +632,8 @@ public final class ConfigKeys {
     public static final KeySpec STOP_STRATEGY = nyajsw("wrapper.stop.strategy", LIST, LIFECYCLE)
             .status(SUPPORTED)
             .description("Ordered stop strategies tried before the application is terminated")
-            .derivedDefault("agent,terminate when wrapper.agent.enabled is true (from P7), otherwise terminate")
+            .derivedDefault("agent,terminate when the agent is in effect (wrapper.agent.enabled and no wrapper.image),"
+                    + " otherwise terminate")
             .notes("Names ignore case; unknown ones are skipped with a warning and terminate is always the last"
                     + " step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout;"
                     + " when both are 0 they are skipped. Strategies: implementation plan, section 4.6")
@@ -912,70 +918,85 @@ public final class ConfigKeys {
     // ---- readiness, liveness and agent ----
 
     public static final KeySpec READINESS_TYPE = nyajsw("wrapper.readiness.type", LIST, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Readiness probes that must all pass before the service reports RUNNING")
             .defaultValue("process")
-            .notes("Probe types and their settings: implementation plan, section 4.7")
+            .notes("Probe types and their settings: implementation plan, section 4.7; an unknown type is an error"
+                    + " when the wrapper starts the application")
             .build();
 
     public static final KeySpec READINESS_INTERVAL = nyajsw("wrapper.readiness.interval", DURATION, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Pause between readiness checks")
             .defaultValue("1")
             .build();
 
     public static final KeySpec READINESS_TCP_HOST = nyajsw("wrapper.readiness.tcp.host", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("Host the tcp readiness probe connects to")
+            .status(SUPPORTED)
+            .description("Host the tcp probe connects to, for readiness and liveness alike")
             .defaultValue("127.0.0.1")
             .build();
 
     public static final KeySpec READINESS_TCP_PORT = nyajsw("wrapper.readiness.tcp.port", INTEGER, PROBES)
-            .status(PLANNED, "P7")
-            .description("Port the tcp readiness probe connects to")
+            .status(SUPPORTED)
+            .description("Port the tcp probe connects to, for readiness and liveness alike")
             .build();
 
     public static final KeySpec READINESS_HTTP_URL = nyajsw("wrapper.readiness.http.url", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("URL the http readiness probe requests")
+            .status(SUPPORTED)
+            .description("URL the http probe requests with GET, for readiness and liveness alike")
+            .notes("Redirects are not followed; HTTP/1.1 without a proxy; user information is not sent;"
+                    + " https uses the trust store of the wrapper's JVM")
             .build();
 
     public static final KeySpec READINESS_HTTP_STATUS = nyajsw("wrapper.readiness.http.status", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("HTTP status codes the http readiness probe accepts")
+            .status(SUPPORTED)
+            .description("HTTP status codes the http probe accepts: codes and ranges separated by commas")
             .defaultValue("200-399")
             .build();
 
     public static final KeySpec READINESS_HTTP_TIMEOUT = nyajsw("wrapper.readiness.http.timeout", DURATION, PROBES)
-            .status(PLANNED, "P7")
-            .description("Time one http readiness request may take")
+            .status(SUPPORTED)
+            .description("Time one request of the http probe may take, connecting and the body included")
+            .defaultValue("5")
             .build();
 
     public static final KeySpec READINESS_LOG_PATTERN = nyajsw("wrapper.readiness.log.pattern", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("Regular expression the log readiness probe waits for")
+            .status(SUPPORTED)
+            .description("Regular expression the log probe looks for in new lines, for readiness and liveness alike")
+            .notes("Passes when a line that came since the previous check contains a match (Java regular"
+                    + " expression syntax); as readiness, a match keeps passing for the rest of that"
+                    + " invocation's start; lines are matched as logged, secrets masked")
             .build();
 
     public static final KeySpec READINESS_LOG_FILE = nyajsw("wrapper.readiness.log.file", PATH, PROBES)
-            .status(PLANNED, "P7")
-            .description("File the log readiness probe reads")
-            .notes("When absent the probe reads the captured application output")
+            .status(SUPPORTED)
+            .description("File the log probe reads the new lines of")
+            .notes("Relative to wrapper.working.dir, read as UTF-8; when absent the probe reads the captured"
+                    + " application output")
             .build();
 
     public static final KeySpec READINESS_FILE_PATH = nyajsw("wrapper.readiness.file.path", PATH, PROBES)
-            .status(PLANNED, "P7")
-            .description("File whose existence the file readiness probe waits for")
+            .status(SUPPORTED)
+            .description("File whose existence the file probe checks, for readiness and liveness alike")
+            .notes("Relative to wrapper.working.dir; a file left over from an earlier run counts as well")
             .build();
 
     public static final KeySpec READINESS_COMMAND = nyajsw("wrapper.readiness.command", STRING, PROBES)
-            .status(PLANNED, "P7")
-            .description("Command whose exit code 0 the command readiness probe waits for")
+            .status(SUPPORTED)
+            .description("Command the command probe runs; exit code 0 passes, for readiness and liveness alike")
+            .notes("Run without a shell, in wrapper.working.dir, with the wrapper's environment: blanks separate"
+                    + " arguments, double quotes group them; a program with a directory is relative to"
+                    + " wrapper.working.dir, a bare name is looked up on PATH; output is discarded and input closed;"
+                    + " Windows runs .cmd and .bat files through cmd.exe, which expands %VARIABLES%")
             .build();
 
     public static final KeySpec READINESS_COMMAND_TIMEOUT =
             nyajsw("wrapper.readiness.command.timeout", DURATION, PROBES)
-                    .status(PLANNED, "P7")
-                    .description("Time one run of wrapper.readiness.command may take")
+                    .status(SUPPORTED)
+                    .description("Time one run of wrapper.readiness.command may take; then it is killed with"
+                            + " what it started")
+                    .defaultValue("10")
                     .build();
 
     public static final KeySpec READINESS_JMX_URL = nyajsw("wrapper.readiness.jmx.url", STRING, PROBES)
@@ -994,52 +1015,57 @@ public final class ConfigKeys {
             .build();
 
     public static final KeySpec LIVENESS_TYPE = nyajsw("wrapper.liveness.type", LIST, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Liveness probes checked while the application runs")
-            .derivedDefault("agent when wrapper.agent.enabled is true (from P7), otherwise none (D16)")
+            .notes("An unknown type is an error when the wrapper starts the application")
+            .derivedDefault("agent when the agent is in effect (wrapper.agent.enabled and no wrapper.image), otherwise"
+                    + " none (D16)")
             .build();
 
     public static final KeySpec LIVENESS_INTERVAL = nyajsw("wrapper.liveness.interval", DURATION, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Pause between liveness checks")
             .defaultValue("10")
             .build();
 
     public static final KeySpec LIVENESS_FAILURES = nyajsw("wrapper.liveness.failures", INTEGER, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Consecutive liveness failures before wrapper.liveness.action is taken")
             .defaultValue("3")
             .build();
 
     public static final KeySpec LIVENESS_ACTION = nyajsw("wrapper.liveness.action", ENUM, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Action when the liveness probes keep failing")
             .values(names(FailureAction.class))
             .defaultValue("RESTART")
             .build();
 
     public static final KeySpec AGENT_ENABLED = nyajsw("wrapper.agent.enabled", BOOLEAN, PROBES)
-            .status(PLANNED, "P7")
+            .status(SUPPORTED)
             .description("Load the nyajsw agent into the application JVM")
+            .notes("It answers the wrapper's pings and ends the JVM with System.exit(0) on a stop, so shutdown"
+                    + " hooks run; never with wrapper.image, which may start any executable, nor for a runtime"
+                    + " without the java.instrument module (a jlink image), which is warned about")
             .defaultValue("true")
             .build();
 
     public static final KeySpec PORT = yajsw("wrapper.port", INTEGER, PROBES)
             .status(IGNORED)
             .description("Port of the channel between the wrapper and the application")
-            .notes("The nyajsw agent listens on a loopback port chosen at launch")
+            .notes("The wrapper listens for the nyajsw agent on a loopback port chosen at each launch")
             .build();
 
     public static final KeySpec PORT_MIN = yajsw("wrapper.port.min", INTEGER, PROBES)
             .status(IGNORED)
             .description("Lowest port tried for the channel between the wrapper and the application")
-            .notes("The nyajsw agent listens on a loopback port chosen at launch")
+            .notes("The wrapper listens for the nyajsw agent on a loopback port chosen at each launch")
             .build();
 
     public static final KeySpec PORT_MAX = yajsw("wrapper.port.max", INTEGER, PROBES)
             .status(IGNORED)
             .description("Highest port tried for the channel between the wrapper and the application")
-            .notes("The nyajsw agent listens on a loopback port chosen at launch")
+            .notes("The wrapper listens for the nyajsw agent on a loopback port chosen at each launch")
             .build();
 
     // ---- out of scope ----
