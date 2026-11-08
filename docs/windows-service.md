@@ -4,9 +4,12 @@ nyajsw installs a Windows service that runs the application of a `wrapper.conf`,
 console mode (`-c`) runs. The service itself is the nyajsw wrapper on Java 21; the application may
 run on another JVM (`wrapper.java.command`, given with its directory, see *Application JVM*).
 
-Below, `nyajsw` stands for the wrapper's command line. Until the distribution ships its scripts,
-that is `java -cp <the nyajsw and JNA jars> io.github.jacobosanchez.nyajsw.cli.Main`, run with Java
-21 or later.
+Below, `nyajsw` stands for the wrapper's command line: `bin\nyajsw.bat` of the distribution, or
+`java -jar nyajsw.jar` run with Java 21 or later. `nyajsw.bat` runs the Java that `NYAJSW_JAVA`
+names (a `java.exe`), else the one in `JAVA_HOME`, else `java` from the `PATH`. The scripts beside
+it, `installService.bat`, `startService.bat`, `stopService.bat`, `queryService.bat`,
+`uninstallService.bat` and `runConsole.bat`, run the commands below with an optional
+configuration file, by default the installation's `conf\wrapper.conf`.
 
 ## Commands
 

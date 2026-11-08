@@ -6,8 +6,8 @@ import static org.testng.Assert.assertTrue;
 import org.testng.annotations.Test;
 
 /**
- * Placeholder guard for the distribution module until the assembly lands (plan P8.1): checks the
- * build JVM and that sources are compiled as UTF-8, which the shipped scripts and templates rely on.
+ * Checks the build JVM and that sources are compiled as UTF-8, which the shipped scripts and
+ * templates rely on.
  */
 public class DistBuildSmokeTest {
 
