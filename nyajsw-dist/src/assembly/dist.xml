@@ -61,7 +61,7 @@
     <dependencySets>
         <dependencySet>
             <includes>
-                <include>io.github.jacobosanchez.nyajsw:nyajsw-agent</include>
+                <include>io.jsl.nyajsw:nyajsw-agent</include>
             </includes>
             <useProjectArtifact>false</useProjectArtifact>
             <useTransitiveFiltering>false</useTransitiveFiltering>

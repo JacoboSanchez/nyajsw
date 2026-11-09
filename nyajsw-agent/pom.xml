@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>io.github.jacobosanchez.nyajsw</groupId>
+        <groupId>io.jsl.nyajsw</groupId>
         <artifactId>nyajsw-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
     </parent>
@@ -41,7 +41,7 @@
                     <archive>
                         <manifestEntries>
                             <!-- What -javaagent:nyajsw-agent.jar runs (plan P7.3). -->
-                            <Premain-Class>io.github.jacobosanchez.nyajsw.agent.Agent</Premain-Class>
+                            <Premain-Class>io.jsl.nyajsw.agent.Agent</Premain-Class>
                         </manifestEntries>
                     </archive>
                 </configuration>

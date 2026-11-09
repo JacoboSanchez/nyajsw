@@ -38,7 +38,7 @@ docs/COMPATIBILITY.md           generated from the config key registry (do not e
 docs/*.md                       user guides (probes, migration from YAJSW, …)
 ```
 
-Base package: `io.github.jacobosanchez.nyajsw` (see plan decision D11). Sub-packages are described in
+Base package: `io.jsl.nyajsw` (see plan decision D11). Sub-packages are described in
 plan §4.3. Create directories as the phases need them; do not pre-create empty structure.
 
 ## 3. Build and test

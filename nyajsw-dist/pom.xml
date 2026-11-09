@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>io.github.jacobosanchez.nyajsw</groupId>
+        <groupId>io.jsl.nyajsw</groupId>
         <artifactId>nyajsw-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
     </parent>
@@ -22,11 +22,11 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.github.jacobosanchez.nyajsw</groupId>
+            <groupId>io.jsl.nyajsw</groupId>
             <artifactId>nyajsw-wrapper</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.github.jacobosanchez.nyajsw</groupId>
+            <groupId>io.jsl.nyajsw</groupId>
             <artifactId>nyajsw-agent</artifactId>
         </dependency>
     </dependencies>
@@ -67,7 +67,7 @@
                                      Premain-Class nor JNA's Main-Class reaches the wrapper's jar:
                                      AgentJar would otherwise take nyajsw.jar for the agent. -->
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>io.github.jacobosanchez.nyajsw.cli.Main</mainClass>
+                                    <mainClass>io.jsl.nyajsw.cli.Main</mainClass>
                                     <manifestEntries>
                                         <Implementation-Title>nyajsw</Implementation-Title>
                                         <Implementation-Version>${project.version}</Implementation-Version>
