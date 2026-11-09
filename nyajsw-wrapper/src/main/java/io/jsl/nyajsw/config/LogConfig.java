@@ -1,0 +1,233 @@
+package io.jsl.nyajsw.config;
+
+import static io.jsl.nyajsw.config.ConfigKeys.CONSOLE_FORMAT;
+import static io.jsl.nyajsw.config.ConfigKeys.CONSOLE_LOGLEVEL;
+import static io.jsl.nyajsw.config.ConfigKeys.DEBUG;
+import static io.jsl.nyajsw.config.ConfigKeys.DEBUG_LEVEL;
+import static io.jsl.nyajsw.config.ConfigKeys.LOGFILE;
+import static io.jsl.nyajsw.config.ConfigKeys.LOGFILE_FORMAT;
+import static io.jsl.nyajsw.config.ConfigKeys.LOGFILE_LOGLEVEL;
+import static io.jsl.nyajsw.config.ConfigKeys.LOGFILE_MAXDAYS;
+import static io.jsl.nyajsw.config.ConfigKeys.LOGFILE_MAXFILES;
+import static io.jsl.nyajsw.config.ConfigKeys.LOGFILE_MAXSIZE;
+import static io.jsl.nyajsw.config.ConfigKeys.LOGFILE_ROLLMODE;
+import static io.jsl.nyajsw.config.ConfigKeys.LOG_ENCODING;
+
+import java.nio.charset.Charset;
+import java.nio.file.Path;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * Wrapper logging as configured (plan §4.8). Settings without a declared default are empty.
+ *
+ * @param logfile        {@code wrapper.logfile}, which may contain {@code ROLLNUM}/{@code YYYYMMDD};
+ *                       {@code wrapper.log} beside the configuration file when not set, empty when
+ *                       written blank, which turns the file off
+ * @param logfileFormat  {@code wrapper.logfile.format}; empty when blank, which turns the file off
+ * @param logfileLevel   {@code wrapper.logfile.loglevel}
+ * @param maxSizeBytes   {@code wrapper.logfile.maxsize} in bytes; 0 rolls by size never
+ * @param maxFiles       {@code wrapper.logfile.maxfiles}; empty or 0 keeps every rolled file
+ * @param rollMode       {@code wrapper.logfile.rollmode}
+ * @param consoleFormat  {@code wrapper.console.format}; empty when blank, which turns the console off
+ * @param consoleLevel   {@code wrapper.console.loglevel}
+ * @param debug          {@code wrapper.debug}
+ * @param debugLevel     {@code wrapper.debug.level} as configured; {@link #debugDetail()} is what applies
+ * @param encoding       {@code wrapper.log.encoding}, the JVM's default charset when not set
+ * @param maxDays        {@code wrapper.logfile.maxdays}, days of files kept under the {@code DATE} roll mode;
+ *                       negative keeps every day
+ */
+public record LogConfig(Optional<Path> logfile, Optional<LineFormat> logfileFormat, Optional<LogLevel> logfileLevel,
+        Optional<Long> maxSizeBytes, Optional<Integer> maxFiles, Optional<RollMode> rollMode,
+        Optional<LineFormat> consoleFormat, Optional<LogLevel> consoleLevel, boolean debug, DebugDetail debugLevel,
+        Charset encoding, int maxDays) {
+
+    /** The log file when {@code wrapper.logfile} is not set, in the configuration file's directory (D13). */
+    static final String DEFAULT_LOGFILE = "wrapper.log";
+
+    public LogConfig {
+        Objects.requireNonNull(logfile, "logfile");
+        Objects.requireNonNull(logfileFormat, "logfileFormat");
+        Objects.requireNonNull(logfileLevel, "logfileLevel");
+        Objects.requireNonNull(maxSizeBytes, "maxSizeBytes");
+        Objects.requireNonNull(maxFiles, "maxFiles");
+        Objects.requireNonNull(rollMode, "rollMode");
+        Objects.requireNonNull(consoleFormat, "consoleFormat");
+        Objects.requireNonNull(consoleLevel, "consoleLevel");
+        Objects.requireNonNull(debugLevel, "debugLevel");
+        Objects.requireNonNull(encoding, "encoding");
+    }
+
+    /**
+     * The lowest level written to the console: {@code wrapper.console.loglevel}, raised to {@code
+     * DEBUG} by {@code wrapper.debug}.
+     */
+    public LogLevel consoleThreshold() {
+        // The registry gives wrapper.console.loglevel a default, so it is always there.
+        return debug ? LogLevel.DEBUG : consoleLevel.orElseThrow();
+    }
+
+    /**
+     * The lowest level written to the log file: {@code wrapper.logfile.loglevel}, raised to {@code
+     * DEBUG} by {@code wrapper.debug}.
+     */
+    public LogLevel logfileThreshold() {
+        // The registry gives wrapper.logfile.loglevel a default, so it is always there.
+        return debug ? LogLevel.DEBUG : logfileLevel.orElseThrow();
+    }
+
+    /**
+     * Which debug messages are written, by their detail: {@code wrapper.debug.level} when {@code
+     * wrapper.debug} is on (YAJSW reads the level only then); otherwise all of them, for a sink
+     * whose own level is {@code DEBUG}.
+     */
+    public DebugDetail debugDetail() {
+        return debug ? debugLevel : DebugDetail.ALL;
+    }
+
+    /**
+     * Hides values: the log file name could contain a secret copied in with <code>${...}</code>.
+     * {@link ConfigDump} is the sanctioned way to show values.
+     */
+    @Override
+    public String toString() {
+        return "LogConfig[values hidden; see ConfigDump]";
+    }
+
+    static LogConfig from(ConfigValues values) {
+        boolean debug = values.required(values.bool(DEBUG), DEBUG);
+        Optional<Path> logfile = logfile(values);
+        return new LogConfig(
+                logfile,
+                format(values, LOGFILE_FORMAT),
+                values.enumeration(LOGFILE_LOGLEVEL, LogLevel.class),
+                values.size(LOGFILE_MAXSIZE),
+                maxFiles(values),
+                rollMode(values, logfile),
+                format(values, CONSOLE_FORMAT),
+                values.enumeration(CONSOLE_LOGLEVEL, LogLevel.class),
+                debug,
+                debugLevel(values, debug),
+                encoding(values),
+                values.required(values.integer(LOGFILE_MAXDAYS), LOGFILE_MAXDAYS));
+    }
+
+    /** {@code wrapper.logfile.rollmode}; {@code DATE} needs a date in the file name to have a file per day. */
+    private static Optional<RollMode> rollMode(ConfigValues values, Optional<Path> logfile) {
+        Optional<RollMode> mode = values.enumeration(LOGFILE_ROLLMODE, RollMode.class);
+        values.writtenAt(LOGFILE_MAXDAYS).filter(location -> !mode.equals(Optional.of(RollMode.DATE)))
+                .ifPresent(location -> values.warn(location, LOGFILE_MAXDAYS.name() + " has an effect only with "
+                        + LOGFILE_ROLLMODE.name() + "=DATE"));
+        if (mode.equals(Optional.of(RollMode.DATE)) && logfile.isPresent()
+                && !new LogFileNames(logfile.get()).hasDate()) {
+            values.problem(LOGFILE_ROLLMODE, values.location(LOGFILE_ROLLMODE).orElseThrow(), LOGFILE_ROLLMODE.name()
+                    + "=DATE needs " + LogFileNames.DATE + " in the name of " + LOGFILE.name());
+        }
+        return mode;
+    }
+
+    /** YAJSW turns the file off for a blank {@code wrapper.logfile}; not setting it gives the default file. */
+    private static Optional<Path> logfile(ConfigValues values) {
+        if (values.isBlank(LOGFILE)) {
+            return Optional.empty();
+        }
+        if (values.location(LOGFILE).isEmpty()) {
+            return Optional.of(values.directory().resolve(DEFAULT_LOGFILE));
+        }
+        Optional<Path> file = values.path(LOGFILE);
+        if (file.isPresent()) {
+            try {
+                new LogFileNames(file.get());
+            } catch (IllegalArgumentException e) {
+                values.problem(LOGFILE, values.location(LOGFILE).orElseThrow(),
+                        LOGFILE.name() + ": " + e.getMessage());
+                return Optional.empty();
+            }
+        }
+        return file;
+    }
+
+    private static Optional<Integer> maxFiles(ConfigValues values) {
+        Optional<Integer> maxFiles = values.integer(LOGFILE_MAXFILES);
+        if (maxFiles.isPresent() && maxFiles.get() < 0) {
+            values.problem(LOGFILE_MAXFILES, values.location(LOGFILE_MAXFILES).orElseThrow(),
+                    LOGFILE_MAXFILES.name() + "=" + maxFiles.get() + " is negative");
+            return Optional.empty();
+        }
+        return maxFiles;
+    }
+
+    /**
+     * A format key; what is wrong with its letters is a warning, since YAJSW gives no rule for it and
+     * a line with the remaining fields still says what happened.
+     */
+    private static Optional<LineFormat> format(ConfigValues values, KeySpec spec) {
+        Optional<String> text = values.text(spec);
+        if (text.isEmpty()) {
+            return Optional.empty();
+        }
+        LineFormat.Parsed parsed = LineFormat.parse(text.get());
+        ConfigLocation location = values.location(spec).orElse(ConfigLocation.of("built-in default"));
+        parsed.problems().forEach(problem -> values.warn(location, spec.name() + ": " + problem));
+        return parsed.format();
+    }
+
+    /**
+     * {@code wrapper.debug.level}; a value that is not a level of the scale is an error only where it
+     * would take effect, under {@code wrapper.debug}, so that a leftover in a file that does not debug
+     * cannot stop the wrapper. The key is declared as a string so that this method, not the
+     * validator's type check, judges every value, a word as much as a number out of range.
+     */
+    private static DebugDetail debugLevel(ConfigValues values, boolean debug) {
+        Optional<String> text = values.text(DEBUG_LEVEL);
+        if (text.isEmpty()) {
+            return defaultLevel(values);
+        }
+        try {
+            int level = ValueParser.parseInteger(text.get());
+            if (DebugDetail.isLevel(level)) {
+                return DebugDetail.ofLevel(level);
+            }
+        } catch (IllegalArgumentException e) {
+            // not a whole number: reported below like a number off the scale
+        }
+        ConfigLocation location = values.location(DEBUG_LEVEL).orElseThrow();
+        String problem = DEBUG_LEVEL.name() + "=" + values.shown(DEBUG_LEVEL.name(), text.get())
+                + " is not a whole number from 0 to " + DebugDetail.ALL.ordinal();
+        if (debug) {
+            values.problem(DEBUG_LEVEL, location, problem);
+        } else {
+            values.warn(location, problem + "; it has no effect while " + DEBUG.name() + " is false");
+        }
+        return defaultLevel(values);
+    }
+
+    private static DebugDetail defaultLevel(ConfigValues values) {
+        return values.constantDefault(DEBUG_LEVEL, text -> DebugDetail.ofLevel(ValueParser.parseInteger(text)));
+    }
+
+    /**
+     * {@code wrapper.log.encoding}; a name the JVM does not know, or an encoding it can only read
+     * (such as {@code ISO-2022-CN}), is a problem of the key.
+     */
+    private static Charset encoding(ConfigValues values) {
+        Optional<String> name = values.text(LOG_ENCODING).map(String::strip).filter(text -> !text.isEmpty());
+        if (name.isEmpty()) {
+            return Charset.defaultCharset();
+        }
+        String shown = "'" + values.shown(LOG_ENCODING.name(), name.get()) + "' for " + LOG_ENCODING.name();
+        ConfigLocation location = values.location(LOG_ENCODING).orElseThrow();
+        Charset charset;
+        try {
+            charset = Charset.forName(name.get());
+        } catch (IllegalArgumentException e) { // IllegalCharsetNameException, UnsupportedCharsetException
+            values.problem(LOG_ENCODING, location, "unknown character encoding " + shown);
+            return Charset.defaultCharset();
+        }
+        if (!charset.canEncode()) {
+            values.problem(LOG_ENCODING, location, "the character encoding " + shown + " can be read but not written");
+            return Charset.defaultCharset();
+        }
+        return charset;
+    }
+}

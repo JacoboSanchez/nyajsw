@@ -1,7 +1,7 @@
 # nyajsw — Implementation Plan
 
 Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
-Last updated: 2026-11-08
+Last updated: 2026-11-09
 
 How to use this document: pick the next unchecked item in §5, implement it following
 [AGENTS.md](../AGENTS.md), and update the checkbox, the decisions log (§9) and the compatibility
@@ -176,7 +176,7 @@ foreground and Ctrl+C triggers the stop sequence (§4.6).
 The agent must be a separate artifact: `-javaagent` needs a standalone jar, and it must load on
 older JVMs than the wrapper requires.
 
-### 4.3 Packages and core abstractions (`io.github.jacobosanchez.nyajsw`)
+### 4.3 Packages and core abstractions (`io.jsl.nyajsw`)
 
 | Package | Responsibility | Key types |
 |---|---|---|
@@ -243,7 +243,7 @@ interfaces at the OS boundary, immutable config records, one place per concern.
   `ServiceCommandLine` (D12):
 
   ```
-  "<java.home>\bin\javaw.exe" <wrapper.ntservice.additional.N …> -Djna.tmpdir=<wrapper.tmp.path> -cp "<java.class.path of the installing JVM>" io.github.jacobosanchez.nyajsw.cli.Main --service "<absolute wrapper.conf>"
+  "<java.home>\bin\javaw.exe" <wrapper.ntservice.additional.N …> -Djna.tmpdir=<wrapper.tmp.path> -cp "<java.class.path of the installing JVM>" io.jsl.nyajsw.cli.Main --service "<absolute wrapper.conf>"
   ```
 
   `java.home` and the default classpath (`java.class.path`) are those of the JVM running `-i`, so the
@@ -593,7 +593,7 @@ Items marked *(recommended)* were not requested by the owner and may be dropped.
 ### P0 — Project skeleton
 Goal: a building, testing, CI-verified empty project.
 - [x] P0.1 Parent `pom.xml` plus the three modules in one commit (a parent listing modules that do
-      not exist does not build): groupId `io.github.jacobosanchez.nyajsw`, `release` 21 for
+      not exist does not build): groupId `io.jsl.nyajsw`, `release` 21 for
       wrapper/dist, `release` 8 with `testRelease` 21 and `-Xlint:-options` for the agent, UTF-8,
       dependency and plugin management (compiler, surefire with the TestNG provider, enforcer for
       Java 21 + Maven 3.9), versions in properties, one smoke TestNG test per module, Mockito wired
@@ -1923,7 +1923,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D8 | Single key registry drives parsing, validation, warnings and generated docs. Keys are `public static final KeySpec` constants in `ConfigKeys`, collected into one immutable `KeyRegistry`; derived defaults are declared there by description and computed by the typed view that owns the key (P1.6), or by the loader for `wrapper.conf.encoding`, because they depend on typed values (e.g. `wrapper.agent.enabled`) or the configuration file's location rather than on raw strings | One source of truth; no drift between code and docs; constants let code refer to keys without repeating names | Accepted (P1.2) |
 | D9 | Extensions live under `wrapper.*`, tagged `NYAJSW` in the registry | One namespace for users; provenance still visible | Accepted |
 | D10 | Agent enabled by default; loopback + random token passed through the environment, port through `-D` | Graceful stop and heartbeat need it; YAJSW also injected code by default; token never on a logged command line | Accepted (§10 Q3, 2026-11-08) |
-| D11 | groupId and base package `io.github.jacobosanchez.nyajsw` | Matches the GitHub owner; Maven Central-compatible | Proposed (§10 Q2) |
+| D11 | groupId and base package `io.jsl.nyajsw` (was `io.github.jacobosanchez.nyajsw` until 2026-11-09) | Chosen by the owner; short and independent of the GitHub account. Publishing to Maven Central under this groupId needs the `jsl.io` domain verified for the namespace. A service installed with an earlier build stores the old main class in its command line and must be uninstalled and installed again | Accepted (§10 Q2, 2026-11-09) |
 | D12 | Service binary path = installing JVM's `javaw.exe` + classpath (default `java.class.path`) + `wrapper.ntservice.additional.N` (YAJSW's key for these options) + `-Djna.tmpdir` + `--service <conf>`; `wrapper.java.command` only affects the application JVM, `wrapper.ntservice.java.command` (YAJSW: default the application's Java command) may replace the installing JVM's `javaw.exe` if it is a Java 21; it must be given with its directory, and one known to be older than 21 is an error at install rather than a silent fallback to the installing JVM (P5.3) | Wrapper needs Java 21 and JNA settings before configuration is read; works from unpacked builds and the distribution | Proposed |
 | D13 | The default working directory and relative wrapper-side paths (log file, pid files, temporary directory, probe files) resolve against the configuration file's directory; relative application-side paths (jar, library path, image, a Java command with a directory, classpath entries) resolve against the working directory, as the application sees them (P1.6b) | Services start in `System32`; configuration-relative is predictable for the wrapper, while the application's own paths must agree with what the child JVM resolves (usual YAJSW layout: `conf/wrapper.conf` with `wrapper.working.dir=..`) | Proposed (verify YAJSW, P1.9) |
 | D14 | Start type default `AUTO_START`; enum aliases accepted | Match YAJSW defaults and spellings seen in the wild | Accepted |
@@ -1955,7 +1955,8 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
    YAJSW make with `wrapper.max_failed_invocations=1` (D20)? Anonymised copies of your own installed
    `service.conf` files are the fixtures we need most. Do not add vendor templates unless their
    licence allows redistribution in an Apache-2.0 repository.
-2. **Package/groupId** `io.github.jacobosanchez.nyajsw` acceptable? (D11)
+2. **Package/groupId** `io.github.jacobosanchez.nyajsw` acceptable? (D11) (*Answered 2026-11-09:* no; the
+   groupId and base package are `io.jsl.nyajsw`.)
 3. **Agent injection by default** acceptable for your application? It adds one `-javaagent` option
    to the child JVM. (D10) (*Answered 2026-11-08:* yes, on by default; `wrapper.agent.enabled=false`
    turns it off.)

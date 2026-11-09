@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>io.github.jacobosanchez.nyajsw</groupId>
+        <groupId>io.jsl.nyajsw</groupId>
         <artifactId>nyajsw-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
     </parent>
@@ -18,7 +18,7 @@
     <dependencies>
         <!-- For AgentProtocol only (plan D3); the agent never depends on the wrapper. -->
         <dependency>
-            <groupId>io.github.jacobosanchez.nyajsw</groupId>
+            <groupId>io.jsl.nyajsw</groupId>
             <artifactId>nyajsw-agent</artifactId>
         </dependency>
         <!-- The Windows Service Control Manager and process calls (plan D5); used in platform.windows only. -->
