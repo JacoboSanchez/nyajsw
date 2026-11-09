@@ -1563,7 +1563,8 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
       (`StopStrategy.close()`, called by `StopChain.close()` from `Supervision.close()`), killing
       it and waiting up to 10 s for its log line before the job and the log are closed, since the
       kill on the application's end runs on the command's own thread and the wrapper could exit
-      first; an application that has ended already is not asked (`NOT_APPLICABLE`, nothing
+      first, also when supervision closes with its thread's interrupt status set (cleared for the
+      wait, then set again); an application that has ended already is not asked (`NOT_APPLICABLE`, nothing
       started); the outcome messages are one `ExternalCommand.describe` for the probe and the
       strategy; a share too long for nanoseconds is waited as the longest; the tests follow
       their own processes through pid files (`TestApplication pid`), not every child of the test

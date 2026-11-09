@@ -78,17 +78,35 @@ public final class CommandStopStrategy implements StopStrategy {
         return Result.REQUESTED;
     }
 
-    /** Kills the commands still running and waits, at most {@link #CLOSE_WAIT} each, until they are logged. */
+    /**
+     * Kills the commands still running and waits, at most {@link #CLOSE_WAIT} each, until they are
+     * logged. An interrupt does not cut the wait short, since supervision that was stopped by one
+     * closes with the interrupt status set and the wrapper may exit right after: the status is
+     * cleared for the wait and set again afterwards.
+     */
     @Override
     public void close() {
         List<Map.Entry<CompletableFuture<Void>, Thread>> runs = List.copyOf(running.entrySet());
         runs.forEach(run -> run.getKey().complete(null));
-        for (Map.Entry<CompletableFuture<Void>, Thread> run : runs) {
-            try {
-                run.getValue().join(CLOSE_WAIT);
-            } catch (InterruptedException e) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            for (Map.Entry<CompletableFuture<Void>, Thread> run : runs) {
+                long deadline = System.nanoTime() + CLOSE_WAIT.toNanos();
+                while (run.getValue().isAlive()) {
+                    long left = deadline - System.nanoTime();
+                    if (left <= 0) {
+                        break;
+                    }
+                    try {
+                        run.getValue().join(Duration.ofNanos(left));
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+            }
+        } finally {
+            if (interrupted) {
                 Thread.currentThread().interrupt();
-                return;
             }
         }
     }

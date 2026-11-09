@@ -138,6 +138,25 @@ public class CommandStopStrategyTest {
     }
 
     @Test(timeOut = 120_000)
+    public void anInterruptedCloseStillWaitsAndKeepsTheInterrupt() throws Exception {
+        CommandStopStrategy strategy = strategy(parked("interrupted"));
+        strategy.requestStop(context(new FakeApplication(1), log, LONG_SHARE));
+        ProcessHandle command = TestApplication.awaitPid(dir.resolve("interrupted.pid"));
+
+        // As after Supervisor.run() was stopped by an interrupt: the status is set when supervision closes.
+        Thread.currentThread().interrupt();
+        try {
+            strategy.close();
+            assertTrue(Thread.currentThread().isInterrupted(), "the interrupt is kept");
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertTrue(logged().contains("was ended, since supervision has ended"), logged());
+        command.onExit().get(30, TimeUnit.SECONDS);
+    }
+
+    @Test(timeOut = 120_000)
     public void closingRightAfterTheRequestStillEndsTheCommand() {
         CommandStopStrategy strategy = strategy(parked("early"));
 
