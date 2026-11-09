@@ -59,7 +59,7 @@ public record WrapperConfig(Path file, JavaConfig java, ServiceConfig service, L
         ProbeConfig probes = ProbeConfig.from(values, java);
         ServiceConfig service = ServiceConfig.from(values, java);
         LogConfig log = LogConfig.from(values);
-        LifecycleConfig lifecycle = LifecycleConfig.from(values, probes.agentInEffect());
+        LifecycleConfig lifecycle = LifecycleConfig.from(values, probes.agentInEffect(), java.workingDir());
         List<ConfigException> errors = new ArrayList<>(validation.errors());
         errors.addAll(values.errors());
         if (!errors.isEmpty()) {

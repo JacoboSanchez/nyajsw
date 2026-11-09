@@ -62,7 +62,7 @@ public class StopStrategyRegistryTest {
         assertEquals(chain.last().name(), TerminateStopStrategy.NAME);
         assertTrue(chain.last().strategy() instanceof TerminateStopStrategy);
         assertEquals(chain.warnings(), List.of());
-        assertEquals(StopStrategyRegistry.defaults().names(), Set.of("agent", "terminate"));
+        assertEquals(StopStrategyRegistry.defaults().names(), Set.of("agent", "command", "terminate"));
     }
 
     @Test
@@ -76,7 +76,7 @@ public class StopStrategyRegistryTest {
 
         assertEquals(gracefulNames(chain), List.of());
         assertEquals(chain.warnings(), List.of(
-                "wrapper.stop.strategy: unknown stop strategy telepathy, skipped; known: [agent, terminate]"));
+                "wrapper.stop.strategy: unknown stop strategy telepathy, skipped; known: [agent, command, terminate]"));
     }
 
     @Test
@@ -107,7 +107,7 @@ public class StopStrategyRegistryTest {
                 Duration.ZERO, List.of("Telepathy", "terminate")), config.secrets());
 
         assertEquals(chain.warnings(), List.of(
-                "wrapper.stop.strategy: unknown stop strategy ****, skipped; known: [agent, terminate]"));
+                "wrapper.stop.strategy: unknown stop strategy ****, skipped; known: [agent, command, terminate]"));
     }
 
     @Test
@@ -142,6 +142,37 @@ public class StopStrategyRegistryTest {
         assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME));
         assertTrue(chain.graceful().get(0).strategy() instanceof AgentStopStrategy);
         assertEquals(chain.warnings(), List.of());
+    }
+
+    @Test
+    public void aStopCommandComesFirstInTheDefaultChain() throws IOException {
+        StopChain chain = chainOf("wrapper.stop.command=stop.bat");
+
+        assertEquals(gracefulNames(chain), List.of(CommandStopStrategy.NAME, AgentStopStrategy.NAME));
+        assertTrue(chain.graceful().get(0).strategy() instanceof CommandStopStrategy);
+        assertEquals(chain.warnings(), List.of());
+        assertEquals(gracefulNames(chainOf("wrapper.stop.command=stop.bat", "wrapper.agent.enabled=false")),
+                List.of(CommandStopStrategy.NAME));
+    }
+
+    @Test
+    public void theCommandStrategyWithoutAStopCommandIsSkippedWithAWarning() throws IOException {
+        StopChain chain = chain("command,terminate");
+
+        assertEquals(gracefulNames(chain), List.of());
+        assertEquals(chain.warnings(), List.of("wrapper.stop.strategy: the stop strategy command cannot be used"
+                + " (wrapper.stop.command is not set), skipped"));
+    }
+
+    @Test
+    public void aStopCommandThatTheListDoesNotNameIsWarnedAbout() throws IOException {
+        StopChain chain = chainOf("wrapper.stop.command=stop.bat", "wrapper.stop.strategy=agent,terminate");
+
+        assertEquals(gracefulNames(chain), List.of(AgentStopStrategy.NAME));
+        assertEquals(chain.warnings(), List.of("wrapper.stop.command is set, but wrapper.stop.strategy does not list"
+                + " command; the command is not run"));
+        assertEquals(chainOf("wrapper.stop.command=stop.bat", "wrapper.stop.strategy=agent,Command,terminate")
+                .warnings(), List.of());
     }
 
     @Test

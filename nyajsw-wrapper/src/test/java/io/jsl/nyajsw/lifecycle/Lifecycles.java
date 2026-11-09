@@ -4,6 +4,7 @@ import io.jsl.nyajsw.config.ControlMode;
 import io.jsl.nyajsw.config.ExitAction;
 import io.jsl.nyajsw.config.LifecycleConfig;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,6 @@ final class Lifecycles {
             Duration shutdownTimeout, Duration jvmExitTimeout, List<String> stopStrategies) {
         return new LifecycleConfig(control, actions, defaultAction, RESTART_DELAY, maxFailedInvocations,
                 SUCCESSFUL_TIME, startupDelay, startupTimeout, shutdownTimeout, jvmExitTimeout, Optional.empty(),
-                Optional.empty(), stopStrategies, Optional.empty());
+                Optional.empty(), stopStrategies, List.of(), Path.of(""));
     }
 }

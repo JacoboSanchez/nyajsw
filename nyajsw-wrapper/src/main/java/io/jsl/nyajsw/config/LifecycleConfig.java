@@ -19,6 +19,7 @@ import static io.jsl.nyajsw.config.ConfigKeys.SUCCESSFUL_INVOCATION_TIME;
 import java.math.BigInteger;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -46,13 +47,17 @@ import java.util.TreeMap;
  * @param javaPidFile              {@code wrapper.java.pidfile}, if set
  * @param stopStrategies           {@code wrapper.stop.strategy}; by default {@code agent,terminate} when
  *                                 the agent is in effect ({@link ProbeConfig#agentInEffect}), else
- *                                 {@code terminate}
- * @param stopCommand              {@code wrapper.stop.command}, if set
+ *                                 {@code terminate}, with {@code command} first when {@code
+ *                                 wrapper.stop.command} is set ({@link #defaultStopStrategies})
+ * @param stopCommand              {@code wrapper.stop.command} split into the program and its
+ *                                 arguments ({@link ConfigValues#command}), a program with a
+ *                                 directory resolved against {@code workingDir}; empty when not set
+ * @param workingDir               the application's working directory, where the stop command runs
  */
 public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exitActions, ExitAction defaultExitAction,
         Duration restartDelay, int maxFailedInvocations, Duration successfulInvocationTime, Duration startupDelay,
         Duration startupTimeout, Duration shutdownTimeout, Duration jvmExitTimeout, Optional<Path> pidFile,
-        Optional<Path> javaPidFile, List<String> stopStrategies, Optional<String> stopCommand) {
+        Optional<Path> javaPidFile, List<String> stopStrategies, List<String> stopCommand, Path workingDir) {
 
     public LifecycleConfig {
         Objects.requireNonNull(control, "control");
@@ -67,7 +72,8 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
         Objects.requireNonNull(pidFile, "pidFile");
         Objects.requireNonNull(javaPidFile, "javaPidFile");
         stopStrategies = List.copyOf(stopStrategies);
-        Objects.requireNonNull(stopCommand, "stopCommand");
+        stopCommand = List.copyOf(stopCommand);
+        Objects.requireNonNull(workingDir, "workingDir");
     }
 
     /**
@@ -92,8 +98,13 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
         return exitActions.getOrDefault(exitCode, defaultExitAction);
     }
 
-    static LifecycleConfig from(ConfigValues values, boolean agentInEffect) {
+    /**
+     * @param agentInEffect whether the agent is injected ({@link ProbeConfig#agentInEffect})
+     * @param workingDir    the application's working directory, which a relative stop command starts from
+     */
+    static LifecycleConfig from(ConfigValues values, boolean agentInEffect, Path workingDir) {
         List<String> stopStrategies = values.names(STOP_STRATEGY, "stop strategy");
+        List<String> stopCommand = values.command(STOP_COMMAND, workingDir);
         return new LifecycleConfig(
                 values.required(values.enumeration(CONTROL, ControlMode.class), CONTROL),
                 exitActions(values),
@@ -107,13 +118,27 @@ public record LifecycleConfig(ControlMode control, Map<Integer, ExitAction> exit
                 values.duration(JVM_EXIT_TIMEOUT).orElse(Duration.ZERO),
                 values.path(PIDFILE),
                 values.path(JAVA_PIDFILE),
-                stopStrategies.isEmpty() ? defaultStopStrategies(agentInEffect) : stopStrategies,
-                values.text(STOP_COMMAND));
+                stopStrategies.isEmpty() ? defaultStopStrategies(agentInEffect, !stopCommand.isEmpty())
+                        : stopStrategies,
+                stopCommand,
+                workingDir);
     }
 
-    /** The derived default of {@code wrapper.stop.strategy}, as its registry description states. */
-    static List<String> defaultStopStrategies(boolean agentInEffect) {
-        return agentInEffect ? List.of("agent", "terminate") : List.of("terminate");
+    /**
+     * The derived default of {@code wrapper.stop.strategy}, as its registry description states. A
+     * stop command comes first: the agent ends the JVM at once, so a command after it would never
+     * get to ask.
+     */
+    static List<String> defaultStopStrategies(boolean agentInEffect, boolean stopCommand) {
+        List<String> strategies = new ArrayList<>();
+        if (stopCommand) {
+            strategies.add("command");
+        }
+        if (agentInEffect) {
+            strategies.add("agent");
+        }
+        strategies.add("terminate");
+        return List.copyOf(strategies);
     }
 
     /**

@@ -163,7 +163,7 @@ public class WrapperConfigTest {
 
         assertEquals(config.service().name(), Optional.of("Main"));
         assertEquals(config.service().displayName(), Optional.empty());
-        assertEquals(config.lifecycle().stopCommand(), Optional.empty());
+        assertEquals(config.lifecycle().stopCommand(), List.of());
         assertEquals(load("wrapper.java.app.mainclass=").service().name(), Optional.empty());
     }
 
@@ -419,6 +419,26 @@ public class WrapperConfigTest {
                 List.of(dir.resolve("work/bin/check").toString(), "-v"), "relative to the working directory");
         assertEquals(load("wrapper.readiness.command=curl -f").probes().command(), List.of("curl", "-f"),
                 "a bare name is looked up on PATH");
+    }
+
+    @Test
+    public void theStopCommandIsSplitIntoArgumentsAndRunsInTheWorkingDirectory() throws IOException {
+        LifecycleConfig lifecycle = load("wrapper.working.dir=work", "wrapper.stop.command=bin/stop.bat \"a b\" -q")
+                .lifecycle();
+
+        assertEquals(lifecycle.stopCommand(), List.of(dir.resolve("work/bin/stop.bat").toString(), "a b", "-q"));
+        assertEquals(lifecycle.workingDir(), dir.resolve("work"));
+        assertEquals(lifecycle.stopStrategies(), List.of("command", "agent", "terminate"));
+        assertEquals(load("wrapper.stop.command=stop.cmd").lifecycle().stopCommand(), List.of("stop.cmd"),
+                "a bare name is looked up on PATH");
+        assertEquals(load().lifecycle().stopStrategies(), List.of("agent", "terminate"));
+        assertEquals(load("wrapper.stop.command=stop.cmd", "wrapper.stop.strategy=agent").lifecycle()
+                .stopStrategies(), List.of("agent"), "a written list is kept");
+        ConfigException error = expectThrows(ConfigException.class,
+                () -> load("wrapper.stop.command=stop --token \"s3cr3t"));
+        assertTrue(error.getMessage().contains("wrapper.stop.command: a double quote is not closed"),
+                error.getMessage());
+        assertFalse(error.getMessage().contains("s3cr3t"), error.getMessage());
     }
 
     @Test

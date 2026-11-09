@@ -135,7 +135,9 @@ The message names the key and its line; `-q` shows these errors as well.
   count of its arguments, the arguments, then the stop class with its own settings. nyajsw passes
   everything after the first parameter to the start class's `main`, so keep only the start class
   and its arguments. The stop class is never called: a stop ends the JVM through the agent's
-  `System.exit(0)`, so whatever must run at a stop belongs in a shutdown hook.
+  `System.exit(0)`, so whatever must run at a stop belongs in a shutdown hook. A program that
+  asks the application to stop, such as YAJSW's `wrapper.stop.conf` program or a `.bat` file, can
+  be run first with `wrapper.stop.command` (see the README, "Stopping the application").
 - **Running means ready.** The service shows as *running* once the readiness probes pass, by
   default as soon as the process exists (`wrapper.readiness.type=process`).
   `wrapper.ntservice.autoreport.startup=false` has no effect; a probe takes its place.
