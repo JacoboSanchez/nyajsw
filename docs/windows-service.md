@@ -57,15 +57,16 @@ Everything else is read from `wrapper.conf` (and its includes) at every start.
   from then on. If the application restarts later, the service keeps showing as running.
 - While the service is starting, Windows refuses to stop it (error 1061). A long
   `wrapper.startup.delay` therefore cannot be cut short.
-- A stop asks the application to end through `wrapper.stop.strategy`, by default `agent,terminate`:
-  the nyajsw agent, which the wrapper loads into the application's JVM unless
+- A stop asks the application to end through `wrapper.stop.strategy`, by default `agent,terminate`
+  (`command,agent,terminate` when `wrapper.stop.command` names a command, such as a `.bat` file,
+  to run first): the nyajsw agent, which the wrapper loads into the application's JVM unless
   `wrapper.agent.enabled=false`, ends it with `System.exit(0)`, so its shutdown hooks run and the
   service stops with exit code 0. If the application does not end within the stop budget,
   `wrapper.shutdown.timeout` (30 s by default) plus `wrapper.jvm_exit.timeout`, or there is no
   agent to ask, the wrapper waits out the budget and then ends the application's process tree.
-  Without the agent nothing asks the application to end, since a service receives no Ctrl+C;
-  the wrapper log warns about that at every start. [probes.md](probes.md) describes the agent and
-  the readiness and liveness checks.
+  Without the agent or a stop command nothing asks the application to end, since a service
+  receives no Ctrl+C; the wrapper log warns about that at every start. [probes.md](probes.md)
+  describes the agent and the readiness and liveness checks.
 - If the application cannot be kept running, or ends by itself with an exit code other than 0, the
   service stops with error 1066. `sc query <name>` shows the code as `SERVICE_EXIT_CODE`: it is
   the code console mode would have exited with. A configuration that cannot be read gives 2.

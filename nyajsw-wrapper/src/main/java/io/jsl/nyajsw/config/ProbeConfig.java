@@ -22,10 +22,8 @@ import static io.jsl.nyajsw.config.ConfigKeys.READINESS_TYPE;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -54,7 +52,7 @@ import java.util.regex.PatternSyntaxException;
  * @param filePath              {@code wrapper.readiness.file.path}, if set; relative to the working
  *                              directory, as the application sees it
  * @param command               {@code wrapper.readiness.command} split into the program and its
- *                              arguments ({@link ValueParser#parseCommand}), a program with a
+ *                              arguments ({@link ConfigValues#command}), a program with a
  *                              directory resolved against {@code workingDir}; empty when not set
  * @param commandTimeout        {@code wrapper.readiness.command.timeout}, at least 1 s
  * @param workingDir            the application's working directory, where the command runs
@@ -141,7 +139,7 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
                 logPattern(values),
                 values.path(READINESS_LOG_FILE, workingDir),
                 values.path(READINESS_FILE_PATH, workingDir),
-                command(values, workingDir),
+                values.command(READINESS_COMMAND, workingDir),
                 positive(values, READINESS_COMMAND_TIMEOUT),
                 workingDir,
                 liveness,
@@ -220,40 +218,6 @@ public record ProbeConfig(List<String> readinessTypes, Duration readinessInterva
                     READINESS_LOG_PATTERN.name() + " is not a valid regular expression: " + e.getDescription());
             return Optional.empty();
         }
-    }
-
-    /**
-     * {@code wrapper.readiness.command} as program and arguments. The program follows the rule of
-     * the other executable keys ({@link JavaConfig#isBareName}): a bare name is looked up on {@code
-     * PATH}, anything with a directory is resolved against the working directory, since Windows
-     * would look for it from the wrapper's own. One with an open double quote, without a program or
-     * with a program that is not a valid path is a problem and left out, not quoted, since a
-     * command can carry a secret.
-     */
-    private static List<String> command(ConfigValues values, Path workingDir) {
-        Optional<String> command = values.text(READINESS_COMMAND);
-        if (command.isEmpty()) {
-            return List.of();
-        }
-        String problem;
-        try {
-            List<String> arguments = new ArrayList<>(ValueParser.parseCommand(command.get()));
-            if (arguments.isEmpty() || arguments.get(0).isBlank()) {
-                problem = "names no program";
-            } else {
-                String program = ValueParser.normalisePath(arguments.get(0));
-                arguments.set(0, JavaConfig.isBareName(program) ? program
-                        : workingDir.resolve(program).normalize().toString());
-                return List.copyOf(arguments);
-            }
-        } catch (InvalidPathException e) {
-            problem = "the program is not a valid path";
-        } catch (IllegalArgumentException e) {
-            problem = e.getMessage();
-        }
-        values.problem(READINESS_COMMAND, values.location(READINESS_COMMAND).orElseThrow(),
-                READINESS_COMMAND.name() + ": " + problem);
-        return List.of();
     }
 
     /** {@code wrapper.readiness.tcp.port}: a port that cannot exist is a problem and left out. */

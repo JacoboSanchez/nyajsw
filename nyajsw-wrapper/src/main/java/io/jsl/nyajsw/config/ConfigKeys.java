@@ -633,15 +633,19 @@ public final class ConfigKeys {
             .status(SUPPORTED)
             .description("Ordered stop strategies tried before the application is terminated")
             .derivedDefault("agent,terminate when the agent is in effect (wrapper.agent.enabled and no wrapper.image),"
-                    + " otherwise terminate")
+                    + " otherwise terminate; with command first when wrapper.stop.command is set")
             .notes("Names ignore case; unknown ones are skipped with a warning and terminate is always the last"
                     + " step. The strategies before it share wrapper.shutdown.timeout plus wrapper.jvm_exit.timeout;"
                     + " when both are 0 they are skipped. Strategies: implementation plan, section 4.6")
             .build();
 
     public static final KeySpec STOP_COMMAND = nyajsw("wrapper.stop.command", STRING, LIFECYCLE)
-            .status(PLANNED, "P7")
-            .description("Command run by the command stop strategy")
+            .status(SUPPORTED)
+            .description("Command run by the command stop strategy to ask the application to end")
+            .notes("Split and run as wrapper.readiness.command is, so a .bat file runs through cmd.exe; it has its"
+                    + " share of the stop budget, used up even when it fails, and is killed with what it started"
+                    + " when that runs out or the application or the wrapper ends. Set, it puts command first in the"
+                    + " default wrapper.stop.strategy")
             .build();
 
     // ---- logging ----

@@ -211,6 +211,8 @@ final class Supervision {
     private void close() {
         probeExecutor.shutdownNow();
         scheduler.close();
+        // Before the job and the log: a stop command still running is ended and its outcome logged.
+        stops.close();
         job.ifPresent(ProcessJob::close);
     }
 

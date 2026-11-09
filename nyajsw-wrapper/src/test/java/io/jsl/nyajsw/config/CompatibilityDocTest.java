@@ -52,7 +52,7 @@ public class CompatibilityDocTest {
                 + " **unsupported, fatal when present** (P9) |"), "fatal key row");
         assertTrue(document.contains("one of `AUTO_START`, `DEMAND_START`, `DELAYED_AUTO_START`, `DISABLED`;"
                 + " alias `DELAY_START` = `DELAYED_AUTO_START`"), "enumeration with alias");
-        assertTrue(document.contains("**planned** (P7)<br>nyajsw extension"), "extension marker");
+        assertTrue(document.contains("**supported**<br>nyajsw extension"), "extension marker");
         assertTrue(document.contains("Secret: never logged or shown."), "secret note");
         assertTrue(document.contains("*Verify:* default"), "verification marker");
     }

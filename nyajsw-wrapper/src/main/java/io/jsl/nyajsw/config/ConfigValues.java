@@ -143,6 +143,41 @@ final class ConfigValues {
         return typed(spec, ValueParser::normalisePath).flatMap(text -> toPath(spec, entry.orElse(null), text, base));
     }
 
+    /**
+     * A command value as program and arguments ({@link ValueParser#parseCommand}): blanks separate
+     * arguments, double quotes group them. The program follows the rule of the other executable keys
+     * ({@link JavaConfig#isBareName}): a bare name is looked up on {@code PATH}, anything with a
+     * directory is resolved against {@code workingDir}, since Windows would look for it from the
+     * wrapper's own. One with an open double quote, without a program or with a program that is not
+     * a valid path is a problem and left out, not quoted, since a command can carry a secret.
+     *
+     * @return the program and its arguments; empty when not set or not usable
+     */
+    List<String> command(KeySpec spec, Path workingDir) {
+        Optional<String> command = text(spec);
+        if (command.isEmpty()) {
+            return List.of();
+        }
+        String problem;
+        try {
+            List<String> arguments = new ArrayList<>(ValueParser.parseCommand(command.get()));
+            if (arguments.isEmpty() || arguments.get(0).isBlank()) {
+                problem = "names no program";
+            } else {
+                String program = ValueParser.normalisePath(arguments.get(0));
+                arguments.set(0, JavaConfig.isBareName(program) ? program
+                        : workingDir.resolve(program).normalize().toString());
+                return List.copyOf(arguments);
+            }
+        } catch (InvalidPathException e) {
+            problem = "the program is not a valid path";
+        } catch (IllegalArgumentException e) {
+            problem = e.getMessage();
+        }
+        problem(spec, location(spec).orElseThrow(), spec.name() + ": " + problem);
+        return List.of();
+    }
+
     /** A value that has a constant default, so it is always present. */
     <T> T required(Optional<T> value, KeySpec spec) {
         return value.orElseThrow(() -> new IllegalStateException(spec.name() + " has no constant default"));

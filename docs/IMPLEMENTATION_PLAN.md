@@ -183,7 +183,7 @@ older JVMs than the wrapper requires.
 | *(root)* | Exception hierarchy shared by all packages. | `NyajswException` (root) |
 | `cli` | Argument parsing, command dispatch, exit codes. The only place in the wrapper that calls `System.exit` (and `Runtime.halt`, in the console shutdown hook). | `Main`, `Command`, `ExitCode`, `ConsoleMode` (runs the supervisor since P3.6), `ServiceMode` and `ServiceStatusReporter` (P6.2), `Supervision` (the stack both modes run) |
 | `config` | Parse, include, interpolate, layer and validate configuration; typed views; key registry. | `ConfigLoader` → `LoadedConfig` (with `ConfigLayer`), `ConfigSource` + `FileConfigSource` / `SystemPropertyConfigSource`, `ConfigEntry`, `ConfigLocation`, `SourceContent`, `Interpolator`, `ConfigKeys` (registry contents), `KeyRegistry` (lookup), `KeyCollector` (key families), `KeySpec`, `KeyPattern`, `KeyStatus`, `KeyOrigin`, `KeyType`, `KeyDefault`, `KeyCategory`, `Unverified`, `ConfigValidator`, `ValueParser`, `SecretMasker`, `ConfigDump`, `CompatibilityDocument`, `WrapperConfig` with `JavaConfig`, `ServiceConfig`, `LogConfig`, `LifecycleConfig`, `ProbeConfig` (records, built through `ConfigValues`), `Secret`, configuration enums `ExitAction`, `ControlMode`, `StartType`, `RollMode`, `LogLevel`, `FailureAction` (the registry declares their values from them), `ConfigException`, `ConfigWarning` |
-| `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess` (a `RunningApplication`, started per invocation through an `ApplicationLauncher`), `OutputPump`, `LaunchException` |
+| `launch` | Build the application command line and run it. | `JavaCommandBuilder` → `JavaCommand` (argument array, secret-masking loggable form), `ClasspathExpander`, `ApplicationProcess` (a `RunningApplication`, started per invocation through an `ApplicationLauncher`), `OutputPump`, `ExternalCommand` (the commands the wrapper runs for itself: probe and stop commands, D26), `LaunchException` |
 | `lifecycle` | Supervision state machine and policies. | `Supervisor`, `State`, `Scheduler` + `ExecutorScheduler`, `ExitActionResolver` (uses `config.ExitAction`), `RestartPolicy`, `StopStrategy` (SPI) + `StopStrategyRegistry`, `TerminateStopStrategy`, `CommandStopStrategy`, `AgentStopStrategy`, `PidFiles` |
 | `probe` | Readiness/liveness checks. | `Probe` (SPI), `ProbeContext`, `ProbeResult`, `ProbeRegistry`, `ProbeRunner`, `ProcessProbe`, `TcpProbe`, `HttpProbe`, `LogPatternProbe`, `FileProbe`, `CommandProbe`, `AgentProbe` |
 | `agentlink` | Wrapper side of the agent channel (listener, per-connection session, the agent's jar), used by `launch`, `probe`, `lifecycle` and `cli`. | `AgentListener`, `AgentChannel`, `AgentJar` |
@@ -471,7 +471,12 @@ also where the wrapper waits after a `STOP` exit action. The allowed moves are l
   `wrapper.agent.enabled=true` (default recorded in the key registry, never hard-coded elsewhere).
   1. `agent` — send `STOP` over the agent channel; the application JVM runs `System.exit(0)` and
      therefore its shutdown hooks.
-  2. `command` — run `wrapper.stop.command` (later also a `wrapper.stop.conf` Java program).
+  2. `command` — run `wrapper.stop.command` (later also a `wrapper.stop.conf` Java program) as a
+     `launch.ExternalCommand`, like the `command` probe: argument array, no shell, the
+     application's working directory, the wrapper's environment (D26). It runs on a thread of its
+     own and is killed with what it started when its share runs out, the application has ended or
+     supervision closes (`StopStrategy.close()`).
+     When `wrapper.stop.command` is set, the derived default chain puts `command` first (P7.5).
   3. `console` (backlog) — `GenerateConsoleCtrlEvent` on the shared console, with the wrapper
      shielded by `SetConsoleCtrlHandler`.
   4. `terminate` — always last, after `wrapper.shutdown.timeout` (default 30 s; YAJSW documents no
@@ -1537,6 +1542,33 @@ Goal: configurable readiness/liveness; graceful stop through the agent.
       `wrapper.conf` escaping applies to patterns and commands; the cases without the agent and the
       ping defaults of a file that does not write them are spelled out. `windows-service.md` links
       to the guide.
+- [x] P7.5 `command` stop strategy (`wrapper.stop.command`). **Done:** `launch.ExternalCommand`
+      holds the mechanics the `command` probe had (argument array, no shell, output discarded,
+      input closed, timeout, tree kill, messages without arguments) plus a cancel signal; the probe
+      and `lifecycle.CommandStopStrategy` both use it. `wrapper.stop.command` is split and its
+      program resolved as `wrapper.readiness.command` is (`ConfigValues.command`, shared by both
+      keys) and runs in the application's working directory with the wrapper's environment (D26).
+      The strategy starts the command on a virtual thread and returns `REQUESTED`; the command is
+      killed with what it started when its share runs out or the application's process has ended
+      (the wrapper may end right after the application and would leave it behind), and its
+      outcome is logged by program name: exit 0 as status, another code or a program that cannot
+      be run as an error. Its exit code changes nothing else: the supervisor waits out the share
+      either way. When `wrapper.stop.command` is set and `wrapper.stop.strategy` is not written,
+      the default becomes `command,agent,terminate` (`command,terminate` without the agent): the
+      agent ends the JVM at once, so a command after it would never get to ask. A written list
+      that leaves out `command` while the key is set, and `command` listed without the key, are
+      warned about; the registry now shows the message of a factory's `ConfigException` (masked),
+      whose contract is to name keys, never values, and only the class name of anything else.
+      After review: supervision ends a stop command still running when it closes
+      (`StopStrategy.close()`, called by `StopChain.close()` from `Supervision.close()`), killing
+      it and waiting up to 10 s for its log line before the job and the log are closed, since the
+      kill on the application's end runs on the command's own thread and the wrapper could exit
+      first, also when supervision closes with its thread's interrupt status set (cleared for the
+      wait, then set again); an application that has ended already is not asked (`NOT_APPLICABLE`, nothing
+      started); the outcome messages are one `ExternalCommand.describe` for the probe and the
+      strategy; a share too long for nanoseconds is waited as the longest; the tests follow
+      their own processes through pid files (`TestApplication pid`), not every child of the test
+      JVM.
 Done when: each probe has unit tests; an end-to-end Windows test reaches `RUNNING` only after an
 HTTP probe passes and stops gracefully through the agent. The test is
 `WindowsServiceEndToEndTest.theServiceRunsOnlyOnceItsHttpProbePassesAndStopsGracefullyThroughTheAgent`
@@ -1675,13 +1707,18 @@ entry names the commit/plan item it came from; remove entries when addressed.
   probe), or filling the buffer only when a captured-output `log` probe is configured, would lift
   both the bound and the retention. `beforeLaunch` reads the log file's size on the supervisor's
   thread, which a hanging file share would block.
+- P7.5: a stop command that fails at once, or cannot be run, still costs its whole share, since a
+  strategy reports only whether it asked; a way to hand the rest of a share on (a completion the
+  supervisor listens to) would let the next step follow at once. The command is not in the
+  application's kill-on-close job, so it survives a wrapper that is killed (see P7.2b).
 - P7.2b: a `command` probe's process is not in the application's kill-on-close job, so one that
-  hangs while the wrapper is killed survives it; pass the job to probes if that matters. The
-  command stop strategy (P3.4 entry) will need the same mechanics (argument array, no shell,
-  discarded output, closed input, timeout, tree kill): extract a small runner from `CommandProbe`
-  then, and decide one environment rule for both (the probe uses the wrapper's environment, not
-  `wrapper.app.env.*`). `StateWait` still formats its durations itself (`… ms`), not through
-  `log.Durations`. `ConfigDump` shows `wrapper.readiness.command` whole, arguments included.
+  hangs while the wrapper is killed survives it; pass the job to probes if that matters. The same
+  holds for the stop command (P7.5), which is killed when its share runs out or the application
+  ends or supervision closes, but not when the wrapper itself is killed. (The shared runner,
+  `launch.ExternalCommand`, and the environment rule, D26, came with P7.5.) `StateWait` still
+  formats its durations itself (`… ms`), not through `log.Durations`. `ConfigDump` shows
+  `wrapper.readiness.command` and `wrapper.stop.command` whole, arguments included (it masks by
+  key and registered secret only).
 - P7.2a: a `file` readiness probe passes at once on every restart when the application leaves its
   file behind (a crash does), so restarts are judged ready and `wrapper.max_failed_invocations` is
   undermined; decide before P7.4 between "modified since the launch" (`ProbeContext` would carry
@@ -1749,10 +1786,10 @@ entry names the commit/plan item it came from; remove entries when addressed.
   clamp in the `forceStop` message (a real timer fires late) is covered only by `MainTest`'s real
   timing; a fake scheduler that fires late would test it. `ApplicationProcess.waitFor()` and
   `waitFor(Duration)` are now used only by tests.
-- P3.4: stop-strategy factories get only `LifecycleConfig`. P7's `agent` needs the invocation's
-  agent channel and `command` a process launcher, the environment and a background executor; give
-  the registry those dependencies then (e.g. `defaults(StopDependencies)`), and cancel a stop
-  command still running when the stop ends. `StopStrategyRegistry` and `ProbeRegistry` share their
+- P3.4: stop-strategy factories get only `LifecycleConfig`. That sufficed for P7: `agent` reads
+  the channel from the invocation, and `command` (P7.5) runs on a virtual thread with the wrapper's
+  environment (D26), its working directory carried by `LifecycleConfig`, and is ended by
+  `StopStrategy.close()` when supervision ends. `StopStrategyRegistry` and `ProbeRegistry` share their
   shape (name → factory, named entries) but differ in input and contract; extract a common
   `NamedFactories` if a third registry appears. In the Tanuki format a `wrapper.shutdown.timeout` or
   `wrapper.jvm_exit.timeout` of 0 means "wait forever"; nyajsw reads a budget of 0 as "terminate at
@@ -1854,7 +1891,7 @@ entry names the commit/plan item it came from; remove entries when addressed.
 - P6.2 (review): a stop with the default chain (`terminate` alone) waits the whole stop budget
   (`wrapper.shutdown.timeout`, default 30 s), during which nothing asks the application to end,
   since a service receives no Ctrl+C; service mode says so at start. Terminating at once, or a
-  graceful default, is for P7 (the agent's `STOP`) and the `command` strategy (P1.2 gap). A
+  graceful default, is for P7 (the agent's `STOP`) and the `command` strategy (P7.5). A
   failure to register the control handler names the service but reaches only the console (none
   under the SCM): `ServiceMode` learns the name only once the service runs; the host could hand
   it over. `wrapper.tmp.path` cannot steer `jna.tmpdir` in service mode, since JNA is loaded
@@ -1862,9 +1899,6 @@ entry names the commit/plan item it came from; remove entries when addressed.
   switch is spelled in `Main` and in `ServiceCommandLine`; a test that ties the two would keep
   install and dispatch together. The console line `supervision ended …` now comes after the
   wrapper's pid file is removed (cosmetic).
-- P1.2 (plan gap): `wrapper.stop.command` and the `command` stop strategy (`CommandStopStrategy`,
-  §4.6) are registered for P7 but no P3/P7 checklist item implements them yet; schedule them when
-  P7 is planned in detail.
 
 ## 6. Testing strategy and CI
 
@@ -1938,6 +1972,7 @@ or notes in `ConfigKeys` and regenerate the document in the same commit.
 | D23 | Exit codes follow the exception type (`cli.ExitCode.of`): `ConfigException` → 2, `ServiceException` (the SCM refused or failed, P5.2) → 3, `UnsupportedPlatformException` (a `PlatformException` subclass: the host has no such operation) → 4, anything else → 1. A plain `PlatformException` (an OS call failed on a platform that has the operation, §4.4, such as a native library that cannot be loaded) is not an unsupported platform and ends as 1, also from a service command (P5.4) | §3.2 named `PlatformException` → 4, but §4.4 also uses `PlatformException` for Win32 failures of job objects and console functions, which must not read as "wrong platform" | Accepted (P5.1) |
 | D24 | A liveness failure (`wrapper.liveness.failures` failed checks in a row) terminates the application at once instead of stopping it gracefully. `RESTART` then restarts it like an invocation that ended by itself, its run time measured up to when the last passing check began (readiness or liveness: the last time it was seen healthy), so that one unhealthy from the start reaches `wrapper.max_failed_invocations` however long the checks take; `SHUTDOWN` waits in `STOPPING` for it to end (at most 10 s) and ends supervision `FAILED` (console: the application's exit code, never 0; the service `STOPPED` with 1066), never `STOPPED` with success. Once the process has ended, checks no longer count: the exit action decides | An application that fails its checks may not answer a graceful stop either; YAJSW kills the JVM when its ping times out, and the startup timeout (P3.3) terminates the same way. A deliberate shutdown of an unhealthy application must not read as success, so that scripts and SCM recovery see it | Proposed (P7.1; revisit once the agent's graceful stop exists, P7.3) |
 | D25 | Liveness reuses the per-probe settings of readiness: `wrapper.readiness.<type>.*` configures a probe type wherever it is listed, in `wrapper.readiness.type` or `wrapper.liveness.type`; there are no `wrapper.liveness.<type>.*` keys | The common case checks the same endpoint for both; one set of keys keeps the surface small. Probing readiness and liveness on different ports or URLs, or with different timeouts, is not possible; adding `wrapper.liveness.<type>.*` later would need a precedence rule (liveness key, else readiness key) | Proposed (P7.2a) |
+| D26 | The commands the wrapper runs for itself (`wrapper.readiness.command`, `wrapper.stop.command`) share one runner, `launch.ExternalCommand`, and one rule: argument array without a shell, the application's working directory, the **wrapper's** environment (not `wrapper.app.env.*`), output discarded, input closed, killed with their process tree when their time runs out. The stop command is also killed once the application has ended or supervision closes, and when it is set, the derived `wrapper.stop.strategy` puts `command` before `agent` | The wrapper's environment is what an operator sees when running the command by hand on the wrapper's account; `wrapper.app.env.*` belongs to the application. Killing on the application's end keeps the command bounded, since the wrapper may exit right after the application. `command` first, because the agent ends the JVM at once | Proposed (P7.5) |
 
 ## 10. Open questions for the project owner
 

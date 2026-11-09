@@ -119,7 +119,7 @@ public class ConfigKeysTest {
                 {"wrapper.filter.script.1.args", UNSUPPORTED, YAJSW},
                 {"wrapper.filter.action.1", PLANNED, YAJSW},
                 {"wrapper.stop.strategy", SUPPORTED, NYAJSW},
-                {"wrapper.stop.command", PLANNED, NYAJSW},
+                {"wrapper.stop.command", SUPPORTED, NYAJSW},
                 // Logging
                 {"wrapper.logfile", SUPPORTED, YAJSW},
                 {"wrapper.logfile.format", SUPPORTED, YAJSW},
