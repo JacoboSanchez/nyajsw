@@ -1,5 +1,6 @@
 package io.jsl.nyajsw.lifecycle;
 
+import io.jsl.nyajsw.config.ConfigException;
 import io.jsl.nyajsw.config.ConfigKeys;
 import io.jsl.nyajsw.config.LifecycleConfig;
 import io.jsl.nyajsw.config.SecretMasker;
@@ -18,8 +19,9 @@ import java.util.function.Function;
 /**
  * The stop strategies by name (plan §4.6, D15). Each entry builds a strategy from the configuration,
  * so adding one ({@code agent} and {@code command} in P7) means a class and an entry here, not an
- * edit of the supervisor. An entry that cannot build its strategy from the configuration throws an
- * {@link IllegalArgumentException} whose message names the missing key, never a value. Immutable.
+ * edit of the supervisor. An entry that cannot build its strategy from the configuration throws a
+ * {@link ConfigException} whose message names the missing key, never a value; its message is shown,
+ * that of any other exception is not, since it may quote a value. Immutable.
  */
 public final class StopStrategyRegistry {
 
@@ -83,7 +85,7 @@ public final class StopStrategyRegistry {
             StopStrategy strategy;
             try {
                 strategy = Objects.requireNonNull(factory.apply(config), name);
-            } catch (IllegalArgumentException e) {
+            } catch (ConfigException e) {
                 warnings.add(secrets.maskText(key + ": the stop strategy " + name + " cannot be used ("
                         + e.getMessage() + "), skipped"));
                 continue;

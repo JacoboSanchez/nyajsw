@@ -3,7 +3,6 @@ package io.jsl.nyajsw.probe;
 import io.jsl.nyajsw.config.ConfigKeys;
 import io.jsl.nyajsw.config.ProbeConfig;
 import io.jsl.nyajsw.launch.ExternalCommand;
-import io.jsl.nyajsw.log.Durations;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -53,16 +52,8 @@ public final class CommandProbe implements Probe {
 
     @Override
     public ProbeResult check(ProbeContext context) {
-        String program = command.program();
-        return switch (command.run(timeout)) {
-            case ExternalCommand.Exited(int code) when code == 0 -> ProbeResult.pass(program + " exited with 0");
-            case ExternalCommand.Exited(int code) -> ProbeResult.fail(program + " exited with " + code);
-            case ExternalCommand.NotStarted(String reason) -> ProbeResult.fail("cannot run " + program + ": " + reason);
-            case ExternalCommand.TimedOut() -> ProbeResult.fail(program + " did not end within "
-                    + Durations.seconds(timeout) + "; killed");
-            case ExternalCommand.Interrupted() -> ProbeResult.fail(program + " was interrupted; killed");
-            // Not asked for here: the probe passes no signal.
-            case ExternalCommand.Cancelled() -> ProbeResult.fail(program + " was cancelled; killed");
-        };
+        ExternalCommand.Outcome outcome = command.run(timeout);
+        String detail = ExternalCommand.describe(outcome, command.program(), timeout);
+        return outcome.equals(new ExternalCommand.Exited(0)) ? ProbeResult.pass(detail) : ProbeResult.fail(detail);
     }
 }

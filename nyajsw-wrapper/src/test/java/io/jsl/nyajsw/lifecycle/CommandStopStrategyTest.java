@@ -6,6 +6,7 @@ import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.expectThrows;
 
 import io.jsl.nyajsw.TestConfigs;
+import io.jsl.nyajsw.config.ConfigException;
 import io.jsl.nyajsw.config.LifecycleConfig;
 import io.jsl.nyajsw.config.LogLevel;
 import io.jsl.nyajsw.launch.ExternalCommand;
@@ -15,12 +16,10 @@ import io.jsl.nyajsw.log.WrapperLog;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -28,7 +27,11 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-/** The {@code command} stop strategy, running {@link TestApplication} in a real JVM as the stop command. */
+/**
+ * The {@code command} stop strategy, running {@link TestApplication} in a real JVM as the stop
+ * command. Commands that must be seen running write their pid to a file, so that a test looks at
+ * its own processes only.
+ */
 public class CommandStopStrategyTest {
 
     private static final Duration LONG_SHARE = Duration.ofMinutes(10);
@@ -47,46 +50,42 @@ public class CommandStopStrategyTest {
     @AfterMethod(alwaysRun = true)
     public void tearDown() throws Exception {
         log.close();
-        for (ProcessHandle left : ProcessHandle.current().descendants().toList()) {
-            left.destroyForcibly();
-            left.onExit().get(30, TimeUnit.SECONDS);
-        }
+        TestApplication.killAll(dir);
         TestConfigs.delete(dir);
     }
 
-    private static String java() {
-        return Path.of(System.getProperty("java.home"), "bin", "java").toString();
+    private CommandStopStrategy strategy(List<String> command) {
+        return new CommandStopStrategy(new ExternalCommand(command, dir));
     }
 
-    private static String classes() throws URISyntaxException {
-        return Path.of(TestApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
+    private static StopStrategy.Context context(FakeApplication application, WrapperLog log, Duration share) {
+        return new StopStrategy.Context(application, log, share);
     }
 
-    private static List<String> testApplication(String... arguments) throws URISyntaxException {
-        List<String> command = new ArrayList<>(List.of(java(), "-cp", classes(), TestApplication.class.getName()));
-        command.addAll(List.of(arguments));
-        return command;
+    /** A {@code park} command that writes its pid to {@code <name>.pid}. */
+    private List<String> parked(String name) {
+        return TestApplication.command("pid", dir.resolve(name + ".pid").toString(), "park");
     }
 
-    private StopStrategy.Result stop(List<String> command, FakeApplication application, Duration share) {
-        return new CommandStopStrategy(new ExternalCommand(command, dir)).requestStop(
-                new StopStrategy.Context(application, log, share));
+    private String logged() {
+        return logBytes.toString(StandardCharsets.UTF_8);
     }
 
     @Test(timeOut = 120_000)
     public void theRegistryBuildsItFromTheConfigurationAndRunsItInTheWorkingDirectory() throws Exception {
         // A classpath of "." finds TestApplication only when the command runs in the classes directory.
-        LifecycleConfig config = TestConfigs.load(dir, "wrapper.working.dir=" + classes().replace('\\', '/'),
-                "wrapper.stop.command=\"" + java().replace('\\', '/') + "\" -cp . " + TestApplication.class.getName()
-                        + " report 0").lifecycle();
+        String classes = Path.of(TestApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .toString();
+        LifecycleConfig config = TestConfigs.load(dir, "wrapper.working.dir=" + classes.replace('\\', '/'),
+                "wrapper.stop.command=\"" + TestApplication.java().replace('\\', '/') + "\" -cp . "
+                        + TestApplication.class.getName() + " report 0").lifecycle();
         StopChain chain = StopStrategyRegistry.defaults().chain(config, TestConfigs.load(dir).secrets());
         StopStrategy strategy = chain.graceful().get(0).strategy();
 
-        StopStrategy.Result result = strategy.requestStop(new StopStrategy.Context(new FakeApplication(1), log,
-                LONG_SHARE));
+        StopStrategy.Result result = strategy.requestStop(context(new FakeApplication(1), log, LONG_SHARE));
 
         assertEquals(result, StopStrategy.Result.REQUESTED);
-        awaitLogged("the stop command " + java() + " exited with 0");
+        awaitLogged("the stop command " + TestApplication.java() + " exited with 0");
     }
 
     @Test(timeOut = 120_000)
@@ -94,64 +93,94 @@ public class CommandStopStrategyTest {
         log.close();
         log = WrapperLog.console(new PrintStream(logBytes, true, StandardCharsets.UTF_8), LogLevel.ERROR);
 
-        StopStrategy.Result result = stop(testApplication("linger", "500", "3"), new FakeApplication(1), LONG_SHARE);
+        StopStrategy.Result result = strategy(TestApplication.command("linger", "500", "3"))
+                .requestStop(context(new FakeApplication(1), log, LONG_SHARE));
 
         assertEquals(result, StopStrategy.Result.REQUESTED);
-        assertFalse(logBytes.toString(StandardCharsets.UTF_8).contains("exited"), "it waited: " + logBytes);
-        awaitLogged("the stop command " + java() + " exited with 3"); // logged only as an error
+        assertFalse(logged().contains("exited"), "it waited: " + logged());
+        awaitLogged("the stop command " + TestApplication.java() + " exited with 3"); // logged only as an error
     }
 
     @Test(timeOut = 120_000)
     public void aCommandThatOverrunsItsShareIsKilled() throws Exception {
-        stop(testApplication("park"), new FakeApplication(1), Duration.ofMillis(1500));
+        strategy(parked("overrun")).requestStop(context(new FakeApplication(1), log, Duration.ofMillis(1500)));
+        ProcessHandle command = TestApplication.awaitPid(dir.resolve("overrun.pid"));
 
-        awaitLogged("the stop command " + java() + " did not end within 1.500 s; killed");
-        awaitNoDescendants();
+        awaitLogged("the stop command " + TestApplication.java() + " did not end within 1.500 s; killed");
+        command.onExit().get(30, TimeUnit.SECONDS); // a kill takes effect a moment later
     }
 
     @Test(timeOut = 120_000)
     public void aCommandStillRunningWhenTheApplicationEndsIsKilled() throws Exception {
         FakeApplication application = new FakeApplication(1);
-        stop(testApplication("park"), application, LONG_SHARE);
-        while (ProcessHandle.current().descendants().findAny().isEmpty()) {
-            Thread.sleep(50); // nothing tells when the command has started
-        }
+        strategy(parked("ended")).requestStop(context(application, log, LONG_SHARE));
+        ProcessHandle command = TestApplication.awaitPid(dir.resolve("ended.pid"));
 
         application.endProcess();
 
-        awaitLogged("the stop command " + java() + " was still running when jvm 1 ended; killed");
-        awaitNoDescendants();
+        command.onExit().get(30, TimeUnit.SECONDS);
+        awaitLogged("the stop command " + TestApplication.java() + " was ended, since jvm 1 has ended");
+    }
+
+    @Test(timeOut = 120_000)
+    public void closingKillsACommandStillRunningAndWaitsUntilItIsLogged() throws Exception {
+        CommandStopStrategy strategy = strategy(parked("closed"));
+        strategy.requestStop(context(new FakeApplication(1), log, LONG_SHARE));
+        ProcessHandle command = TestApplication.awaitPid(dir.resolve("closed.pid"));
+
+        strategy.close();
+
+        // Once close has returned, the kill is done and logged, before supervision closes the log.
+        assertTrue(logged().contains("the stop command " + TestApplication.java()
+                + " was ended, since supervision has ended"), logged());
+        command.onExit().get(30, TimeUnit.SECONDS);
+        strategy.close(); // nothing left: returns at once
+    }
+
+    @Test(timeOut = 120_000)
+    public void closingRightAfterTheRequestStillEndsTheCommand() {
+        CommandStopStrategy strategy = strategy(parked("early"));
+
+        strategy.requestStop(context(new FakeApplication(1), log, LONG_SHARE));
+        strategy.close();
+
+        assertTrue(logged().contains("was ended, since supervision has ended"), logged());
+    }
+
+    @Test
+    public void anApplicationThatHasEndedIsNotAsked() {
+        FakeApplication application = new FakeApplication(1);
+        application.endProcess();
+
+        StopStrategy.Result result = strategy(parked("never")).requestStop(context(application, log, LONG_SHARE));
+
+        assertEquals(result, StopStrategy.Result.NOT_APPLICABLE);
+        assertFalse(Files.exists(dir.resolve("never.pid")));
     }
 
     @Test(timeOut = 120_000)
     public void aProgramThatCannotBeRunIsAnErrorWithoutItsArguments() throws Exception {
         String missing = dir.resolve("missing.exe").toString();
 
-        stop(List.of(missing, "--token", "s3cr3t"), new FakeApplication(1), LONG_SHARE);
+        strategy(List.of(missing, "--token", "s3cr3t")).requestStop(context(new FakeApplication(1), log, LONG_SHARE));
 
         awaitLogged("cannot run the stop command " + missing + ": ");
-        assertFalse(logBytes.toString(StandardCharsets.UTF_8).contains("s3cr3t"), logBytes.toString());
+        assertFalse(logged().contains("s3cr3t"), logged());
     }
 
     @Test
     public void itNeedsAStopCommand() throws IOException {
-        assertEquals(expectThrows(IllegalArgumentException.class,
+        assertEquals(expectThrows(ConfigException.class,
                 () -> CommandStopStrategy.from(TestConfigs.load(dir).lifecycle())).getMessage(),
                 "wrapper.stop.command is not set");
-        CommandStopStrategy.from(TestConfigs.load(dir, "wrapper.stop.command=stop.bat").lifecycle()); // does not throw
+        CommandStopStrategy.from(TestConfigs.load(dir, "wrapper.stop.command=stop.bat").lifecycle()); // no error
     }
 
     private void awaitLogged(String text) throws InterruptedException {
         long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
-        while (!logBytes.toString(StandardCharsets.UTF_8).contains(text)) {
-            assertTrue(System.nanoTime() < deadline, "no '" + text + "' in " + logBytes);
+        while (!logged().contains(text)) {
+            assertTrue(System.nanoTime() < deadline, "no '" + text + "' in " + logged());
             Thread.sleep(10); // the strategy's thread logs; nothing to wait on
-        }
-    }
-
-    private static void awaitNoDescendants() throws Exception {
-        for (ProcessHandle left : ProcessHandle.current().descendants().toList()) {
-            left.onExit().get(30, TimeUnit.SECONDS); // a kill takes effect a moment later
         }
     }
 }

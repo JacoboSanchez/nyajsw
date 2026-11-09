@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -173,6 +174,32 @@ public class StopStrategyRegistryTest {
                 + " command; the command is not run"));
         assertEquals(chainOf("wrapper.stop.command=stop.bat", "wrapper.stop.strategy=agent,Command,terminate")
                 .warnings(), List.of());
+    }
+
+    @Test
+    public void closingTheChainClosesEveryStrategy() {
+        List<String> closed = new ArrayList<>();
+        StopStrategy graceful = closing("graceful", closed);
+        StopStrategy last = closing("last", closed);
+
+        new StopChain(List.of(new StopChain.Step("graceful", graceful)), new StopChain.Step("last", last), List.of())
+                .close();
+
+        assertEquals(closed, List.of("graceful", "last"));
+    }
+
+    private static StopStrategy closing(String name, List<String> closed) {
+        return new StopStrategy() {
+            @Override
+            public Result requestStop(Context context) {
+                return Result.NOT_APPLICABLE;
+            }
+
+            @Override
+            public void close() {
+                closed.add(name);
+            }
+        };
     }
 
     @Test

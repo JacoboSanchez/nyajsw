@@ -643,8 +643,9 @@ public final class ConfigKeys {
             .status(SUPPORTED)
             .description("Command run by the command stop strategy to ask the application to end")
             .notes("Split and run as wrapper.readiness.command is, so a .bat file runs through cmd.exe; it has its"
-                    + " share of the stop budget and is killed with what it started when that runs out or the"
-                    + " application has ended. Set, it puts command first in the default wrapper.stop.strategy")
+                    + " share of the stop budget, used up even when it fails, and is killed with what it started"
+                    + " when that runs out or the application or the wrapper ends. Set, it puts command first in the"
+                    + " default wrapper.stop.strategy")
             .build();
 
     // ---- logging ----

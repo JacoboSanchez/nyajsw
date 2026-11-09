@@ -352,7 +352,8 @@ A stop runs the strategies of `wrapper.stop.strategy` in order:
 The stop budget is `wrapper.shutdown.timeout` (30 s by default) plus `wrapper.jvm_exit.timeout`.
 Without the agent or a stop command nothing asks a service's application to end, since a service
 receives no Ctrl+C: the wrapper waits out the budget and then terminates it, and the log warns
-about that at every start. In console mode the application receives the Ctrl+C itself and has the budget to finish.
+about that at every start. In console mode the application receives the Ctrl+C itself and has the
+budget to finish.
 
 The graceful steps share the budget equally, so with the default `command,agent,terminate` the
 command has half of it before the agent ends the JVM.
@@ -364,9 +365,12 @@ wrapper.stop.command=bin/stop.bat --port 8005
 The command is split and run as `wrapper.readiness.command` is: without a shell, in
 `wrapper.working.dir` (a relative program too), with the wrapper's environment, its output
 discarded and its input closed; Windows runs a `.bat` or `.cmd` file through `cmd.exe`. Its exit
-code is logged. It is ended, with what it started, when its share of the budget runs out or when
-the application has ended, so it is a way to ask the application to stop, not a hook that runs
-after the stop: work that must follow the stop belongs in a shutdown hook of the application.
+code is logged and changes nothing else: the wrapper waits out the command's share even when it
+fails or cannot be run, so a mistyped path costs that time before the next step. It is ended,
+with what it started, when its share runs out, when the application has ended or when the wrapper
+ends, so it is a way to ask the application to stop, not a hook that runs after the stop: work
+that must follow the stop belongs in a shutdown hook of the application. A command that ends by
+itself leaves behind what it started in the background (`start` in a `.bat` file).
 
 YAJSW's stop programs (`wrapper.stop.conf`) and Tanuki's `WrapperStartStopApp` stop class are not
 called; `wrapper.stop.command` can run the same stop program as a command.

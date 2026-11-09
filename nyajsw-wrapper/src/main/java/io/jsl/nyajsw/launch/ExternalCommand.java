@@ -1,5 +1,7 @@
 package io.jsl.nyajsw.launch;
 
+import io.jsl.nyajsw.log.Durations;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -49,7 +51,10 @@ public final class ExternalCommand {
     public record Interrupted() implements Outcome {
     }
 
-    /** It was no longer wanted (the caller's signal completed) and was killed, or never started. */
+    /**
+     * It was no longer wanted (the caller's signal completed): killed, or not started when the signal
+     * had completed before the run.
+     */
     public record Cancelled() implements Outcome {
     }
 
@@ -71,6 +76,23 @@ public final class ExternalCommand {
     /** The program as configured, for messages: the arguments can carry credentials. */
     public String program() {
         return arguments.get(0);
+    }
+
+    /**
+     * The message for {@code outcome}, naming the program as {@code name} (such as {@code "the stop
+     * command " + program()}): {@code <name> exited with 3}, {@code cannot run <name>: <reason>},
+     * {@code <name> did not end within 10 s; killed}, and so on.
+     *
+     * @param timeout the time the run had, for {@link TimedOut}
+     */
+    public static String describe(Outcome outcome, String name, Duration timeout) {
+        return switch (outcome) {
+            case Exited(int code) -> name + " exited with " + code;
+            case NotStarted(String reason) -> "cannot run " + name + ": " + reason;
+            case TimedOut() -> name + " did not end within " + Durations.seconds(timeout) + "; killed";
+            case Interrupted() -> name + " was interrupted; killed";
+            case Cancelled() -> name + " was cancelled";
+        };
     }
 
     /** Runs it to its end, for at most {@code timeout}. */
@@ -112,7 +134,7 @@ public final class ExternalCommand {
             // It may have ended already; its input is closed either way.
         }
         try {
-            CompletableFuture.anyOf(process.onExit(), cancel).get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            CompletableFuture.anyOf(process.onExit(), cancel).get(nanos(timeout), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             kill(process);
             return new TimedOut();
@@ -128,6 +150,15 @@ public final class ExternalCommand {
         }
         kill(process);
         return new Cancelled();
+    }
+
+    /** {@code timeout} in nanoseconds, a timeout too long for them (some 292 years) as the longest. */
+    private static long nanos(Duration timeout) {
+        try {
+            return timeout.toNanos();
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     private static void kill(Process process) {

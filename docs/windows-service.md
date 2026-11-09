@@ -65,8 +65,8 @@ Everything else is read from `wrapper.conf` (and its includes) at every start.
   `wrapper.shutdown.timeout` (30 s by default) plus `wrapper.jvm_exit.timeout`, or there is no
   agent to ask, the wrapper waits out the budget and then ends the application's process tree.
   Without the agent or a stop command nothing asks the application to end, since a service
-  receives no Ctrl+C; the wrapper log warns about that at every start. [probes.md](probes.md) describes the agent and
-  the readiness and liveness checks.
+  receives no Ctrl+C; the wrapper log warns about that at every start. [probes.md](probes.md)
+  describes the agent and the readiness and liveness checks.
 - If the application cannot be kept running, or ends by itself with an exit code other than 0, the
   service stops with error 1066. `sc query <name>` shows the code as `SERVICE_EXIT_CODE`: it is
   the code console mode would have exited with. A configuration that cannot be read gives 2.

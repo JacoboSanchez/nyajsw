@@ -277,7 +277,9 @@ When the agent is on:
 
 - **Stop strategy**: the default `wrapper.stop.strategy` is `agent,terminate`. A stop asks the
   agent first, waits up to the stop budget (`wrapper.shutdown.timeout` plus
-  `wrapper.jvm_exit.timeout`), then terminates the application.
+  `wrapper.jvm_exit.timeout`), then terminates the application. With `wrapper.stop.command` set,
+  the default is `command,agent,terminate`: the command is run first and the two share the budget
+  equally.
 - **Liveness**: the default `wrapper.liveness.type` is `agent`.
 
 Without a connected agent, a stop still waits the budget before terminating. In console mode that

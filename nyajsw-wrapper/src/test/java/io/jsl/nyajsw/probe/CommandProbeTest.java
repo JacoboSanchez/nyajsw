@@ -14,7 +14,6 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -42,37 +41,25 @@ public class CommandProbeTest {
         TestConfigs.delete(dir);
     }
 
-    private static String java() {
-        return Path.of(System.getProperty("java.home"), "bin", "java").toString();
-    }
-
-    private static List<String> testApplication(String... arguments) throws URISyntaxException {
-        String classes = Path.of(TestApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI())
-                .toString();
-        List<String> command = new ArrayList<>(List.of(java(), "-cp", classes, TestApplication.class.getName()));
-        command.addAll(List.of(arguments));
-        return command;
-    }
-
     @Test(timeOut = 120_000)
     public void passesOnExitCodeZeroWithItsInputClosed() throws Exception {
         // report reads its standard input to the end first: with it open, the run would time out.
-        CommandProbe probe = new CommandProbe(testApplication("report", "0"), dir, TIMEOUT);
+        CommandProbe probe = new CommandProbe(TestApplication.command("report", "0"), dir, TIMEOUT);
 
-        assertEquals(probe.check(FakeRunningApplication.running()), ProbeResult.pass(java() + " exited with 0"));
+        assertEquals(probe.check(FakeRunningApplication.running()), ProbeResult.pass(TestApplication.java() + " exited with 0"));
     }
 
     @Test(timeOut = 120_000)
     public void failsOnAnyOtherExitCode() throws Exception {
-        CommandProbe probe = new CommandProbe(testApplication("report", "3"), dir, TIMEOUT);
+        CommandProbe probe = new CommandProbe(TestApplication.command("report", "3"), dir, TIMEOUT);
 
-        assertEquals(probe.check(FakeRunningApplication.running()), ProbeResult.fail(java() + " exited with 3"));
+        assertEquals(probe.check(FakeRunningApplication.running()), ProbeResult.fail(TestApplication.java() + " exited with 3"));
     }
 
     @Test(timeOut = 120_000)
     public void aCommandThatOverrunsIsKilledWithWhatItStarted() throws Exception {
         // parent starts a park grandchild: both must be gone once the check has returned.
-        CommandProbe probe = new CommandProbe(testApplication("parent"), dir, Duration.ofSeconds(10));
+        CommandProbe probe = new CommandProbe(TestApplication.command("parent"), dir, Duration.ofSeconds(10));
 
         CompletableFuture<ProbeResult> result = CompletableFuture.supplyAsync(
                 () -> probe.check(FakeRunningApplication.running()));
@@ -83,7 +70,7 @@ public class CommandProbeTest {
             Thread.sleep(50); // nothing tells when the grandchild has started; bounded by the check
         }
 
-        assertEquals(result.get(), ProbeResult.fail(java() + " did not end within 10 s; killed"));
+        assertEquals(result.get(), ProbeResult.fail(TestApplication.java() + " did not end within 10 s; killed"));
         assertTrue(started.size() >= 2, "the command and its child: " + started);
         for (ProcessHandle process : started) {
             process.onExit().get(30, TimeUnit.SECONDS); // a kill takes effect a moment later
@@ -92,11 +79,11 @@ public class CommandProbeTest {
 
     @Test(timeOut = 120_000)
     public void anInterruptedCheckKillsTheCommandAndKeepsTheInterrupt() throws Exception {
-        CommandProbe probe = new CommandProbe(testApplication("park"), dir, TIMEOUT);
+        CommandProbe probe = new CommandProbe(TestApplication.command("park"), dir, TIMEOUT);
         Thread.currentThread().interrupt();
         try {
             assertEquals(probe.check(FakeRunningApplication.running()),
-                    ProbeResult.fail(java() + " was interrupted; killed"));
+                    ProbeResult.fail(TestApplication.java() + " was interrupted; killed"));
             assertTrue(Thread.currentThread().isInterrupted());
         } finally {
             Thread.interrupted();
@@ -126,7 +113,7 @@ public class CommandProbeTest {
         String classes = Path.of(TestApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI())
                 .toString().replace('\\', '/');
         ProbeConfig config = TestConfigs.load(dir, "wrapper.working.dir=" + classes,
-                "wrapper.readiness.command=\"" + java().replace('\\', '/') + "\" -cp . "
+                "wrapper.readiness.command=\"" + TestApplication.java().replace('\\', '/') + "\" -cp . "
                         + TestApplication.class.getName() + " report 0").probes();
 
         Probe probe = ProbeRegistry.defaults().create(List.of("command"), config).get(0).probe();

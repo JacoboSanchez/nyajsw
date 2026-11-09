@@ -8,7 +8,6 @@ import static org.testng.Assert.expectThrows;
 import io.jsl.nyajsw.TestConfigs;
 
 import java.io.IOException;
-import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -24,7 +23,8 @@ import org.testng.annotations.Test;
 /**
  * The mechanics both the {@code command} probe and the {@code command} stop strategy rely on,
  * running {@link TestApplication} in a real JVM. The probe's tests cover the timeout and the
- * interrupt; these cover what only the stop strategy uses.
+ * interrupt; these cover what only the stop strategy uses. Each command writes its pid to a file,
+ * so that a test looks at its own processes only.
  */
 public class ExternalCommandTest {
 
@@ -38,41 +38,33 @@ public class ExternalCommandTest {
     }
 
     @AfterMethod(alwaysRun = true)
-    public void tearDown() throws IOException {
+    public void tearDown() throws Exception {
+        TestApplication.killAll(dir);
         TestConfigs.delete(dir);
     }
 
-    static String java() {
-        return Path.of(System.getProperty("java.home"), "bin", "java").toString();
-    }
-
-    static List<String> testApplication(String... arguments) throws URISyntaxException {
-        String classes = Path.of(TestApplication.class.getProtectionDomain().getCodeSource().getLocation().toURI())
-                .toString();
-        List<String> command = new ArrayList<>(List.of(java(), "-cp", classes, TestApplication.class.getName()));
-        command.addAll(List.of(arguments));
-        return command;
-    }
-
     @Test(timeOut = 120_000)
-    public void itReportsTheExitCode() throws Exception {
-        ExternalCommand command = new ExternalCommand(testApplication("report", "7"), dir);
+    public void itReportsTheExitCode() {
+        ExternalCommand command = new ExternalCommand(TestApplication.command("report", "7"), dir);
 
         assertEquals(command.run(TIMEOUT), new ExternalCommand.Exited(7));
-        assertEquals(command.program(), java());
+        assertEquals(command.program(), TestApplication.java());
     }
 
     @Test(timeOut = 120_000)
     public void aCancelKillsTheCommandWithWhatItStarted() throws Exception {
-        ExternalCommand command = new ExternalCommand(testApplication("parent"), dir);
+        Path pid = dir.resolve("parent.pid");
+        ExternalCommand command = new ExternalCommand(TestApplication.command("pid", pid.toString(), "parent"), dir);
         CompletableFuture<Void> cancel = new CompletableFuture<>();
 
         CompletableFuture<ExternalCommand.Outcome> outcome = CompletableFuture.supplyAsync(
                 () -> command.run(TIMEOUT, cancel));
-        List<ProcessHandle> started = List.of();
+        ProcessHandle parent = TestApplication.awaitPid(pid);
+        List<ProcessHandle> started = new ArrayList<>(List.of(parent));
         while (started.size() < 2) {
             assertFalse(outcome.isDone(), "it ended by itself: " + outcome);
-            started = ProcessHandle.current().descendants().toList();
+            started = new ArrayList<>(parent.descendants().toList());
+            started.add(parent);
             Thread.sleep(50); // nothing tells when the grandchild has started; bounded by the test's timeout
         }
         cancel.complete(null);
@@ -85,20 +77,17 @@ public class ExternalCommandTest {
 
     @Test(timeOut = 120_000)
     public void aCancelThatFailsCountsAsACancel() throws Exception {
-        ExternalCommand command = new ExternalCommand(testApplication("park"), dir);
+        Path pid = dir.resolve("park.pid");
+        ExternalCommand command = new ExternalCommand(TestApplication.command("pid", pid.toString(), "park"), dir);
         CompletableFuture<Void> cancel = new CompletableFuture<>();
 
         CompletableFuture<ExternalCommand.Outcome> outcome = CompletableFuture.supplyAsync(
                 () -> command.run(TIMEOUT, cancel));
-        while (ProcessHandle.current().descendants().findAny().isEmpty()) {
-            Thread.sleep(50); // nothing tells when the command has started
-        }
+        ProcessHandle park = TestApplication.awaitPid(pid);
         cancel.completeExceptionally(new IllegalStateException("lost track"));
 
         assertEquals(outcome.get(), new ExternalCommand.Cancelled());
-        for (ProcessHandle left : ProcessHandle.current().descendants().toList()) {
-            left.onExit().get(30, TimeUnit.SECONDS);
-        }
+        park.onExit().get(30, TimeUnit.SECONDS);
     }
 
     @Test
@@ -121,9 +110,33 @@ public class ExternalCommandTest {
     }
 
     @Test
+    public void everyOutcomeHasAMessageThatNamesTheProgramAsGiven() {
+        Duration timeout = Duration.ofSeconds(10);
+        String name = "the stop command x";
+
+        assertEquals(ExternalCommand.describe(new ExternalCommand.Exited(3), name, timeout),
+                "the stop command x exited with 3");
+        assertEquals(ExternalCommand.describe(new ExternalCommand.NotStarted("error=2"), name, timeout),
+                "cannot run the stop command x: error=2");
+        assertEquals(ExternalCommand.describe(new ExternalCommand.TimedOut(), name, timeout),
+                "the stop command x did not end within 10 s; killed");
+        assertEquals(ExternalCommand.describe(new ExternalCommand.Interrupted(), name, timeout),
+                "the stop command x was interrupted; killed");
+        assertEquals(ExternalCommand.describe(new ExternalCommand.Cancelled(), name, timeout),
+                "the stop command x was cancelled");
+    }
+
+    @Test
     public void aCommandNeedsAProgramAndATimeThatIsNotNegative() {
         expectThrows(IllegalArgumentException.class, () -> new ExternalCommand(List.of(), dir));
         expectThrows(IllegalArgumentException.class,
                 () -> new ExternalCommand(List.of("x"), dir).run(Duration.ofMillis(-1)));
+    }
+
+    @Test(timeOut = 120_000)
+    public void aTimeoutTooLongForNanosecondsIsNoError() {
+        ExternalCommand command = new ExternalCommand(TestApplication.command("report", "0"), dir);
+
+        assertEquals(command.run(Duration.ofSeconds(Long.MAX_VALUE)), new ExternalCommand.Exited(0));
     }
 }

@@ -49,4 +49,12 @@ public interface StopStrategy {
 
     /** Asks the application to end, without waiting for it. */
     Result requestStop(Context context);
+
+    /**
+     * Ends whatever the strategy still has running for a stop (a command, say), so that nothing it
+     * started outlives supervision. Called once supervision has ended, before the log is closed; it
+     * may wait, briefly and boundedly, for what it ends. By default there is nothing to end.
+     */
+    default void close() {
+    }
 }

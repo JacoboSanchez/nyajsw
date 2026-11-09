@@ -20,6 +20,12 @@ public record StopChain(List<Step> graceful, Step last, List<String> warnings) {
         warnings = List.copyOf(warnings);
     }
 
+    /** Closes every strategy ({@link StopStrategy#close()}); called once supervision has ended. */
+    public void close() {
+        graceful.forEach(step -> step.strategy().close());
+        last.strategy().close();
+    }
+
     /**
      * A strategy with the name it was configured under, for log messages.
      *
